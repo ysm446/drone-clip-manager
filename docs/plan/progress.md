@@ -1,7 +1,7 @@
-# progress — flight-cut 進捗
+# progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-08 12:52
+更新日時: 2026-07-08 13:10
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -16,23 +16,26 @@
 ## 完了済み
 
 - [x] `docs/spec.md` — 全体仕様（目的 / スコープ / 技術スタック / アーキ / データモデル / キーフレーム & ロスレス切り出し / UI / フロー / 拡張点 / フェーズ）
-- [x] `docs/spec.md` にストレージ設計を追記（ルートフォルダをユーザー指定、メタデータはルート直下 `.flightcut/` に作成、相対パス管理）
+- [x] `docs/spec.md` にストレージ設計を追記（ルートフォルダをユーザー指定、メタデータはルート直下 `.dcm/` に作成、相対パス管理）
 - [x] `AGENTS.md` — エージェント運用ルール
 - [x] `CLAUDE.md` — Claude Code 向け入口（`@AGENTS.md` インポート + プロジェクト概要）
 - [x] `docs/plan/goals.md` / `plan.md` / `progress.md` — 計画ドキュメントを記入
 - [x] アプリのスキャフォールド（electron-vite + React + TS、`.npmrc` で better-sqlite3 の Electron プレビルド取得）
-- [x] メインプロセス: 独自プロトコル `flightcut-media`（Range 対応の動画配信）、ルート設定の永続化、`.flightcut/` 初期化
+- [x] メインプロセス: 独自プロトコル `dcm-media`（Range 対応の動画/BGM 配信）、ルート設定の永続化、`.dcm/` 初期化
 - [x] サービス: `db`（better-sqlite3、videos/keyframes/segments）、`media`（再帰走査 / ffprobe メタ / キーフレーム抽出）
-- [x] IPC + preload（contextBridge で `window.flightcut` API 公開）
+- [x] IPC + preload（contextBridge で `window.dcm` API 公開）
 - [x] レンダラ 3ペインUI: フォルダツリー / `<video>` プレイヤー + メタバッジ / タイムライン（キーフレームマーカー・区間バー・再生ヘッド、ドラッグで区間作成、I/O キー対応）/ 区間リスト（ラベル編集・ジャンプ・削除）
 - [x] in=前 / out=後 のキーフレームスナップ（spec §6.2）
+- [x] BGM プレイヤー（BGM フォルダを独立指定、mp3 等を再帰走査、`<audio>` で再生・前後送り・音量・ループ / spec §13）
+- [x] 起動用 `start.bat`（必要なら `npm install` してから `npm run dev`）
+- [x] プロジェクト名を `flight-cut` → `drone-clip-manager` に統一（内部識別子: `.dcm/`、`dcm-media`、`window.dcm`）
 
 ## 未完了（次にやること）
 
 ### Phase 1 — ライブラリ基盤（おおむね完了、残あり）
 - [x] Electron + React プロジェクトのスキャフォールド、`package.json`（`version` 基準）
 - [x] `better-sqlite3` 導入と DB スキーマ作成（`videos` / `keyframes` / `segments`）
-- [x] ルートフォルダ指定ダイアログ・設定永続化・`.flightcut/` 初期化
+- [x] ルートフォルダ指定ダイアログ・設定永続化・`.dcm/` 初期化
 - [x] ルート配下の再帰走査 → ffprobe メタ抽出（`MediaService`）
 - [ ] サムネイル生成（`ThumbService`）※ 未実装
 - [ ] Library View のフィルタ / 検索 / 区間数バッジ ※ ツリー表示のみ実装、フィルタ類は未

@@ -4,9 +4,10 @@ import { FolderTree } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
+import { BgmPlayer } from './components/BgmPlayer'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
-const api = window.flightcut
+const api = window.dcm
 
 export function App() {
   const [root, setRoot] = useState<RootInfo>({ root: null, tree: null })
@@ -118,7 +119,7 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">flight-cut</div>
+        <div className="brand">drone-clip-manager</div>
         <button className="btn" onClick={pickRoot}>
           ルートフォルダを選択…
         </button>
@@ -131,6 +132,7 @@ export function App() {
         <aside className="sidebar">
           <div className="sidebar-head">ライブラリ</div>
           <FolderTree tree={root.tree} selected={selected} onSelect={selectVideo} />
+          <BgmPlayer />
         </aside>
 
         <main className="main">

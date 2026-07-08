@@ -48,9 +48,9 @@ Thumbs.db
 desktop.ini
 
 # Local media / generated caches
-# アプリのメタデータはユーザーのルートフォルダ直下 `.flightcut/` に作られる（リポジトリ外）。
+# アプリのメタデータはユーザーのルートフォルダ直下 `.dcm/` に作られる（リポジトリ外）。
 # リポジトリ内に検証用の素材やキャッシュを置いた場合に備えて無視しておく。
-.flightcut/
+.dcm/
 *.mp4
 *.mov
 *.MP4

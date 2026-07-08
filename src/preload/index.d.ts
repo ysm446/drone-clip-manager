@@ -1,8 +1,8 @@
-import type { FlightCutApi } from '../shared/types'
+import type { DcmApi } from '../shared/types'
 
 declare global {
   interface Window {
-    flightcut: FlightCutApi
+    dcm: DcmApi
   }
 }
 

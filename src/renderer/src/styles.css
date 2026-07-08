@@ -146,6 +146,97 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ---- bgm ---- */
+.bgm {
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+.bgm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+.bgm-pick {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+}
+.bgm-tracks {
+  max-height: 128px;
+  overflow: auto;
+  padding: 2px 0;
+}
+.bgm-empty {
+  padding: 8px 12px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.bgm-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.bgm-track:hover {
+  background: var(--bg-3);
+}
+.bgm-track.active {
+  background: #2b3a55;
+  color: var(--fg);
+}
+.bgm-track-icon {
+  width: 10px;
+  color: var(--accent);
+}
+.bgm-track-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bgm-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+}
+.bgm-controls button {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 5px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.bgm-controls button:hover {
+  border-color: var(--accent);
+}
+.bgm-controls button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bgm-controls input[type='range'] {
+  flex: 1;
+  min-width: 40px;
+}
+.bgm-now {
+  padding: 4px 12px 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- player ---- */
 .player-video {
   flex: 1;

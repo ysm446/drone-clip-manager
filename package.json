@@ -1,5 +1,5 @@
 {
-  "name": "flight-cut",
+  "name": "drone-clip-manager",
   "version": "0.1.0",
   "description": "ドローン映像専用の動画管理・区間ブックマーク・ロスレス書き出しアプリ",
   "author": "",

@@ -2,11 +2,13 @@ import { app, shell, BrowserWindow, protocol, net } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { registerIpc } from './ipc'
-import { resolveInRoot } from './util/paths'
+import { resolveInBgm, resolveInRoot } from './util/paths'
 
-// 動画は file:// の制約を避け、Range 対応でスクラブできるよう独自プロトコルで配信する。
-// 例: flightcut-media:///<encodeURIComponent(relPath)>
-const MEDIA_SCHEME = 'flightcut-media'
+// 動画・BGM は file:// の制約を避け、Range 対応でスクラブできるよう独自プロトコルで配信する。
+// host でルート配下 / BGM 配下を切り替える:
+//   dcm-media://root/<encodeURIComponent(relPath)>
+//   dcm-media://bgm/<encodeURIComponent(relPath)>
+const MEDIA_SCHEME = 'dcm-media'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -19,9 +21,8 @@ function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, (request) => {
     try {
       const url = new URL(request.url)
-      // host は使わず pathname にエンコードした相対パスを載せる
       const relPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
-      const abs = resolveInRoot(relPath)
+      const abs = url.host === 'bgm' ? resolveInBgm(relPath) : resolveInRoot(relPath)
       // net.fetch(file://) は Range リクエストを解釈してくれる
       return net.fetch(pathToFileURL(abs).toString(), {
         headers: request.headers,

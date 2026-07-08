@@ -2,9 +2,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readdirSync, statSync } from 'node:fs'
 import { join, basename, extname } from 'node:path'
-import { getRoot, resolveInRoot, toRelPosix } from '../util/paths'
+import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
 import { getCachedKeyframes, saveKeyframes } from './db'
-import type { TreeNode, VideoMeta } from '../../shared/types'
+import type { BgmTrack, TreeNode, VideoMeta } from '../../shared/types'
 
 const execFileP = promisify(execFile)
 
@@ -12,11 +12,16 @@ const execFileP = promisify(execFile)
 const FFPROBE = 'ffprobe'
 
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.mkv', '.m4v', '.avi', '.mts', '.m2ts'])
+const AUDIO_EXT = new Set(['.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.opus'])
 // 走査対象外にするディレクトリ
-const SKIP_DIR = new Set(['.flightcut', '$RECYCLE.BIN', 'System Volume Information'])
+const SKIP_DIR = new Set(['.dcm', '$RECYCLE.BIN', 'System Volume Information'])
 
 function isVideo(name: string): boolean {
   return VIDEO_EXT.has(extname(name).toLowerCase())
+}
+
+function isAudio(name: string): boolean {
+  return AUDIO_EXT.has(extname(name).toLowerCase())
 }
 
 /** ルート配下を再帰走査してツリーを組み立てる。動画を含まない枝は落とす。 */
@@ -172,4 +177,36 @@ export async function getKeyframes(relPath: string): Promise<number[]> {
   times.sort((a, b) => a - b)
   saveKeyframes(relPath, times)
   return times
+}
+
+/** BGM フォルダ配下の音声ファイルを再帰走査して一覧を返す。 */
+export function scanBgm(): BgmTrack[] {
+  const dir = getBgmDir()
+  if (!dir) return []
+  const tracks: BgmTrack[] = []
+
+  function walk(absDir: string): void {
+    let entries: string[]
+    try {
+      entries = readdirSync(absDir)
+    } catch {
+      return
+    }
+    for (const name of entries) {
+      if (SKIP_DIR.has(name)) continue
+      const abs = join(absDir, name)
+      let st
+      try {
+        st = statSync(abs)
+      } catch {
+        continue
+      }
+      if (st.isDirectory()) walk(abs)
+      else if (isAudio(name)) tracks.push({ name, relPath: toBgmRelPosix(abs) })
+    }
+  }
+
+  walk(dir)
+  tracks.sort((a, b) => a.relPath.localeCompare(b.relPath, undefined, { numeric: true }))
+  return tracks
 }

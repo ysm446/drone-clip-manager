@@ -57,8 +57,20 @@ export interface RootInfo {
   tree: TreeNode | null
 }
 
+/** BGM トラック（BGM フォルダからの相対パス） */
+export interface BgmTrack {
+  name: string
+  relPath: string
+}
+
+/** BGM フォルダの状態 */
+export interface BgmInfo {
+  dir: string | null
+  tracks: BgmTrack[]
+}
+
 /** プリロードが contextBridge で公開する API の型 */
-export interface FlightCutApi {
+export interface DcmApi {
   pickRoot: () => Promise<RootInfo>
   getRoot: () => Promise<RootInfo>
   probeVideo: (relPath: string) => Promise<VideoMeta>
@@ -69,4 +81,9 @@ export interface FlightCutApi {
   addSegment: (input: SegmentInput) => Promise<Segment>
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>
   deleteSegment: (id: number) => Promise<void>
+  // --- BGM ---
+  pickBgmDir: () => Promise<BgmInfo>
+  getBgm: () => Promise<BgmInfo>
+  /** BGM を再生するためのカスタムプロトコル URL */
+  bgmUrl: (relPath: string) => string
 }

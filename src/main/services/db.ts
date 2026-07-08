@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { metaDir } from '../util/paths'
 import type { Segment, SegmentInput } from '../../shared/types'
 
-// メタデータ DB は各ルート直下の .flightcut/library.db。
+// メタデータ DB は各ルート直下の .dcm/library.db。
 // ルートを切り替えたら DB も開き直す（ルート間で共有しない）。
 
 let db: Database.Database | null = null

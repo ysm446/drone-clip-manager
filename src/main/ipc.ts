@@ -1,12 +1,17 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { getRoot, setRoot } from './util/paths'
-import { scanTree, probeVideo, getKeyframes } from './services/media'
+import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
+import { scanTree, probeVideo, getKeyframes, scanBgm } from './services/media'
 import { resetDb, listSegments, addSegment, updateSegment, deleteSegment } from './services/db'
-import type { RootInfo, SegmentInput } from '../shared/types'
+import type { BgmInfo, RootInfo, SegmentInput } from '../shared/types'
 
 function currentRootInfo(): RootInfo {
   const root = getRoot()
   return { root, tree: root ? scanTree() : null }
+}
+
+function currentBgmInfo(): BgmInfo {
+  const dir = getBgmDir()
+  return { dir, tracks: dir ? scanBgm() : [] }
 }
 
 export function registerIpc(): void {
@@ -33,4 +38,16 @@ export function registerIpc(): void {
     updateSegment(id, patch)
   )
   ipcMain.handle('segments:delete', (_e, id: number) => deleteSegment(id))
+
+  ipcMain.handle('bgm:get', (): BgmInfo => currentBgmInfo())
+  ipcMain.handle('bgm:pick', async (e): Promise<BgmInfo> => {
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+    const res = await dialog.showOpenDialog(win!, {
+      title: 'BGM フォルダを選択',
+      properties: ['openDirectory']
+    })
+    if (res.canceled || res.filePaths.length === 0) return currentBgmInfo()
+    setBgmDir(res.filePaths[0])
+    return currentBgmInfo()
+  })
 }
