@@ -1,8 +1,17 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
 import { scanTree, probeVideo, getKeyframes, scanBgm } from './services/media'
-import { resetDb, listSegments, addSegment, updateSegment, deleteSegment } from './services/db'
+import {
+  resetDb,
+  listSegments,
+  addSegment,
+  updateSegment,
+  deleteSegment,
+  listAllClips,
+  listVideoPathsMissingMeta
+} from './services/db'
 import { exportOne } from './services/export'
+import { ensureThumb } from './services/thumbs'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BgmInfo,
@@ -74,6 +83,23 @@ export function registerIpc(): void {
     updateSegment(id, patch)
   )
   ipcMain.handle('segments:delete', (_e, id: number) => deleteSegment(id))
+
+  // クリップ一覧（Phase 2.5）: 全区間 + 動画メタの結合。
+  // メタ未取得の動画（過去セッションで作った区間など）は先に ffprobe して videos を補完する。
+  ipcMain.handle('segments:listAll', async () => {
+    for (const rel of listVideoPathsMissingMeta()) {
+      try {
+        await probeVideo(rel) // 内部で videos へ upsert される
+      } catch {
+        // 動画が消えている等。メタ無しのまま一覧に出す。
+      }
+    }
+    return listAllClips()
+  })
+
+  ipcMain.handle('thumbs:ensure', (_e, videoRelPath: string, timeSec: number) =>
+    ensureThumb(videoRelPath, timeSec)
+  )
 
   ipcMain.handle('bgm:get', (): BgmInfo => currentBgmInfo())
   ipcMain.handle('bgm:pick', async (e): Promise<BgmInfo> => {

@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 import { readdirSync, statSync } from 'node:fs'
 import { join, basename, extname } from 'node:path'
 import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
-import { getCachedKeyframes, saveKeyframes } from './db'
+import { getCachedKeyframes, saveKeyframes, upsertVideoMeta } from './db'
 import type { BgmTrack, TreeNode, VideoMeta } from '../../shared/types'
 
 const execFileP = promisify(execFile)
@@ -126,7 +126,7 @@ export async function probeVideo(relPath: string): Promise<VideoMeta> {
   const fmt = data.format ?? {}
   const tags = fmt.tags ?? {}
 
-  return {
+  const meta: VideoMeta = {
     relPath,
     filename: basename(abs),
     fileSize: fmt.size ? Number(fmt.size) : null,
@@ -140,6 +140,9 @@ export async function probeVideo(relPath: string): Promise<VideoMeta> {
     hasAudio,
     recordedAt: tags.creation_time ?? null
   }
+  // クリップ一覧（Phase 2.5）の結合用に videos へ永続化しておく
+  upsertVideoMeta(meta)
+  return meta
 }
 
 /**

@@ -96,6 +96,17 @@ export function toBgmRelPosix(absPath: string): string {
   return toRelPosixOf(dir, absPath)
 }
 
+/** サムネイルキャッシュ（.dcm/thumbnails/、無ければ作成） */
+export function thumbsDir(): string {
+  const dir = join(metaDir(), 'thumbnails')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export function resolveInThumbs(relPath: string): string {
+  return resolveInBase(thumbsDir(), relPath)
+}
+
 // 一時プロキシは永続キャッシュを作らないため OS の一時フォルダに置き、終了時に消す。
 function tempProxyBaseRaw(): string {
   return join(app.getPath('temp'), 'drone-clip-manager', 'proxies')

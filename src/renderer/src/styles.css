@@ -212,6 +212,33 @@ input:focus-visible {
   white-space: nowrap;
 }
 
+/* ライブラリ ⟷ クリップの表示切替タブ（Phase 2.5） */
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bar-surface);
+  border-radius: var(--radius-m);
+  padding: 2px;
+}
+.view-tab {
+  background: transparent;
+  border: none;
+  color: var(--bar-muted);
+  border-radius: var(--radius-s);
+  padding: 2px 14px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.view-tab:hover {
+  color: var(--bar-text);
+}
+.view-tab.active {
+  background: var(--bar-hover);
+  color: var(--bar-text);
+  font-weight: 600;
+}
+
 /* ============================================================
    本体レイアウト
    ============================================================ */
@@ -764,6 +791,196 @@ input:focus-visible {
 }
 
 /* ============================================================
+   クリップ一覧ビュー（Phase 2.5）
+   ============================================================ */
+.clips-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+.clips-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  padding: 24px;
+  text-align: center;
+}
+.clips-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.clips-count {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.clips-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-m);
+  padding: 4px 8px;
+  font-size: var(--fs-sm);
+  max-width: 220px;
+}
+.clips-search {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-m);
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+  width: 180px;
+  outline: none;
+}
+.clips-search:focus {
+  border-color: var(--accent);
+}
+.clips-spacer {
+  flex: 1;
+}
+.clips-grid {
+  flex: 1;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  padding: 12px 16px;
+  align-content: start;
+}
+.clip-card {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  padding: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.clip-card:hover {
+  background: var(--hover);
+}
+.clip-card.selected {
+  border-color: var(--accent-border);
+  background: var(--selected);
+}
+.clip-check {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  cursor: pointer;
+}
+.clip-thumb {
+  position: relative;
+  width: 128px;
+  height: 72px;
+  flex: none;
+  background: #000;
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.clip-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.clip-thumb-ph {
+  color: var(--bar-faint);
+  font-size: 18px;
+}
+.clip-thumb-dur {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #eee;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-s);
+  padding: 0 5px;
+}
+.clip-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.clip-label-input {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  border-radius: var(--radius-m);
+  padding: 2px 6px;
+  margin-left: -6px;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  width: 100%;
+}
+.clip-label-input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  outline: none;
+}
+.clip-video-name {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-times {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.clip-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.clip-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
+.clip-act {
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: var(--radius-s);
+  padding: 2px 6px;
+}
+.clip-act:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.clip-act.danger:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* ============================================================
    書き出しモーダル
    ============================================================ */
 .modal-backdrop {
@@ -885,6 +1102,14 @@ input:focus-visible {
   white-space: nowrap;
   max-width: 190px;
   font-size: var(--fs-ui);
+}
+.modal-item-video {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
 }
 .modal-item-time {
   color: var(--muted);

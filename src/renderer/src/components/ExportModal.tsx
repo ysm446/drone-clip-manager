@@ -4,10 +4,15 @@ import { fmtTime } from '../util'
 
 const api = window.dcm
 
-interface Props {
+/** 書き出し対象の1件（区間 + 元動画）。動画横断の書き出しに対応（Phase 2.5） */
+export interface ExportTarget {
+  segment: Segment
   videoRelPath: string
   videoFilename: string
-  segments: Segment[]
+}
+
+interface Props {
+  items: ExportTarget[]
   onClose: () => void
 }
 
@@ -17,13 +22,19 @@ const LS_DIR = 'dcm.exportDir'
 const LS_TPL = 'dcm.exportTemplate'
 const DEFAULT_TPL = '{filename}_{label}_{index}'
 
-export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: Props) {
+export function ExportModal({ items, onClose }: Props) {
   const [outDir, setOutDir] = useState<string>(() => localStorage.getItem(LS_DIR) ?? '')
   const [template, setTemplate] = useState<string>(() => localStorage.getItem(LS_TPL) ?? DEFAULT_TPL)
-  const [checked, setChecked] = useState<Set<number>>(() => new Set(segments.map((s) => s.id)))
+  const [checked, setChecked] = useState<Set<number>>(() => new Set(items.map((t) => t.segment.id)))
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
   const [progress, setProgress] = useState<Record<number, RowState>>({})
+
+  // 複数動画に跨るときだけ元動画名の列を出す
+  const crossVideo = useMemo(
+    () => new Set(items.map((t) => t.videoRelPath)).size > 1,
+    [items]
+  )
 
   useEffect(() => {
     return api.onExportProgress((p) => {
@@ -34,9 +45,9 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
     })
   }, [])
 
-  const selectedSegments = useMemo(
-    () => segments.filter((s) => checked.has(s.id)),
-    [segments, checked]
+  const selectedItems = useMemo(
+    () => items.filter((t) => checked.has(t.segment.id)),
+    [items, checked]
   )
 
   const toggle = (id: number) =>
@@ -56,17 +67,17 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
   }
 
   const run = async () => {
-    if (!outDir || selectedSegments.length === 0) return
+    if (!outDir || selectedItems.length === 0) return
     localStorage.setItem(LS_TPL, template)
     setRunning(true)
     setFinished(false)
     setProgress({})
-    const jobs: ExportJob[] = selectedSegments.map((s, i) => ({
-      segmentId: s.id,
-      videoRelPath: videoRelPath,
-      inSec: s.inSnapped ?? s.inTime,
-      outSec: s.outSnapped ?? s.outTime,
-      label: s.label,
+    const jobs: ExportJob[] = selectedItems.map((t, i) => ({
+      segmentId: t.segment.id,
+      videoRelPath: t.videoRelPath,
+      inSec: t.segment.inSnapped ?? t.segment.inTime,
+      outSec: t.segment.outSnapped ?? t.segment.outTime,
+      label: t.segment.label,
       index: i + 1
     }))
     try {
@@ -117,7 +128,8 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
         </div>
 
         <div className="modal-list">
-          {segments.map((s) => {
+          {items.map((t) => {
+            const s = t.segment
             const lo = s.inSnapped ?? s.inTime
             const hi = s.outSnapped ?? s.outTime
             const st = progress[s.id]
@@ -130,6 +142,11 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
                   disabled={running}
                 />
                 <span className="modal-item-name">{s.label ?? `区間 #${s.id}`}</span>
+                {crossVideo && (
+                  <span className="modal-item-video" title={t.videoRelPath}>
+                    {t.videoFilename}
+                  </span>
+                )}
                 <span className="modal-item-time">
                   {fmtTime(lo)}–{fmtTime(hi)} ({fmtTime(hi - lo)})
                 </span>
@@ -153,7 +170,7 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
               ? '書き出し中…'
               : finished
                 ? `完了: 成功 ${okCount} / 失敗 ${errCount}`
-                : `${selectedSegments.length} 区間を選択中`}
+                : `${selectedItems.length} 区間を選択中`}
           </span>
           <div className="modal-actions">
             <button className="btn" onClick={onClose} disabled={running}>
@@ -162,7 +179,7 @@ export function ExportModal({ videoRelPath, videoFilename, segments, onClose }: 
             <button
               className="btn primary"
               onClick={run}
-              disabled={running || !outDir || selectedSegments.length === 0}
+              disabled={running || !outDir || selectedItems.length === 0}
             >
               書き出し実行
             </button>

@@ -51,6 +51,17 @@ export interface SegmentInput {
   color?: string | null
 }
 
+/** クリップ一覧の1件（区間 + 元動画メタの結合 / Phase 2.5） */
+export interface ClipItem extends Segment {
+  /** 元動画のファイル名（メタ未取得時はパス末尾） */
+  videoFilename: string
+  videoDurationSec: number | null
+  videoCodec: string | null
+  videoWidth: number | null
+  videoHeight: number | null
+  videoFps: number | null
+}
+
 /** ルート設定の結果 */
 export interface RootInfo {
   root: string | null
@@ -152,6 +163,13 @@ export interface DcmApi {
   addSegment: (input: SegmentInput) => Promise<Segment>
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>
   deleteSegment: (id: number) => Promise<void>
+  // --- クリップ一覧（Phase 2.5） ---
+  /** 全動画の区間を横断取得（動画メタを結合） */
+  listAllClips: () => Promise<ClipItem[]>
+  /** in 点サムネイルを用意（無ければ生成）。生成物のファイル名を返す。 */
+  ensureThumb: (videoRelPath: string, timeSec: number) => Promise<string>
+  /** サムネイルを表示するためのカスタムプロトコル URL */
+  thumbUrl: (thumbName: string) => string
   // --- BGM ---
   pickBgmDir: () => Promise<BgmInfo>
   getBgm: () => Promise<BgmInfo>
@@ -164,7 +182,8 @@ export interface DcmApi {
   onExportProgress: (cb: (p: ExportProgress) => void) => () => void
   // --- mpv ネイティブ再生 ---
   mpvAvailable: () => Promise<boolean>
-  mpvLoad: (relPath: string) => Promise<boolean>
+  /** startSec を渡すとその位置から一時停止状態で開く（クリップ→in 点ジャンプ用） */
+  mpvLoad: (relPath: string, startSec?: number) => Promise<boolean>
   mpvSetBounds: (b: MpvBounds) => void
   mpvSetVisible: (visible: boolean) => void
   mpvPlay: () => void

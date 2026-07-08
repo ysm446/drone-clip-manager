@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { RootInfo, Segment, VideoMeta } from '../../shared/types'
+import type { ClipItem, RootInfo, Segment, VideoMeta } from '../../shared/types'
 import { FolderTree } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
 import { BgmPlayer } from './components/BgmPlayer'
-import { ExportModal } from './components/ExportModal'
+import { ExportModal, type ExportTarget } from './components/ExportModal'
+import { ClipsView } from './components/ClipsView'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
@@ -20,7 +21,10 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [exportOpen, setExportOpen] = useState(false)
+  /** 書き出しモーダルの対象（null なら非表示）。ライブラリ / クリップ両ビューから使う。 */
+  const [exportItems, setExportItems] = useState<ExportTarget[] | null>(null)
+  /** ライブラリ（動画一覧）⟷ クリップ（区間横断一覧）の表示切替（Phase 2.5） */
+  const [view, setView] = useState<'library' | 'clips'>('library')
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
   const [usingProxy, setUsingProxy] = useState(false)
   const [playError, setPlayError] = useState(false)
@@ -34,6 +38,8 @@ export function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const currentRelRef = useRef<string | null>(null)
+  /** クリップから開いたときの遷移先秒（動画のロード完了後にシークする） */
+  const pendingSeekRef = useRef<number | null>(null)
   const mpvHostRef = useRef<HTMLDivElement>(null)
   const mpvModeRef = useRef(false)
   const mpvPausedRef = useRef(true)
@@ -84,11 +90,32 @@ export function App() {
     }
   }, [mpvMode])
 
-  // mpv ウィンドウの表示可否（動画選択中 かつ モーダル非表示のときだけ表示）
+  // mpv ウィンドウの表示可否（ライブラリビューで動画選択中 かつ モーダル非表示のときだけ表示）
   useEffect(() => {
     if (!mpvMode) return
-    api.mpvSetVisible(!!selected && !exportOpen)
-  }, [mpvMode, selected, exportOpen])
+    api.mpvSetVisible(!!selected && !exportItems && view === 'library')
+  }, [mpvMode, selected, exportItems, view])
+
+  // クリップから開いた場合の遅延シーク: 動画のロード完了（duration 確定）後に in 点へ飛ぶ
+  useEffect(() => {
+    if (duration > 0 && pendingSeekRef.current != null) {
+      const t = pendingSeekRef.current
+      pendingSeekRef.current = null
+      seek(Math.min(t, duration))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duration])
+
+  // クリップビューでの編集（ラベル / 削除）を戻ってきたときに反映する
+  useEffect(() => {
+    if (view === 'library' && currentRelRef.current) {
+      const rel = currentRelRef.current
+      api.listSegments(rel).then((segs) => {
+        if (currentRelRef.current === rel) setSegments(segs)
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view])
 
   // プロキシ生成の進捗/完了を受ける（現在選択中の動画のものだけ反映）
   useEffect(() => {
@@ -136,13 +163,18 @@ export function App() {
     setSegments([])
     resetPlayback()
     if (mpvModeRef.current) {
-      // mpv 埋め込み再生（原本を HW デコード）。読み込み後は一時停止で先頭表示。
+      // mpv 埋め込み再生（原本を HW デコード）。読み込み後は一時停止で表示。
+      // クリップから開いた場合は in 点を start オプションで渡す（ロード後 seek は効かない）。
+      const startAt = pendingSeekRef.current
+      pendingSeekRef.current = null
       mpvPausedRef.current = true
       setMpvPaused(true)
-      api.mpvLoad(relPath).then((ok) => {
+      if (startAt != null) setCurrentTime(startAt)
+      api.mpvLoad(relPath, startAt ?? undefined).then((ok) => {
         if (currentRelRef.current !== relPath) return
         if (!ok) {
-          // mpv 起動に失敗 → <video> フォールバックへ
+          // mpv 起動に失敗 → <video> フォールバックへ（in 点は duration 確定後にシーク）
+          pendingSeekRef.current = startAt
           mpvModeRef.current = false
           setMpvMode(false)
           setVideoSrc(api.mediaUrl(relPath))
@@ -270,10 +302,36 @@ export function App() {
     api.updateSegment(id, { label }).catch(() => void 0)
   }, [])
 
+  // クリップ一覧から: 元動画を開いて in 点へシーク（Phase 2.5）
+  const openClip = useCallback(
+    (clip: ClipItem) => {
+      const t = clip.inSnapped ?? clip.inTime
+      setView('library')
+      if (currentRelRef.current === clip.videoRelPath) {
+        seek(t)
+        setSelectedSeg(clip.id)
+      } else {
+        pendingSeekRef.current = t
+        selectVideo(clip.videoRelPath).then(() => setSelectedSeg(clip.id))
+      }
+    },
+    [seek, selectVideo]
+  )
+
+  // ライブラリビューの「書き出し…」: 選択中動画の全区間を対象にモーダルを開く
+  const openExportForCurrent = useCallback(() => {
+    if (!selected) return
+    const videoFilename = meta?.filename ?? selected
+    setExportItems(
+      segments.map((s) => ({ segment: s, videoRelPath: selected, videoFilename }))
+    )
+  }, [selected, meta, segments])
+
   // I / O キーで現在位置を in/out に使った区間作成の補助
   useEffect(() => {
     const pending: { in: number | null } = { in: null }
     const onKey = (e: KeyboardEvent) => {
+      if (view !== 'library') return // クリップビューでは編集ショートカットを無効化
       if (!selected || duration <= 0) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
@@ -296,7 +354,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, duration, currentTime, createSegment, togglePlay, selectedSeg, deleteSeg])
+  }, [view, selected, duration, currentTime, createSegment, togglePlay, selectedSeg, deleteSeg])
 
   return (
     <div className="app">
@@ -304,6 +362,20 @@ export function App() {
         <button className="btn" onClick={pickRoot}>
           ルートフォルダを選択…
         </button>
+        <nav className="view-tabs">
+          <button
+            className={`view-tab${view === 'library' ? ' active' : ''}`}
+            onClick={() => setView('library')}
+          >
+            ライブラリ
+          </button>
+          <button
+            className={`view-tab${view === 'clips' ? ' active' : ''}`}
+            onClick={() => setView('clips')}
+          >
+            クリップ
+          </button>
+        </nav>
         <div className="root-path" title={root.root ?? ''}>
           {root.root ?? '未設定'}
         </div>
@@ -317,6 +389,10 @@ export function App() {
         </aside>
 
         <main className="main">
+          {view === 'clips' ? (
+            <ClipsView onOpenClip={openClip} onExport={setExportItems} />
+          ) : (
+            <>
           <section className="player-pane">
             {mpvMode ? (
               <>
@@ -402,7 +478,7 @@ export function App() {
                   <button
                     className="btn primary"
                     disabled={segments.length === 0}
-                    onClick={() => setExportOpen(true)}
+                    onClick={openExportForCurrent}
                   >
                     書き出し…
                   </button>
@@ -433,16 +509,13 @@ export function App() {
               </div>
             )}
           </section>
+            </>
+          )}
         </main>
       </div>
 
-      {exportOpen && selected && (
-        <ExportModal
-          videoRelPath={selected}
-          videoFilename={meta?.filename ?? selected}
-          segments={segments}
-          onClose={() => setExportOpen(false)}
-        />
+      {exportItems && exportItems.length > 0 && (
+        <ExportModal items={exportItems} onClose={() => setExportItems(null)} />
       )}
     </div>
   )

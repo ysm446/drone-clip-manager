@@ -2,7 +2,13 @@ import { app, shell, BrowserWindow, ipcMain, protocol, net } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { registerIpc } from './ipc'
-import { cleanTempProxies, resolveInBgm, resolveInRoot, resolveInTempProxy } from './util/paths'
+import {
+  cleanTempProxies,
+  resolveInBgm,
+  resolveInRoot,
+  resolveInTempProxy,
+  resolveInThumbs
+} from './util/paths'
 import {
   detectMpv,
   mpvKill,
@@ -27,9 +33,10 @@ app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport')
 
 // 動画・BGM は file:// の制約を避け、Range 対応でスクラブできるよう独自プロトコルで配信する。
 // host で配信元を切り替える:
-//   dcm-media://root/<rel>  ルートフォルダ配下（原本）
-//   dcm-media://bgm/<rel>   BGM フォルダ配下
-//   dcm-media://tmp/<rel>   一時プロキシ（OS 一時フォルダ・終了時に削除）
+//   dcm-media://root/<rel>   ルートフォルダ配下（原本）
+//   dcm-media://bgm/<rel>    BGM フォルダ配下
+//   dcm-media://tmp/<rel>    一時プロキシ（OS 一時フォルダ・終了時に削除）
+//   dcm-media://thumb/<rel>  サムネイルキャッシュ（.dcm/thumbnails/）
 const MEDIA_SCHEME = 'dcm-media'
 
 protocol.registerSchemesAsPrivileged([
@@ -49,7 +56,9 @@ function registerMediaProtocol(): void {
           ? resolveInBgm(relPath)
           : url.host === 'tmp'
             ? resolveInTempProxy(relPath)
-            : resolveInRoot(relPath)
+            : url.host === 'thumb'
+              ? resolveInThumbs(relPath)
+              : resolveInRoot(relPath)
       // net.fetch(file://) は Range リクエストを解釈してくれる
       return net.fetch(pathToFileURL(abs).toString(), {
         headers: request.headers,
@@ -156,9 +165,9 @@ function createWindow(): void {
 
 function registerMpvIpc(): void {
   ipcMain.handle('mpv:available', () => detectMpv() !== null)
-  ipcMain.handle('mpv:load', async (_e, relPath: string) => {
+  ipcMain.handle('mpv:load', async (_e, relPath: string, startSec?: number) => {
     const ok = await ensureMpv()
-    if (ok) mpvLoad(relPath)
+    if (ok) mpvLoad(relPath, startSec)
     return ok
   })
   ipcMain.on('mpv:setBounds', (_e, b: { x: number; y: number; w: number; h: number }) => {

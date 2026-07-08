@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { metaDir } from '../util/paths'
-import type { Segment, SegmentInput } from '../../shared/types'
+import type { ClipItem, Segment, SegmentInput, VideoMeta } from '../../shared/types'
 
 // メタデータ DB は各ルート直下の .dcm/library.db。
 // ルートを切り替えたら DB も開き直す（ルート間で共有しない）。
@@ -150,6 +150,79 @@ export function updateSegment(id: number, patch: Partial<SegmentInput>): Segment
 
 export function deleteSegment(id: number): void {
   getDb().prepare('DELETE FROM segments WHERE id = ?').run(id)
+}
+
+/** ffprobe 済みメタを videos に永続化（rel_path 単位で upsert）。クリップ一覧の結合に使う。 */
+export function upsertVideoMeta(meta: VideoMeta): void {
+  getDb()
+    .prepare(
+      `INSERT INTO videos (rel_path, filename, file_size, duration_sec, codec, width, height, fps,
+                           bit_depth, color_profile, has_audio, recorded_at)
+       VALUES (@relPath, @filename, @fileSize, @durationSec, @codec, @width, @height, @fps,
+               @bitDepth, @colorProfile, @hasAudio, @recordedAt)
+       ON CONFLICT(rel_path) DO UPDATE SET
+         filename=excluded.filename, file_size=excluded.file_size, duration_sec=excluded.duration_sec,
+         codec=excluded.codec, width=excluded.width, height=excluded.height, fps=excluded.fps,
+         bit_depth=excluded.bit_depth, color_profile=excluded.color_profile,
+         has_audio=excluded.has_audio, recorded_at=excluded.recorded_at`
+    )
+    .run({
+      relPath: meta.relPath,
+      filename: meta.filename,
+      fileSize: meta.fileSize,
+      durationSec: meta.durationSec,
+      codec: meta.codec,
+      width: meta.width,
+      height: meta.height,
+      fps: meta.fps,
+      bitDepth: meta.bitDepth,
+      colorProfile: meta.colorProfile,
+      hasAudio: meta.hasAudio ? 1 : 0,
+      recordedAt: meta.recordedAt
+    })
+}
+
+/** 区間を持つのに videos にメタが無い動画の相対パス一覧（listAll 前の補完対象） */
+export function listVideoPathsMissingMeta(): string[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT s.video_rel_path AS p FROM segments s
+       LEFT JOIN videos v ON v.rel_path = s.video_rel_path
+       WHERE v.rel_path IS NULL`
+    )
+    .all() as { p: string }[]
+  return rows.map((r) => r.p)
+}
+
+interface ClipRow extends SegmentRow {
+  v_filename: string | null
+  v_duration_sec: number | null
+  v_codec: string | null
+  v_width: number | null
+  v_height: number | null
+  v_fps: number | null
+}
+
+/** 全動画の区間を横断取得（動画メタを結合 / Phase 2.5） */
+export function listAllClips(): ClipItem[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT s.*, v.filename AS v_filename, v.duration_sec AS v_duration_sec, v.codec AS v_codec,
+              v.width AS v_width, v.height AS v_height, v.fps AS v_fps
+       FROM segments s
+       LEFT JOIN videos v ON v.rel_path = s.video_rel_path
+       ORDER BY s.video_rel_path ASC, s.in_time ASC`
+    )
+    .all() as ClipRow[]
+  return rows.map((r) => ({
+    ...rowToSegment(r),
+    videoFilename: r.v_filename ?? r.video_rel_path.split('/').pop() ?? r.video_rel_path,
+    videoDurationSec: r.v_duration_sec,
+    videoCodec: r.v_codec,
+    videoWidth: r.v_width,
+    videoHeight: r.v_height,
+    videoFps: r.v_fps
+  }))
 }
 
 /** キーフレームキャッシュの取得 */

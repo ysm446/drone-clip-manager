@@ -150,8 +150,11 @@ export async function mpvStart(wid: string, onEvent: (e: MpvEvent) => void): Pro
   return true
 }
 
-export function mpvLoad(relPath: string): void {
+export function mpvLoad(relPath: string, startSec?: number): void {
   const abs = resolveInRoot(relPath)
+  // loadfile 直後の seek はデマクサ準備中で無視されるため、開始位置は
+  // start オプション（次のロードに適用されるファイルローカルオプション）で渡す。
+  void command(['set_property', 'start', startSec != null && startSec > 0 ? String(startSec) : 'none'])
   void command(['loadfile', abs])
   void command(['set_property', 'pause', true])
 }
