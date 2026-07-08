@@ -1,7 +1,16 @@
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { metaDir } from '../util/paths'
-import type { ClipItem, Segment, SegmentInput, VideoMeta } from '../../shared/types'
+import type {
+  ClipItem,
+  Segment,
+  SegmentInput,
+  Sequence,
+  SequenceEdge,
+  SequenceGraph,
+  SequenceNode,
+  VideoMeta
+} from '../../shared/types'
 
 // メタデータ DB は各ルート直下の .dcm/library.db。
 // ルートを切り替えたら DB も開き直す（ルート間で共有しない）。
@@ -48,6 +57,31 @@ CREATE TABLE IF NOT EXISTS segments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_rel_path);
+
+-- シーケンス（クリップをつないだ順路 / Phase 2.6）
+CREATE TABLE IF NOT EXISTS sequences (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sequence_nodes (
+  id          INTEGER PRIMARY KEY,
+  sequence_id INTEGER NOT NULL,
+  segment_id  INTEGER NOT NULL,
+  x           REAL NOT NULL DEFAULT 0,
+  y           REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sequence_edges (
+  id          INTEGER PRIMARY KEY,
+  sequence_id INTEGER NOT NULL,
+  src_node_id INTEGER NOT NULL,
+  dst_node_id INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_seqnodes_seq ON sequence_nodes(sequence_id);
+CREATE INDEX IF NOT EXISTS idx_seqedges_seq ON sequence_edges(sequence_id);
 `
 
 export function getDb(): Database.Database {
@@ -242,4 +276,185 @@ export function saveKeyframes(videoRelPath: string, times: number[]): void {
     for (const t of list) ins.run(videoRelPath, t)
   })
   tx(times)
+}
+
+// --- シーケンス（クリップをつないだ順路 / Phase 2.6） ---
+
+interface SequenceRow {
+  id: number
+  name: string
+  created_at: string
+}
+
+function rowToSequence(r: SequenceRow): Sequence {
+  return { id: r.id, name: r.name, createdAt: r.created_at }
+}
+
+export function listSequences(): Sequence[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM sequences ORDER BY created_at DESC, id DESC')
+    .all() as SequenceRow[]
+  return rows.map(rowToSequence)
+}
+
+export function createSequence(name: string): Sequence {
+  const info = getDb().prepare('INSERT INTO sequences (name) VALUES (?)').run(name)
+  const row = getDb()
+    .prepare('SELECT * FROM sequences WHERE id = ?')
+    .get(Number(info.lastInsertRowid)) as SequenceRow
+  return rowToSequence(row)
+}
+
+export function renameSequence(id: number, name: string): void {
+  getDb().prepare('UPDATE sequences SET name = ? WHERE id = ?').run(name, id)
+}
+
+export function deleteSequence(id: number): void {
+  const d = getDb()
+  const tx = d.transaction((seqId: number) => {
+    d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(seqId)
+    d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(seqId)
+    d.prepare('DELETE FROM sequences WHERE id = ?').run(seqId)
+  })
+  tx(id)
+}
+
+interface SequenceNodeRow {
+  id: number
+  sequence_id: number
+  segment_id: number
+  x: number
+  y: number
+}
+
+/** ノード行 + そのクリップ（segment × video 結合。無ければ null）を組み立てる。 */
+function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): SequenceNode {
+  return {
+    id: r.id,
+    sequenceId: r.sequence_id,
+    segmentId: r.segment_id,
+    x: r.x,
+    y: r.y,
+    clip: clipBySeg.get(r.segment_id) ?? null
+  }
+}
+
+interface SequenceEdgeRow {
+  id: number
+  sequence_id: number
+  src_node_id: number
+  dst_node_id: number
+}
+
+function rowToEdge(r: SequenceEdgeRow): SequenceEdge {
+  return { id: r.id, sequenceId: r.sequence_id, srcNodeId: r.src_node_id, dstNodeId: r.dst_node_id }
+}
+
+/** ノードの segment を ClipItem（listAllClips と同じ結合）に解決するためのマップ。 */
+function clipMap(): Map<number, ClipItem> {
+  const map = new Map<number, ClipItem>()
+  for (const c of listAllClips()) map.set(c.id, c)
+  return map
+}
+
+export function getSequenceGraph(id: number): SequenceGraph {
+  const d = getDb()
+  const seqRow = d.prepare('SELECT * FROM sequences WHERE id = ?').get(id) as SequenceRow | undefined
+  if (!seqRow) throw new Error(`シーケンスが見つかりません: ${id}`)
+  const nodeRows = d
+    .prepare('SELECT * FROM sequence_nodes WHERE sequence_id = ? ORDER BY id ASC')
+    .all(id) as SequenceNodeRow[]
+  const edgeRows = d
+    .prepare('SELECT * FROM sequence_edges WHERE sequence_id = ? ORDER BY id ASC')
+    .all(id) as SequenceEdgeRow[]
+  const clips = clipMap()
+  return {
+    sequence: rowToSequence(seqRow),
+    nodes: nodeRows.map((r) => buildNode(r, clips)),
+    edges: edgeRows.map(rowToEdge)
+  }
+}
+
+export function addSequenceNode(
+  sequenceId: number,
+  segmentId: number,
+  x: number,
+  y: number
+): SequenceNode {
+  const info = getDb()
+    .prepare('INSERT INTO sequence_nodes (sequence_id, segment_id, x, y) VALUES (?, ?, ?, ?)')
+    .run(sequenceId, segmentId, x, y)
+  const row = getDb()
+    .prepare('SELECT * FROM sequence_nodes WHERE id = ?')
+    .get(Number(info.lastInsertRowid)) as SequenceNodeRow
+  return buildNode(row, clipMap())
+}
+
+export function updateSequenceNodePos(nodeId: number, x: number, y: number): void {
+  getDb().prepare('UPDATE sequence_nodes SET x = ?, y = ? WHERE id = ?').run(x, y, nodeId)
+}
+
+export function removeSequenceNode(nodeId: number): void {
+  const d = getDb()
+  const tx = d.transaction((id: number) => {
+    d.prepare('DELETE FROM sequence_edges WHERE src_node_id = ? OR dst_node_id = ?').run(id, id)
+    d.prepare('DELETE FROM sequence_nodes WHERE id = ?').run(id)
+  })
+  tx(nodeId)
+}
+
+/** dst から edge をたどって src に到達できるか（閉路検出用） */
+function reaches(edges: SequenceEdgeRow[], from: number, target: number): boolean {
+  const seen = new Set<number>()
+  const stack = [from]
+  while (stack.length) {
+    const cur = stack.pop()!
+    if (cur === target) return true
+    if (seen.has(cur)) continue
+    seen.add(cur)
+    for (const e of edges) if (e.src_node_id === cur) stack.push(e.dst_node_id)
+  }
+  return false
+}
+
+/**
+ * エッジを追加する。一本道（各ノードの out/in は 1 本）を強制し、閉路は拒否する。
+ * 同 src の既存 out・同 dst の既存 in を張り替える。
+ */
+export function addSequenceEdge(
+  sequenceId: number,
+  srcNodeId: number,
+  dstNodeId: number
+): SequenceEdge {
+  if (srcNodeId === dstNodeId) throw new Error('同じノードには接続できません')
+  const d = getDb()
+  const edges = d
+    .prepare('SELECT * FROM sequence_edges WHERE sequence_id = ?')
+    .all(sequenceId) as SequenceEdgeRow[]
+  // dst からたどって src に戻れるなら、この接続は閉路を作る
+  if (reaches(edges, dstNodeId, srcNodeId)) throw new Error('閉路になる接続はできません')
+  const tx = d.transaction(() => {
+    d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ? AND src_node_id = ?').run(
+      sequenceId,
+      srcNodeId
+    )
+    d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ? AND dst_node_id = ?').run(
+      sequenceId,
+      dstNodeId
+    )
+    return d
+      .prepare(
+        'INSERT INTO sequence_edges (sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?)'
+      )
+      .run(sequenceId, srcNodeId, dstNodeId)
+  })
+  const info = tx()
+  const row = d
+    .prepare('SELECT * FROM sequence_edges WHERE id = ?')
+    .get(Number(info.lastInsertRowid)) as SequenceEdgeRow
+  return rowToEdge(row)
+}
+
+export function removeSequenceEdge(edgeId: number): void {
+  getDb().prepare('DELETE FROM sequence_edges WHERE id = ?').run(edgeId)
 }

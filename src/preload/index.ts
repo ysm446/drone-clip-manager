@@ -28,6 +28,18 @@ const api: DcmApi = {
   updateSegment: (id, patch) => ipcRenderer.invoke('segments:update', id, patch),
   deleteSegment: (id) => ipcRenderer.invoke('segments:delete', id),
   listAllClips: () => ipcRenderer.invoke('segments:listAll'),
+  listSequences: () => ipcRenderer.invoke('seq:list'),
+  createSequence: (name) => ipcRenderer.invoke('seq:create', name),
+  renameSequence: (id, name) => ipcRenderer.invoke('seq:rename', id, name),
+  deleteSequence: (id) => ipcRenderer.invoke('seq:delete', id),
+  getSequenceGraph: (id) => ipcRenderer.invoke('seq:get', id),
+  addSequenceNode: (sequenceId, segmentId, x, y) =>
+    ipcRenderer.invoke('seq:addNode', sequenceId, segmentId, x, y),
+  moveSequenceNode: (nodeId, x, y) => ipcRenderer.invoke('seq:moveNode', nodeId, x, y),
+  removeSequenceNode: (nodeId) => ipcRenderer.invoke('seq:removeNode', nodeId),
+  addSequenceEdge: (sequenceId, srcNodeId, dstNodeId) =>
+    ipcRenderer.invoke('seq:addEdge', sequenceId, srcNodeId, dstNodeId),
+  removeSequenceEdge: (edgeId) => ipcRenderer.invoke('seq:removeEdge', edgeId),
   ensureThumb: (videoRelPath, timeSec) => ipcRenderer.invoke('thumbs:ensure', videoRelPath, timeSec),
   thumbUrl: (thumbName) => `dcm-media://thumb/${encodeURIComponent(thumbName)}`,
   captureScreenshot: (videoRelPath, timeSec, useMpv) =>

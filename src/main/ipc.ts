@@ -8,7 +8,17 @@ import {
   updateSegment,
   deleteSegment,
   listAllClips,
-  listVideoPathsMissingMeta
+  listVideoPathsMissingMeta,
+  listSequences,
+  createSequence,
+  renameSequence,
+  deleteSequence,
+  getSequenceGraph,
+  addSequenceNode,
+  updateSequenceNodePos,
+  removeSequenceNode,
+  addSequenceEdge,
+  removeSequenceEdge
 } from './services/db'
 import { exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
@@ -97,6 +107,24 @@ export function registerIpc(): void {
     }
     return listAllClips()
   })
+
+  // シーケンス（Phase 2.6）
+  ipcMain.handle('seq:list', () => listSequences())
+  ipcMain.handle('seq:create', (_e, name: string) => createSequence(name))
+  ipcMain.handle('seq:rename', (_e, id: number, name: string) => renameSequence(id, name))
+  ipcMain.handle('seq:delete', (_e, id: number) => deleteSequence(id))
+  ipcMain.handle('seq:get', (_e, id: number) => getSequenceGraph(id))
+  ipcMain.handle('seq:addNode', (_e, seqId: number, segmentId: number, x: number, y: number) =>
+    addSequenceNode(seqId, segmentId, x, y)
+  )
+  ipcMain.handle('seq:moveNode', (_e, nodeId: number, x: number, y: number) =>
+    updateSequenceNodePos(nodeId, x, y)
+  )
+  ipcMain.handle('seq:removeNode', (_e, nodeId: number) => removeSequenceNode(nodeId))
+  ipcMain.handle('seq:addEdge', (_e, seqId: number, srcNodeId: number, dstNodeId: number) =>
+    addSequenceEdge(seqId, srcNodeId, dstNodeId)
+  )
+  ipcMain.handle('seq:removeEdge', (_e, edgeId: number) => removeSequenceEdge(edgeId))
 
   ipcMain.handle('thumbs:ensure', (_e, videoRelPath: string, timeSec: number) =>
     ensureThumb(videoRelPath, timeSec)

@@ -62,6 +62,39 @@ export interface ClipItem extends Segment {
   videoFps: number | null
 }
 
+/** シーケンス（クリップをつないだ順路 / Phase 2.6） */
+export interface Sequence {
+  id: number
+  name: string
+  createdAt: string
+}
+
+/** シーケンス上のノード（1 クリップ = 1 ノード）。x,y はキャンバス座標。 */
+export interface SequenceNode {
+  id: number
+  sequenceId: number
+  segmentId: number
+  x: number
+  y: number
+  /** segment × video の結合（元 segment が消えていれば null） */
+  clip: ClipItem | null
+}
+
+/** ノード間の接続（一本道: 各ノードの out/in は 1 本） */
+export interface SequenceEdge {
+  id: number
+  sequenceId: number
+  srcNodeId: number
+  dstNodeId: number
+}
+
+/** シーケンス 1 件のグラフ全体 */
+export interface SequenceGraph {
+  sequence: Sequence
+  nodes: SequenceNode[]
+  edges: SequenceEdge[]
+}
+
 /** ルート設定の結果 */
 export interface RootInfo {
   root: string | null
@@ -168,6 +201,28 @@ export interface DcmApi {
   // --- クリップ一覧（Phase 2.5） ---
   /** 全動画の区間を横断取得（動画メタを結合） */
   listAllClips: () => Promise<ClipItem[]>
+  // --- シーケンス（Phase 2.6） ---
+  listSequences: () => Promise<Sequence[]>
+  createSequence: (name: string) => Promise<Sequence>
+  renameSequence: (id: number, name: string) => Promise<void>
+  deleteSequence: (id: number) => Promise<void>
+  /** シーケンスのノード + エッジ（各ノードにクリップ結合済み）を取得 */
+  getSequenceGraph: (id: number) => Promise<SequenceGraph>
+  addSequenceNode: (
+    sequenceId: number,
+    segmentId: number,
+    x: number,
+    y: number
+  ) => Promise<SequenceNode>
+  moveSequenceNode: (nodeId: number, x: number, y: number) => Promise<void>
+  removeSequenceNode: (nodeId: number) => Promise<void>
+  /** エッジ追加（一本道強制・閉路拒否は main 側で行う） */
+  addSequenceEdge: (
+    sequenceId: number,
+    srcNodeId: number,
+    dstNodeId: number
+  ) => Promise<SequenceEdge>
+  removeSequenceEdge: (edgeId: number) => Promise<void>
   /** in 点サムネイルを用意（無ければ生成）。生成物のファイル名を返す。 */
   ensureThumb: (videoRelPath: string, timeSec: number) => Promise<string>
   /** サムネイルを表示するためのカスタムプロトコル URL */

@@ -7,6 +7,7 @@ import { SegmentList } from './components/SegmentList'
 import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
+import { SequenceView, type SeqPlayItem } from './components/SequenceView'
 import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -24,8 +25,10 @@ export function App() {
   const [busy, setBusy] = useState(false)
   /** 書き出しモーダルの対象（null なら非表示）。ライブラリ / クリップ両ビューから使う。 */
   const [exportItems, setExportItems] = useState<ExportTarget[] | null>(null)
-  /** ライブラリ（動画一覧）⟷ クリップ（区間横断一覧）の表示切替（Phase 2.5） */
-  const [view, setView] = useState<'library' | 'clips'>('library')
+  /** ライブラリ / クリップ / シーケンスの表示切替（Phase 2.5 / 2.6） */
+  const [view, setView] = useState<'library' | 'clips' | 'sequence'>('library')
+  /** シーケンス連続再生中のノード id（停止中は null / Phase 2.6） */
+  const [playingNodeId, setPlayingNodeId] = useState<number | null>(null)
   /** 一時的な通知（スクリーンショット保存など）。数秒で消える。 */
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -54,6 +57,17 @@ export function App() {
   const mpvHostRef = useRef<HTMLDivElement>(null)
   const mpvModeRef = useRef(false)
   const mpvPausedRef = useRef(true)
+  // --- シーケンス連続再生（Phase 2.6） ---
+  /** 再生キュー（順路のクリップ列）と現在位置 */
+  const seqQueueRef = useRef<SeqPlayItem[]>([])
+  const seqIndexRef = useRef(-1)
+  const seqActiveRef = useRef(false)
+  /** 現クリップの再生範囲に一度入ったか（ロード直後の誤送り防止） */
+  const seqArmedRef = useRef(false)
+  /** 動画ロード完了後に自動再生するか（クリップ跨ぎの送り用） */
+  const seqAutoPlayRef = useRef(false)
+  /** 最新の自動送り関数を保持（mpv イベント購読は 1 度きりのため ref 経由で呼ぶ） */
+  const advanceRef = useRef<(t: number) => void>(() => {})
 
   useEffect(() => {
     api.getRoot().then(setRoot)
@@ -69,6 +83,7 @@ export function App() {
       if (e.type === 'time') {
         currentTimeRef.current = e.value
         setCurrentTime(e.value)
+        if (seqActiveRef.current) advanceRef.current(e.value)
       } else if (e.type === 'duration') {
         if (e.value > 0) setDuration(e.value)
       } else if (e.type === 'pause') {
@@ -139,6 +154,11 @@ export function App() {
       const t = pendingSeekRef.current
       pendingSeekRef.current = null
       seek(Math.min(t, duration))
+      // シーケンス連続再生の <video> フォールバック: シーク後に自動再生
+      if (seqAutoPlayRef.current) {
+        seqAutoPlayRef.current = false
+        videoRef.current?.play().catch(() => void 0)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duration])
@@ -215,6 +235,12 @@ export function App() {
           mpvModeRef.current = false
           setMpvMode(false)
           setVideoSrc(api.mediaUrl(relPath))
+        } else if (seqAutoPlayRef.current) {
+          // シーケンス連続再生: 新しいクリップのロード完了後に自動再生
+          seqAutoPlayRef.current = false
+          api.mpvPlay()
+          mpvPausedRef.current = false
+          setMpvPaused(false)
         }
       })
     } else {
@@ -290,6 +316,95 @@ export function App() {
       const v = videoRef.current
       if (v) (v.paused ? v.play() : v.pause())
     }
+  }, [])
+
+  // --- シーケンス連続再生コントローラ（Phase 2.6） ---
+  const resumePlay = useCallback(() => {
+    if (mpvModeRef.current) {
+      api.mpvPlay()
+      mpvPausedRef.current = false
+      setMpvPaused(false)
+    } else {
+      videoRef.current?.play().catch(() => void 0)
+    }
+  }, [])
+
+  const stopSequence = useCallback(() => {
+    seqActiveRef.current = false
+    seqArmedRef.current = false
+    seqAutoPlayRef.current = false
+    setPlayingNodeId(null)
+    if (mpvModeRef.current) {
+      api.mpvPause()
+      mpvPausedRef.current = true
+      setMpvPaused(true)
+    } else {
+      videoRef.current?.pause()
+    }
+  }, [])
+
+  // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）
+  const loadSeqIndex = useCallback(
+    (i: number) => {
+      const item = seqQueueRef.current[i]
+      if (!item) {
+        stopSequence()
+        return
+      }
+      seqIndexRef.current = i
+      seqArmedRef.current = false
+      setPlayingNodeId(item.nodeId)
+      const inSec = item.clip.inSnapped ?? item.clip.inTime
+      const rel = item.clip.videoRelPath
+      if (currentRelRef.current === rel) {
+        seek(inSec)
+        resumePlay()
+      } else {
+        seqAutoPlayRef.current = true
+        pendingSeekRef.current = inSec
+        selectVideo(rel)
+      }
+    },
+    [seek, resumePlay, selectVideo, stopSequence]
+  )
+
+  // mpv/<video> の時刻更新から呼ぶ: 現クリップの out に達したら次へ送る
+  const maybeAdvance = useCallback(
+    (t: number) => {
+      const item = seqQueueRef.current[seqIndexRef.current]
+      if (!item) return
+      const out = item.clip.outSnapped ?? item.clip.outTime
+      // ロード直後は旧位置の時刻が残ることがあるので、一度範囲内に入るまで送らない
+      if (!seqArmedRef.current) {
+        if (t < out - 0.05) seqArmedRef.current = true
+        return
+      }
+      if (t >= out - 0.05) {
+        seqArmedRef.current = false
+        const next = seqIndexRef.current + 1
+        if (next < seqQueueRef.current.length) loadSeqIndex(next)
+        else stopSequence()
+      }
+    },
+    [loadSeqIndex, stopSequence]
+  )
+  advanceRef.current = maybeAdvance
+
+  const playSequence = useCallback(
+    (items: SeqPlayItem[]) => {
+      if (items.length === 0) return
+      seqQueueRef.current = items
+      seqActiveRef.current = true
+      loadSeqIndex(0)
+    },
+    [loadSeqIndex]
+  )
+
+  // <video> の時刻更新（シーケンス自動送りを兼ねる）
+  const onVideoTime = useCallback((t: number) => {
+    currentTimeRef.current = t
+    setCurrentTime(t)
+    if (seqActiveRef.current) advanceRef.current(t)
   }, [])
 
   const createSegment = useCallback(
@@ -518,6 +633,12 @@ export function App() {
           >
             クリップ
           </button>
+          <button
+            className={`view-tab${view === 'sequence' ? ' active' : ''}`}
+            onClick={() => setView('sequence')}
+          >
+            シーケンス
+          </button>
         </nav>
         <div className="root-path" title={root.root ?? ''}>
           {root.root ?? '未設定'}
@@ -531,7 +652,11 @@ export function App() {
           <BgmPlayer />
         </aside>
 
-        <main className={`main${view === 'clips' ? ' view-clips' : ''}`}>
+        <main
+          className={`main${view === 'clips' ? ' view-clips' : ''}${
+            view === 'sequence' ? ' view-sequence' : ''
+          }`}
+        >
           <section className="player-pane">
             {mpvMode ? (
               <>
@@ -558,7 +683,7 @@ export function App() {
                 <VideoPlayer
                   ref={videoRef}
                   src={videoSrc}
-                  onTimeUpdate={setCurrentTime}
+                  onTimeUpdate={onVideoTime}
                   onDuration={setDuration}
                   onError={onVideoError}
                   onPlay={onVideoPlay}
@@ -618,6 +743,12 @@ export function App() {
               onOpenClip={openClip}
               onExport={setExportItems}
               selectedVideoRel={selected}
+            />
+          ) : view === 'sequence' ? (
+            <SequenceView
+              onPlaySequence={playSequence}
+              onStopSequence={stopSequence}
+              playingNodeId={playingNodeId}
             />
           ) : (
             <section className="editor-pane">

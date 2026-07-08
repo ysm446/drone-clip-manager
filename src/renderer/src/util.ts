@@ -56,6 +56,37 @@ export function keyframeAfter(kfs: number[], t: number, duration: number): numbe
   return ans
 }
 
+/**
+ * 一本道シーケンスの再生順を導く。入力エッジの無いノードを起点に out エッジをたどり、
+ * 最も長いチェーンのノード id 列を返す（分断・孤立ノードがある場合は最長チェーンのみ）。
+ * 一本道制約（各ノードの out/in は 1 本）は追加時に main 側で強制済み。
+ */
+export function nodeOrderFromEdges(
+  nodeIds: number[],
+  edges: { srcNodeId: number; dstNodeId: number }[]
+): number[] {
+  const nextOf = new Map<number, number>() // src -> dst（各ノード高々 1 本）
+  const hasIncoming = new Set<number>()
+  for (const e of edges) {
+    nextOf.set(e.srcNodeId, e.dstNodeId)
+    hasIncoming.add(e.dstNodeId)
+  }
+  const starts = nodeIds.filter((id) => !hasIncoming.has(id))
+  let best: number[] = []
+  for (const start of starts) {
+    const chain: number[] = []
+    const seen = new Set<number>()
+    let cur: number | undefined = start
+    while (cur != null && !seen.has(cur)) {
+      chain.push(cur)
+      seen.add(cur)
+      cur = nextOf.get(cur)
+    }
+    if (chain.length > best.length) best = chain
+  }
+  return best
+}
+
 const SEGMENT_COLORS = ['#4f9dff', '#ffb454', '#54d19a', '#ff6b81', '#b98bff', '#f2d24b']
 
 export function colorForIndex(i: number): string {

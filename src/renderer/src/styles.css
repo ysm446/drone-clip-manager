@@ -1279,3 +1279,326 @@ input:focus-visible {
   display: flex;
   gap: 8px;
 }
+
+/* ============================================================
+   シーケンス（ノードグラフ / Phase 2.6）
+   ============================================================ */
+/* クリップビュー同様、下段の編集領域を主役にしてプレイヤーを上部固定高に縮める */
+.main.view-sequence .player-pane {
+  flex: none;
+  height: 42%;
+  min-height: 200px;
+}
+.sequence-view {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  background: var(--bg);
+}
+.btn.small {
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+}
+
+/* 左ペイン: シーケンス一覧 + クリップパレット */
+.seq-sidebar {
+  width: 240px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.seq-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.seq-list {
+  max-height: 30%;
+  overflow: auto;
+  padding: 4px;
+}
+.seq-list-empty {
+  padding: 10px 12px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+}
+.seq-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+.seq-list-item:hover {
+  background: var(--hover);
+}
+.seq-list-item.active {
+  background: var(--selected);
+}
+.seq-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+}
+.seq-name-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  padding: 2px 6px;
+  font-size: var(--fs-ui);
+  outline: none;
+}
+.seq-del {
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-s);
+  font-size: var(--fs-sm);
+}
+.seq-list-item:hover .seq-del {
+  color: var(--danger);
+}
+.seq-sidebar .clips-search {
+  margin: 6px 12px;
+  width: auto;
+}
+.seq-palette {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.seq-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.seq-palette-item:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border);
+}
+.seq-palette-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.seq-palette-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+
+/* 右側: ツールバー + キャンバス */
+.seq-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.seq-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.seq-count {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.seq-total {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.seq-toolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.seq-canvas {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  background:
+    radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 24px 24px;
+  background-color: var(--bg);
+}
+.seq-canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  padding: 24px;
+  text-align: center;
+}
+/* エッジ用 SVG は広く敷き、線だけクリック可能にする */
+.seq-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6000px;
+  height: 4000px;
+  pointer-events: none;
+  overflow: visible;
+}
+.seq-edge-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.seq-edge-line.preview {
+  stroke-dasharray: 5 4;
+  opacity: 0.8;
+}
+.seq-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.seq-edge:hover .seq-edge-line {
+  stroke: var(--danger);
+}
+
+/* ノードカード */
+.seq-node {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+.seq-node:active {
+  cursor: grabbing;
+}
+.seq-node.playing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-border), var(--shadow-1);
+}
+.seq-node-thumb {
+  width: 100%;
+  height: 94px;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+}
+.seq-node-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.seq-node-label {
+  padding: 4px 8px 0;
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seq-node-meta {
+  padding: 0 8px 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seq-node-missing {
+  padding: 8px;
+  font-size: var(--fs-xs);
+  color: var(--danger);
+}
+.seq-node-order {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.seq-node-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--overlay);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.seq-node:hover .seq-node-remove {
+  display: flex;
+}
+/* 接続ポート */
+.seq-port {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  z-index: 3;
+  cursor: crosshair;
+}
+.seq-port.in {
+  left: -7px;
+}
+.seq-port.out {
+  right: -7px;
+}
+.seq-port:hover {
+  background: var(--accent);
+}
