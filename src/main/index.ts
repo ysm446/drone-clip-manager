@@ -1,5 +1,6 @@
-import { app, shell, BrowserWindow, ipcMain, protocol, net } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, protocol, net, Menu, nativeImage } from 'electron'
 import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { registerIpc } from './ipc'
 import {
@@ -18,8 +19,10 @@ import {
   mpvSeek,
   mpvStart,
   mpvStop,
-  mpvVolume
+  mpvVolume,
+  mpvScreenshot
 } from './services/mpv'
+import { saveAppScreenshot } from './services/screenshot'
 import type { MpvEvent } from '../shared/types'
 
 // mpv を子ウィンドウに埋め込むと Chromium の GPU コンポジタが前面を描画して mpv 映像が
@@ -203,9 +206,40 @@ function registerMpvIpc(): void {
   ipcMain.on('mpv:seek', (_e, t: number) => mpvSeek(t))
   ipcMain.on('mpv:volume', (_e, v: number) => mpvVolume(v))
   ipcMain.on('mpv:stop', () => mpvStop())
+
+  // mpv の現フレームを data URL で返す（アプリスクショの合成用。永続保存しない一時ファイル経由）。
+  ipcMain.handle('mpv:frameDataUrl', async (): Promise<string | null> => {
+    const tmp = join(app.getPath('temp'), `dcm-mpvshot-${Date.now()}.png`)
+    if (!(await mpvScreenshot(tmp))) return null
+    try {
+      return nativeImage.createFromPath(tmp).toDataURL()
+    } finally {
+      try {
+        rmSync(tmp, { force: true })
+      } catch {
+        /* noop */
+      }
+    }
+  })
+
+  // アプリ画面（Chromium 描画層）を data URL でキャプチャ。mpv 映像は含まれない（別ネイティブ層のため）。
+  ipcMain.handle('app:capturePage', async (): Promise<string | null> => {
+    if (!mainWindow) return null
+    const img = await mainWindow.webContents.capturePage()
+    return img.toDataURL()
+  })
+
+  // 合成済みのアプリスクショ（PNG バイト列）を screenshots/ に保存。
+  ipcMain.handle('app:saveScreenshot', (_e, bytes: Uint8Array): string =>
+    saveAppScreenshot(Buffer.from(bytes))
+  )
 }
 
 app.whenReady().then(() => {
+  // アプリケーションメニュー（File / Edit / View …）を非表示にする。
+  // 併せて既定の DevTools ショートカット(F12)も無くなるので、F12 をスクリーンショットに使える。
+  // テキスト入力のコピペ等は Chromium が編集要素向けに標準処理するのでメニュー無しでも動く。
+  Menu.setApplicationMenu(null)
   cleanTempProxies() // 前回セッションの残骸を掃除
   registerMediaProtocol()
   registerIpc()

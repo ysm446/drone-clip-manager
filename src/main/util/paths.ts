@@ -103,6 +103,19 @@ export function thumbsDir(): string {
   return dir
 }
 
+/**
+ * スクリーンショット保存先（ライブラリ直下の screenshots/、無ければ作成）。
+ * メタデータではなくユーザー向けの成果物なので .dcm/ ではなくルート直下に置く（見つけやすさ優先）。
+ * 画像のみのため動画ツリー走査には現れない。
+ */
+export function screenshotsDir(): string {
+  const root = getRoot()
+  if (!root) throw new Error('ルートフォルダが未設定です')
+  const dir = join(root, 'screenshots')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
 export function resolveInThumbs(relPath: string): string {
   return resolveInBase(thumbsDir(), relPath)
 }

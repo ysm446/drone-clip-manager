@@ -172,6 +172,14 @@ export interface DcmApi {
   ensureThumb: (videoRelPath: string, timeSec: number) => Promise<string>
   /** サムネイルを表示するためのカスタムプロトコル URL */
   thumbUrl: (thumbName: string) => string
+  /** 現在の動画フレームをスクリーンショット保存（F9）。useMpv=true は mpv の現フレーム。保存先パスを返す。 */
+  captureScreenshot: (videoRelPath: string, timeSec: number, useMpv: boolean) => Promise<string>
+  /** アプリ画面（Chromium 層）を data URL でキャプチャ。mpv 映像は含まれない。 */
+  capturePageDataUrl: () => Promise<string | null>
+  /** mpv の現フレームを data URL で取得（アプリスクショ合成用）。失敗時 null。 */
+  mpvFrameDataUrl: () => Promise<string | null>
+  /** 合成済みアプリスクショ（PNG バイト列）を保存し、保存先パスを返す（F12）。 */
+  saveAppScreenshot: (bytes: Uint8Array) => Promise<string>
   // --- BGM ---
   pickBgmDir: () => Promise<BgmInfo>
   getBgm: () => Promise<BgmInfo>

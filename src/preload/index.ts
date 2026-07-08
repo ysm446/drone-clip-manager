@@ -30,6 +30,11 @@ const api: DcmApi = {
   listAllClips: () => ipcRenderer.invoke('segments:listAll'),
   ensureThumb: (videoRelPath, timeSec) => ipcRenderer.invoke('thumbs:ensure', videoRelPath, timeSec),
   thumbUrl: (thumbName) => `dcm-media://thumb/${encodeURIComponent(thumbName)}`,
+  captureScreenshot: (videoRelPath, timeSec, useMpv) =>
+    ipcRenderer.invoke('screenshot:capture', videoRelPath, timeSec, useMpv),
+  capturePageDataUrl: () => ipcRenderer.invoke('app:capturePage'),
+  mpvFrameDataUrl: () => ipcRenderer.invoke('mpv:frameDataUrl'),
+  saveAppScreenshot: (bytes) => ipcRenderer.invoke('app:saveScreenshot', bytes),
   pickBgmDir: () => ipcRenderer.invoke('bgm:pick'),
   getBgm: () => ipcRenderer.invoke('bgm:get'),
   bgmUrl: (relPath) => `dcm-media://bgm/${encodeURIComponent(relPath)}`,

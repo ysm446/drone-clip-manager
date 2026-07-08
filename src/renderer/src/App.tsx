@@ -26,6 +26,12 @@ export function App() {
   const [exportItems, setExportItems] = useState<ExportTarget[] | null>(null)
   /** ライブラリ（動画一覧）⟷ クリップ（区間横断一覧）の表示切替（Phase 2.5） */
   const [view, setView] = useState<'library' | 'clips'>('library')
+  /** 一時的な通知（スクリーンショット保存など）。数秒で消える。 */
+  const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
+  /** スクリーンショットの多重発火防止（キーリピート / 二重イベント対策） */
+  const lastShotRef = useRef(0)
+  const lastAppShotRef = useRef(0)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
   const [usingProxy, setUsingProxy] = useState(false)
   const [playError, setPlayError] = useState(false)
@@ -350,6 +356,92 @@ export function App() {
     [seek, selectVideo]
   )
 
+  const showToast = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
+    setToast({ text, kind })
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3500)
+  }, [])
+
+  // F9: 現在の動画フレームをスクリーンショット保存（ライブラリ直下 screenshots/）
+  const captureVideoFrame = useCallback(async () => {
+    // キーリピートや二重イベントで同一フレームを連続保存しないよう間引く
+    const now = performance.now()
+    if (now - lastShotRef.current < 600) return
+    lastShotRef.current = now
+    const rel = currentRelRef.current
+    if (!rel) {
+      showToast('動画を選択してからスクリーンショットしてください', 'err')
+      return
+    }
+    try {
+      const path = await api.captureScreenshot(rel, currentTimeRef.current, mpvModeRef.current)
+      const name = path.split(/[\\/]/).pop() ?? path
+      showToast(`動画フレームを保存: screenshots/${name}`)
+    } catch (err) {
+      showToast(
+        `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
+        'err'
+      )
+    }
+  }, [showToast])
+
+  // F12: アプリ画面全体をスクリーンショット保存。
+  // Chromium 層(capturePage)には mpv 映像が写らないため、mpv の現フレームを動画領域に合成する。
+  const captureApp = useCallback(async () => {
+    const now = performance.now()
+    if (now - lastAppShotRef.current < 600) return
+    lastAppShotRef.current = now
+    const loadImage = (url: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = url
+      })
+    try {
+      const uiUrl = await api.capturePageDataUrl()
+      if (!uiUrl) throw new Error('画面キャプチャに失敗しました')
+      const ui = await loadImage(uiUrl)
+      const canvas = document.createElement('canvas')
+      canvas.width = ui.naturalWidth
+      canvas.height = ui.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('canvas 未対応')
+      ctx.drawImage(ui, 0, 0)
+      // mpv 埋め込み再生中は、動画領域に mpv の現フレームを重ねて欠けを埋める
+      const host = mpvHostRef.current
+      if (mpvModeRef.current && currentRelRef.current && host) {
+        const frameUrl = await api.mpvFrameDataUrl()
+        if (frameUrl) {
+          const fr = await loadImage(frameUrl)
+          const r = host.getBoundingClientRect()
+          const scaleCap = ui.naturalWidth / window.innerWidth // capturePage の実スケール
+          const hx = r.left * scaleCap
+          const hy = r.top * scaleCap
+          const hw = r.width * scaleCap
+          const hh = r.height * scaleCap
+          const s = Math.min(hw / fr.naturalWidth, hh / fr.naturalHeight) // contain（mpv の表示に合わせる）
+          const dw = fr.naturalWidth * s
+          const dh = fr.naturalHeight * s
+          ctx.fillStyle = '#000'
+          ctx.fillRect(hx, hy, hw, hh)
+          ctx.drawImage(fr, hx + (hw - dw) / 2, hy + (hh - dh) / 2, dw, dh)
+        }
+      }
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'))
+      if (!blob) throw new Error('PNG 生成に失敗しました')
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const path = await api.saveAppScreenshot(bytes)
+      const name = path.split(/[\\/]/).pop() ?? path
+      showToast(`アプリのスクショを保存: screenshots/${name}`)
+    } catch (err) {
+      showToast(
+        `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
+        'err'
+      )
+    }
+  }, [showToast])
+
   // ライブラリビューの「書き出し…」: 選択中動画の全区間を対象にモーダルを開く
   const openExportForCurrent = useCallback(() => {
     if (!selected) return
@@ -390,6 +482,22 @@ export function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [view, selected, duration, currentTime, createSegment, togglePlay, selectedSeg, deleteSeg])
+
+  // F12: アプリ全体 / F9: 動画フレーム のスクリーンショット
+  // （ビュー/入力フォーカスに関わらず有効。既定メニューは無効化済み）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F12') {
+        e.preventDefault()
+        captureApp()
+      } else if (e.key === 'F9') {
+        e.preventDefault()
+        captureVideoFrame()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [captureApp, captureVideoFrame])
 
   return (
     <div className="app">
@@ -554,6 +662,8 @@ export function App() {
       {exportItems && exportItems.length > 0 && (
         <ExportModal items={exportItems} onClose={() => setExportItems(null)} />
       )}
+
+      {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>
   )
 }

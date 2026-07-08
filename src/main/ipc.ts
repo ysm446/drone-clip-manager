@@ -12,6 +12,7 @@ import {
 } from './services/db'
 import { exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
+import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BgmInfo,
@@ -99,6 +100,12 @@ export function registerIpc(): void {
 
   ipcMain.handle('thumbs:ensure', (_e, videoRelPath: string, timeSec: number) =>
     ensureThumb(videoRelPath, timeSec)
+  )
+
+  ipcMain.handle(
+    'screenshot:capture',
+    (_e, videoRelPath: string, timeSec: number, useMpv: boolean) =>
+      captureScreenshot(videoRelPath, timeSec, useMpv)
   )
 
   ipcMain.handle('bgm:get', (): BgmInfo => currentBgmInfo())

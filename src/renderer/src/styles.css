@@ -1066,6 +1066,43 @@ input:focus-visible {
 }
 
 /* ============================================================
+   トースト通知（スクリーンショット保存など）
+   ============================================================ */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: 70vw;
+  padding: 8px 16px;
+  border-radius: var(--radius-m);
+  background: var(--bar-surface);
+  color: var(--bar-text);
+  border: 1px solid var(--bar-border);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-sm);
+  z-index: 200;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: toast-in 0.16s ease;
+}
+.toast.err {
+  border-color: var(--danger);
+  color: var(--bar-danger);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ============================================================
    書き出しモーダル
    ============================================================ */
 .modal-backdrop {

@@ -223,6 +223,17 @@ export function mpvStop(): void {
   void command(['stop'])
 }
 
+/**
+ * 現在表示中のフレームを絶対パスへ保存する（拡張子で形式判定。OSD/字幕なしの 'video' フラグ）。
+ * mpv 応答が返るのは保存完了後。成功なら true。
+ */
+export async function mpvScreenshot(absPath: string): Promise<boolean> {
+  if (!started) return false
+  const r = await command(['screenshot-to-file', absPath, 'video'])
+  // mpv の JSON IPC は成功時に error:"success" を返す（未定義ではない）。
+  return r.error === 'success'
+}
+
 export function mpvKill(): void {
   shuttingDown = true // 意図した終了なので onDied（自動再起動）は呼ばない
   markDead()
