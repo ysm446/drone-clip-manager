@@ -64,8 +64,8 @@ export function App() {
   const seqActiveRef = useRef(false)
   /** 現クリップの再生範囲に一度入ったか（ロード直後の誤送り防止） */
   const seqArmedRef = useRef(false)
-  /** 動画ロード完了後に自動再生するか（クリップ跨ぎの送り用） */
-  const seqAutoPlayRef = useRef(false)
+  /** 次の動画ロード完了後に自動再生するか（シーケンスの送り / 再生中のクリップ切替の継続に使う） */
+  const autoPlayNextRef = useRef(false)
   /** 最新の自動送り関数を保持（mpv イベント購読は 1 度きりのため ref 経由で呼ぶ） */
   const advanceRef = useRef<(t: number) => void>(() => {})
 
@@ -155,8 +155,8 @@ export function App() {
       pendingSeekRef.current = null
       seek(Math.min(t, duration))
       // シーケンス連続再生の <video> フォールバック: シーク後に自動再生
-      if (seqAutoPlayRef.current) {
-        seqAutoPlayRef.current = false
+      if (autoPlayNextRef.current) {
+        autoPlayNextRef.current = false
         videoRef.current?.play().catch(() => void 0)
       }
     }
@@ -235,9 +235,9 @@ export function App() {
           mpvModeRef.current = false
           setMpvMode(false)
           setVideoSrc(api.mediaUrl(relPath))
-        } else if (seqAutoPlayRef.current) {
+        } else if (autoPlayNextRef.current) {
           // シーケンス連続再生: 新しいクリップのロード完了後に自動再生
-          seqAutoPlayRef.current = false
+          autoPlayNextRef.current = false
           api.mpvPlay()
           mpvPausedRef.current = false
           setMpvPaused(false)
@@ -332,7 +332,7 @@ export function App() {
   const stopSequence = useCallback(() => {
     seqActiveRef.current = false
     seqArmedRef.current = false
-    seqAutoPlayRef.current = false
+    autoPlayNextRef.current = false
     setPlayingNodeId(null)
     if (mpvModeRef.current) {
       api.mpvPause()
@@ -360,7 +360,7 @@ export function App() {
         seek(inSec)
         resumePlay()
       } else {
-        seqAutoPlayRef.current = true
+        autoPlayNextRef.current = true
         pendingSeekRef.current = inSec
         selectVideo(rel)
       }
@@ -457,13 +457,20 @@ export function App() {
 
   // クリップ一覧から: 元動画を上部プレイヤーで開いて in 点へシーク（Phase 2.5）
   // ビューは切り替えず、クリップビューに留まったまま同じプレイヤーで再生できるようにする。
+  // 再生中に別ソースのクリップへ切り替えた場合は、再生状態を引き継いで新しい in 点から再生を継続する。
   const openClip = useCallback(
     (clip: ClipItem) => {
       const t = clip.inSnapped ?? clip.inTime
       if (currentRelRef.current === clip.videoRelPath) {
+        // 同一動画: シークのみ（再生中ならそのまま継続、停止中なら停止のまま）
         seek(t)
         setSelectedSeg(clip.id)
       } else {
+        // 別動画: 現在の再生状態を見て、再生中ならロード後に自動再生を続ける
+        const wasPlaying = mpvModeRef.current
+          ? !mpvPausedRef.current
+          : !!videoRef.current && !videoRef.current.paused
+        autoPlayNextRef.current = wasPlaying
         pendingSeekRef.current = t
         selectVideo(clip.videoRelPath).then(() => setSelectedSeg(clip.id))
       }
