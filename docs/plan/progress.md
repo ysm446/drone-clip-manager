@@ -1,7 +1,7 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-08 13:45
+更新日時: 2026-07-08 14:10
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -32,6 +32,7 @@
 - [x] ロスレス書き出し（`ExportService`）: stream copy、命名テンプレート（{filename}/{label}/{index}）、書き出し先選択、逐次バッチ + 進捗イベント、書き出しモーダル UI（spec §6.3 / §7.3）
 - [x] DJI データストリーム対策: `-map 0 -map -0:d`（copy 不能な data ストリームを除外）。実機で検証
 - [x] `start.bat` 修正: CRLF + goto 構造（LF だと cmd が複数行 if をパースできず起動失敗）+ `ELECTRON_RUN_AS_NODE` の防御的解除。`.gitattributes` で `*.bat` を CRLF 固定
+- [x] プレビュー用プロキシ（`ProxyService`）: HEVC/10bit 等は Chromium で再生不可 → H.264 8bit 720p プロキシを `.dcm/proxies/` に生成・キャッシュして再生。h264 8bit はそのまま再生。生成中はオーバーレイ進捗表示、完了で自動切替（spec §11-1）
 
 ## 未完了（次にやること）
 

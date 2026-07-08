@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DcmApi, ExportJob, ExportOptions, ExportProgress, SegmentInput } from '../shared/types'
+import type {
+  DcmApi,
+  ExportJob,
+  ExportOptions,
+  ExportProgress,
+  ProxyUpdate,
+  SegmentInput
+} from '../shared/types'
 
 const api: DcmApi = {
   pickRoot: () => ipcRenderer.invoke('root:pick'),
@@ -7,6 +14,12 @@ const api: DcmApi = {
   probeVideo: (relPath) => ipcRenderer.invoke('video:probe', relPath),
   getKeyframes: (relPath) => ipcRenderer.invoke('video:keyframes', relPath),
   mediaUrl: (relPath) => `dcm-media://root/${encodeURIComponent(relPath)}`,
+  proxyEnsure: (relPath, durationSec) => ipcRenderer.invoke('proxy:ensure', relPath, durationSec),
+  onProxyUpdate: (cb: (u: ProxyUpdate) => void) => {
+    const handler = (_e: unknown, u: ProxyUpdate) => cb(u)
+    ipcRenderer.on('proxy:update', handler)
+    return () => ipcRenderer.removeListener('proxy:update', handler)
+  },
   listSegments: (relPath) => ipcRenderer.invoke('segments:list', relPath),
   addSegment: (input: SegmentInput) => ipcRenderer.invoke('segments:add', input),
   updateSegment: (id, patch) => ipcRenderer.invoke('segments:update', id, patch),

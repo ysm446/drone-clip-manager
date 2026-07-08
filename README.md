@@ -35,7 +35,7 @@
   .dcm/               ← メタデータ（ルート直下に自動作成）
     library.db              ← SQLite（videos / keyframes / segments）
     thumbnails/             ← サムネイルキャッシュ
-    proxies/                ← プレビュー用プロキシ（将来）
+    proxies/                ← プレビュー用プロキシ（HEVC/10bit 再生用）
   DJI_0001.MP4              ← 素材（配下の任意の階層）
   ...
 ```

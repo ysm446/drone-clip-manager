@@ -3,7 +3,19 @@ import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
 import { scanTree, probeVideo, getKeyframes, scanBgm } from './services/media'
 import { resetDb, listSegments, addSegment, updateSegment, deleteSegment } from './services/db'
 import { exportOne } from './services/export'
-import type { BgmInfo, ExportJob, ExportOptions, ExportResult, RootInfo, SegmentInput } from '../shared/types'
+import { buildProxy, proxyStatus } from './services/proxy'
+import type {
+  BgmInfo,
+  ExportJob,
+  ExportOptions,
+  ExportResult,
+  ProxyStatus,
+  RootInfo,
+  SegmentInput
+} from '../shared/types'
+
+// 生成中のプロキシ（relPath 単位で重複起動を防ぐ）
+const proxyInFlight = new Set<string>()
 
 function currentRootInfo(): RootInfo {
   const root = getRoot()
@@ -32,6 +44,29 @@ export function registerIpc(): void {
 
   ipcMain.handle('video:probe', (_e, relPath: string) => probeVideo(relPath))
   ipcMain.handle('video:keyframes', (_e, relPath: string) => getKeyframes(relPath))
+
+  ipcMain.handle('proxy:ensure', (e, relPath: string, durationSec: number): ProxyStatus => {
+    const st = proxyStatus(relPath)
+    if (st.ready) return st
+    if (!proxyInFlight.has(relPath)) {
+      proxyInFlight.add(relPath)
+      buildProxy(relPath, durationSec, (percent) =>
+        e.sender.send('proxy:update', { relPath, status: 'progress', percent })
+      )
+        .then((proxyRelPath) =>
+          e.sender.send('proxy:update', { relPath, status: 'done', proxyRelPath })
+        )
+        .catch((err) =>
+          e.sender.send('proxy:update', {
+            relPath,
+            status: 'error',
+            error: err instanceof Error ? err.message : String(err)
+          })
+        )
+        .finally(() => proxyInFlight.delete(relPath))
+    }
+    return { ready: false }
+  })
 
   ipcMain.handle('segments:list', (_e, relPath: string) => listSegments(relPath))
   ipcMain.handle('segments:add', (_e, input: SegmentInput) => addSegment(input))

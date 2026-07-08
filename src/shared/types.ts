@@ -105,6 +105,21 @@ export interface ExportResult {
   error?: string
 }
 
+/** プロキシ生成の状態通知（main → renderer） */
+export interface ProxyUpdate {
+  relPath: string
+  status: 'progress' | 'done' | 'error'
+  percent?: number
+  proxyRelPath?: string
+  error?: string
+}
+
+/** プロキシ準備状態 */
+export interface ProxyStatus {
+  ready: boolean
+  proxyRelPath?: string
+}
+
 /** プリロードが contextBridge で公開する API の型 */
 export interface DcmApi {
   pickRoot: () => Promise<RootInfo>
@@ -113,6 +128,9 @@ export interface DcmApi {
   getKeyframes: (relPath: string) => Promise<number[]>
   /** 動画を再生するためのカスタムプロトコル URL */
   mediaUrl: (relPath: string) => string
+  /** プレビュー用プロキシを用意（無ければ生成開始）。進捗は onProxyUpdate で受ける。 */
+  proxyEnsure: (relPath: string, durationSec: number) => Promise<ProxyStatus>
+  onProxyUpdate: (cb: (u: ProxyUpdate) => void) => () => void
   listSegments: (relPath: string) => Promise<Segment[]>
   addSegment: (input: SegmentInput) => Promise<Segment>
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>

@@ -112,6 +112,51 @@ body {
   flex-direction: column;
   min-height: 0;
   background: #000;
+  position: relative;
+}
+
+/* プロキシ生成中/失敗のオーバーレイ */
+.proxy-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 44px; /* meta-bar の上まで */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--fg);
+  background: rgba(10, 12, 16, 0.82);
+  padding: 20px;
+}
+.proxy-overlay small {
+  color: var(--fg-dim);
+  line-height: 1.6;
+}
+.proxy-overlay.err {
+  color: #ff8b98;
+}
+.proxy-spin {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.badge.proxy {
+  color: #08111f;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
 }
 .editor-pane {
   height: 300px;

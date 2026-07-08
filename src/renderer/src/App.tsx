@@ -21,37 +21,91 @@ export function App() {
   const [duration, setDuration] = useState(0)
   const [busy, setBusy] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [usingProxy, setUsingProxy] = useState(false)
+  const [proxyGen, setProxyGen] = useState<{ active: boolean; percent: number; error: string | null }>({
+    active: false,
+    percent: 0,
+    error: null
+  })
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  const currentRelRef = useRef<string | null>(null)
 
   useEffect(() => {
     api.getRoot().then(setRoot)
+  }, [])
+
+  // プロキシ生成の進捗/完了を受ける（現在選択中の動画のものだけ反映）
+  useEffect(() => {
+    return api.onProxyUpdate((u) => {
+      if (u.relPath !== currentRelRef.current) return
+      if (u.status === 'progress') {
+        setProxyGen((g) => ({ ...g, active: true, percent: u.percent ?? g.percent }))
+      } else if (u.status === 'done' && u.proxyRelPath) {
+        setVideoSrc(api.mediaUrl(u.proxyRelPath))
+        setUsingProxy(true)
+        setProxyGen({ active: false, percent: 0, error: null })
+      } else if (u.status === 'error') {
+        setProxyGen({ active: false, percent: 0, error: u.error ?? '不明なエラー' })
+      }
+    })
   }, [])
 
   const pickRoot = async () => {
     const info = await api.pickRoot()
     setRoot(info)
     setSelected(null)
+    currentRelRef.current = null
     setMeta(null)
     setSegments([])
     setKeyframes([])
+    setVideoSrc(null)
+    setUsingProxy(false)
+    setProxyGen({ active: false, percent: 0, error: null })
   }
+
+  // h264 8bit は Chromium がそのまま再生できる。それ以外（HEVC / 10bit / av1 等）はプロキシで再生する。
+  const canPlayNative = (m: VideoMeta): boolean =>
+    m.codec === 'h264' && (m.bitDepth == null || m.bitDepth <= 8)
 
   const selectVideo = useCallback(async (relPath: string) => {
     setSelected(relPath)
+    currentRelRef.current = relPath
     setSelectedSeg(null)
     setCurrentTime(0)
     setDuration(0)
     setMeta(null)
     setKeyframes([])
     setSegments([])
+    setVideoSrc(null)
+    setUsingProxy(false)
+    setProxyGen({ active: false, percent: 0, error: null })
     setBusy(true)
     try {
       const [m, segs] = await Promise.all([api.probeVideo(relPath), api.listSegments(relPath)])
+      if (currentRelRef.current !== relPath) return // 途中で別の動画に切り替わった
       setMeta(m)
       setSegments(segs)
       // キーフレーム抽出はやや時間がかかるので後追いで反映
-      api.getKeyframes(relPath).then((kf) => setKeyframes(kf)).catch(() => setKeyframes([]))
+      api.getKeyframes(relPath).then((kf) => {
+        if (currentRelRef.current === relPath) setKeyframes(kf)
+      }).catch(() => void 0)
+
+      if (canPlayNative(m)) {
+        setVideoSrc(api.mediaUrl(relPath))
+        setUsingProxy(false)
+      } else {
+        // プロキシを用意（キャッシュ済みなら即、無ければ生成 → onProxyUpdate で反映）
+        setProxyGen({ active: true, percent: 0, error: null })
+        const st = await api.proxyEnsure(relPath, m.durationSec ?? 0)
+        if (currentRelRef.current !== relPath) return
+        if (st.ready && st.proxyRelPath) {
+          setVideoSrc(api.mediaUrl(st.proxyRelPath))
+          setUsingProxy(true)
+          setProxyGen({ active: false, percent: 0, error: null })
+        }
+      }
     } finally {
       setBusy(false)
     }
@@ -141,14 +195,33 @@ export function App() {
           <section className="player-pane">
             <VideoPlayer
               ref={videoRef}
-              src={selected ? api.mediaUrl(selected) : null}
+              src={videoSrc}
               onTimeUpdate={setCurrentTime}
               onDuration={setDuration}
             />
+            {proxyGen.active && (
+              <div className="proxy-overlay">
+                <div className="proxy-spin" />
+                <div>プレビュー用プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
+                <small>
+                  元が HEVC / 10bit のため Chromium で直接再生できません。
+                  <br />
+                  次回以降はキャッシュから即再生されます（書き出しは元素材を使用）。
+                </small>
+              </div>
+            )}
+            {proxyGen.error && (
+              <div className="proxy-overlay err">
+                プロキシ生成に失敗しました
+                <br />
+                <small>{proxyGen.error}</small>
+              </div>
+            )}
             {meta && (
               <div className="meta-bar">
                 <span className="meta-name">{meta.filename}</span>
                 <span className="badge">{meta.codec ?? '?'}</span>
+                {usingProxy && <span className="badge proxy">プロキシ再生</span>}
                 <span className="badge">
                   {meta.width}×{meta.height}
                 </span>
