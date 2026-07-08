@@ -34,7 +34,8 @@
 - [x] `start.bat` 修正: CRLF + goto 構造（LF だと cmd が複数行 if をパースできず起動失敗）+ `ELECTRON_RUN_AS_NODE` の防御的解除。`.gitattributes` で `*.bat` を CRLF 固定
 - [x] HEVC/10bit プレビュー方針を変更（容量対策）: **原本を直接再生**優先（Electron で `PlatformHEVCDecoderSupport` を有効化）。再生できない時のみ**一時プロキシ**（H.264 8bit 720p）を手動生成 → 再生。プロキシは **OS 一時フォルダに置き終了時に削除**（`.dcm/` に永続キャッシュしない）。再生失敗検出（error / 時間が進まない）＋オーバーレイのボタンで切替（spec §11-1）
 - [x] **mpv 埋め込み再生**を実装（`<video>` で HEVC が再生不可のため）: メインが mpv を `--wid` で動画領域の子ウィンドウに埋め込み、JSON IPC で load/play/pause/seek/volume を制御、`observe_property` で time/duration/pause/eof をタイムラインへ反映。レンダラは動画矩形をメインへ送って配置追従（モーダル中/未選択は非表示）。mpv 未検出/起動失敗時は `<video>`+一時プロキシへ自動フォールバック。mpv 検出は `C:\Program Files\MPV Player\mpv.exe` / `DCM_MPV_PATH`（spec §11-1）
-  - [ ] **要 GUI 実機確認**（埋め込み表示位置・再生・スクラブ）。ヘッドレスでは検証不可のため未確認
+- [x] **黒画面バグを修正**: Chromium の GPU コンポジタが埋め込み mpv を隠す（真っ暗）→ `app.disableHardwareAcceleration()` で解消。実機（scaleFactor 1.5 / HEVC 10bit 4K60）でスクリーンショット確認: 埋め込み再生・中央ピラーボックス・タイムライン連動・区間表示すべて正常。
+  - 注意: メインウィンドウが画面右にはみ出していると mpv 右側が画面外にクリップされ「右寄り」に見える（コードは正しい。ウィンドウを画面内に収めれば中央表示）。
   - [ ] 配布用に mpv を同梱（現状は開発機の winget 版 `shinchiro.mpv` を利用）
 
 ## 未完了（次にやること）
