@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS segments (
 
 CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_rel_path);
 
+-- 区間（クリップ）へのユーザー定義タグ（自由記述 / Phase 2.8）
+CREATE TABLE IF NOT EXISTS segment_tags (
+  segment_id INTEGER NOT NULL,
+  tag        TEXT NOT NULL,
+  PRIMARY KEY (segment_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_segment_tags_tag ON segment_tags(tag);
+
 -- シーケンス（クリップをつないだ順路 / Phase 2.6）
 CREATE TABLE IF NOT EXISTS sequences (
   id         INTEGER PRIMARY KEY,
@@ -183,7 +191,42 @@ export function updateSegment(id: number, patch: Partial<SegmentInput>): Segment
 }
 
 export function deleteSegment(id: number): void {
-  getDb().prepare('DELETE FROM segments WHERE id = ?').run(id)
+  const d = getDb()
+  const tx = d.transaction((sid: number) => {
+    d.prepare('DELETE FROM segment_tags WHERE segment_id = ?').run(sid)
+    d.prepare('DELETE FROM segments WHERE id = ?').run(sid)
+  })
+  tx(id)
+}
+
+// --- 区間タグ（自由記述 / Phase 2.8） ---
+
+export function getSegmentTags(segmentId: number): string[] {
+  const rows = getDb()
+    .prepare('SELECT tag FROM segment_tags WHERE segment_id = ? ORDER BY tag ASC')
+    .all(segmentId) as { tag: string }[]
+  return rows.map((r) => r.tag)
+}
+
+/** 使用中の全タグと使用件数（補完・絞り込み用。多い順→名前順） */
+export function getAllTags(): { tag: string; count: number }[] {
+  const rows = getDb()
+    .prepare('SELECT tag, COUNT(*) AS c FROM segment_tags GROUP BY tag ORDER BY c DESC, tag ASC')
+    .all() as { tag: string; c: number }[]
+  return rows.map((r) => ({ tag: r.tag, count: r.c }))
+}
+
+/** タグを付与し、その区間の最新タグ一覧を返す。 */
+export function addSegmentTag(segmentId: number, tag: string): string[] {
+  const t = tag.trim()
+  if (t) getDb().prepare('INSERT OR IGNORE INTO segment_tags (segment_id, tag) VALUES (?, ?)').run(segmentId, t)
+  return getSegmentTags(segmentId)
+}
+
+/** タグを外し、その区間の最新タグ一覧を返す。 */
+export function removeSegmentTag(segmentId: number, tag: string): string[] {
+  getDb().prepare('DELETE FROM segment_tags WHERE segment_id = ? AND tag = ?').run(segmentId, tag)
+  return getSegmentTags(segmentId)
 }
 
 /** ffprobe 済みメタを videos に永続化（rel_path 単位で upsert）。クリップ一覧の結合に使う。 */
@@ -237,9 +280,10 @@ interface ClipRow extends SegmentRow {
   v_fps: number | null
 }
 
-/** 全動画の区間を横断取得（動画メタを結合 / Phase 2.5） */
+/** 全動画の区間を横断取得（動画メタ + タグを結合 / Phase 2.5 / 2.8） */
 export function listAllClips(): ClipItem[] {
-  const rows = getDb()
+  const d = getDb()
+  const rows = d
     .prepare(
       `SELECT s.*, v.filename AS v_filename, v.duration_sec AS v_duration_sec, v.codec AS v_codec,
               v.width AS v_width, v.height AS v_height, v.fps AS v_fps
@@ -248,6 +292,16 @@ export function listAllClips(): ClipItem[] {
        ORDER BY s.video_rel_path ASC, s.in_time ASC`
     )
     .all() as ClipRow[]
+  // タグは 1 クエリでまとめて取り、区間ごとに集約する
+  const tagRows = d
+    .prepare('SELECT segment_id, tag FROM segment_tags ORDER BY tag ASC')
+    .all() as { segment_id: number; tag: string }[]
+  const tagsBySeg = new Map<number, string[]>()
+  for (const t of tagRows) {
+    const list = tagsBySeg.get(t.segment_id) ?? []
+    list.push(t.tag)
+    tagsBySeg.set(t.segment_id, list)
+  }
   return rows.map((r) => ({
     ...rowToSegment(r),
     videoFilename: r.v_filename ?? r.video_rel_path.split('/').pop() ?? r.video_rel_path,
@@ -255,7 +309,8 @@ export function listAllClips(): ClipItem[] {
     videoCodec: r.v_codec,
     videoWidth: r.v_width,
     videoHeight: r.v_height,
-    videoFps: r.v_fps
+    videoFps: r.v_fps,
+    tags: tagsBySeg.get(r.id) ?? []
   }))
 }
 

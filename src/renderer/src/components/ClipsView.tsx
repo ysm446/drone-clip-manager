@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ClipItem } from '../../../shared/types'
+import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtTime } from '../util'
 import { IconFilm } from './icons'
@@ -64,6 +64,50 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
   )
 }
 
+/** クリップのタグ表示 + 追加（既存タグは datalist で補完）。 */
+function TagEditor({
+  tags,
+  onAdd,
+  onRemove
+}: {
+  tags: string[]
+  onAdd: (tag: string) => void
+  onRemove: (tag: string) => void
+}) {
+  const [draft, setDraft] = useState('')
+  const commit = () => {
+    const t = draft.trim()
+    if (t) onAdd(t)
+    setDraft('')
+  }
+  return (
+    <div className="clip-tags" onClick={(e) => e.stopPropagation()}>
+      {tags.map((t) => (
+        <span key={t} className="tag-chip">
+          {t}
+          <button className="tag-chip-x" title="タグを外す" onClick={() => onRemove(t)}>
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        className="tag-add"
+        list="dcm-all-tags"
+        placeholder="＋タグ"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+          }
+        }}
+        onBlur={commit}
+      />
+    </div>
+  )
+}
+
 export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -71,6 +115,9 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
   const [videoFilter, setVideoFilter] = useState<string>('')
   const [sortKey, setSortKey] = useState<SortKey>('video')
   const [query, setQuery] = useState('')
+  const [allTags, setAllTags] = useState<TagCount[]>([])
+  /** 絞り込みに選んだタグ（全て含むクリップだけ表示 = AND） */
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let alive = true
@@ -82,10 +129,33 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
       .finally(() => {
         if (alive) setLoading(false)
       })
+    api.getAllTags().then((t) => alive && setAllTags(t))
     return () => {
       alive = false
     }
   }, [])
+
+  const refreshTags = () => api.getAllTags().then(setAllTags)
+
+  const addTag = (id: number, tag: string) => {
+    api.addSegmentTag(id, tag).then((tags) => {
+      setClips((prev) => prev.map((c) => (c.id === id ? { ...c, tags } : c)))
+      refreshTags()
+    })
+  }
+  const removeTag = (id: number, tag: string) => {
+    api.removeSegmentTag(id, tag).then((tags) => {
+      setClips((prev) => prev.map((c) => (c.id === id ? { ...c, tags } : c)))
+      refreshTags()
+    })
+  }
+  const toggleTagFilter = (tag: string) =>
+    setTagFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
+      return next
+    })
 
   // 絞り込み対象の元動画一覧（相対パス → 表示名）
   const videos = useMemo(() => {
@@ -97,12 +167,20 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
   const shown = useMemo(() => {
     let list = clips
     if (videoFilter) list = list.filter((c) => c.videoRelPath === videoFilter)
+    if (tagFilter.size > 0) {
+      list = list.filter((c) => {
+        const set = new Set(c.tags)
+        for (const t of tagFilter) if (!set.has(t)) return false
+        return true
+      })
+    }
     const q = query.trim().toLowerCase()
     if (q) {
       list = list.filter(
         (c) =>
           (c.label ?? '').toLowerCase().includes(q) ||
-          c.videoFilename.toLowerCase().includes(q)
+          c.videoFilename.toLowerCase().includes(q) ||
+          c.tags.some((t) => t.toLowerCase().includes(q))
       )
     }
     const sorted = [...list]
@@ -126,7 +204,7 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
         )
     }
     return sorted
-  }, [clips, videoFilter, sortKey, query])
+  }, [clips, videoFilter, sortKey, query, tagFilter])
 
   const shownSelected = useMemo(
     () => shown.filter((c) => selected.has(c.id)),
@@ -223,6 +301,34 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
         </button>
       </div>
 
+      {/* タグ入力の補完候補（全カード共通） */}
+      <datalist id="dcm-all-tags">
+        {allTags.map((t) => (
+          <option key={t.tag} value={t.tag} />
+        ))}
+      </datalist>
+
+      {allTags.length > 0 && (
+        <div className="clips-tagfilter">
+          <span className="clips-tagfilter-label">タグ絞り込み</span>
+          {allTags.map((t) => (
+            <button
+              key={t.tag}
+              className={`tag-chip filter${tagFilter.has(t.tag) ? ' active' : ''}`}
+              onClick={() => toggleTagFilter(t.tag)}
+            >
+              {t.tag}
+              <span className="tag-chip-count">{t.count}</span>
+            </button>
+          ))}
+          {tagFilter.size > 0 && (
+            <button className="btn small" onClick={() => setTagFilter(new Set())}>
+              クリア
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="clips-grid">
         {shown.map((c) => {
           const lo = c.inSnapped ?? c.inTime
@@ -271,6 +377,11 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
                   )}
                   {c.videoFps && <span className="badge">{c.videoFps.toFixed(0)}fps</span>}
                 </div>
+                <TagEditor
+                  tags={c.tags}
+                  onAdd={(t) => addTag(c.id, t)}
+                  onRemove={(t) => removeTag(c.id, t)}
+                />
               </div>
               <div className="clip-actions">
                 <button

@@ -1602,3 +1602,86 @@ input:focus-visible {
 .seq-port:hover {
   background: var(--accent);
 }
+
+/* ============================================================
+   区間タグ（Phase 2.8）
+   ============================================================ */
+/* クリップカード内のタグ表示 + 追加 */
+.clip-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--selected);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.tag-chip-x {
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+.tag-chip-x:hover {
+  color: var(--danger);
+}
+.tag-add {
+  width: 70px;
+  min-width: 56px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  outline: none;
+}
+.tag-add:focus {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* ツールバー下のタグ絞り込み行 */
+.clips-tagfilter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.clips-tagfilter-label {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin-right: 2px;
+}
+.tag-chip.filter {
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.tag-chip.filter:hover {
+  border-color: var(--accent-border);
+}
+.tag-chip.filter.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--accent-text);
+}
+.tag-chip-count {
+  opacity: 0.6;
+  font-size: 10px;
+}

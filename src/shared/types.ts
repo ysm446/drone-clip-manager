@@ -60,6 +60,14 @@ export interface ClipItem extends Segment {
   videoWidth: number | null
   videoHeight: number | null
   videoFps: number | null
+  /** ユーザー定義タグ（自由記述 / Phase 2.8） */
+  tags: string[]
+}
+
+/** タグと使用件数（補完・絞り込み用 / Phase 2.8） */
+export interface TagCount {
+  tag: string
+  count: number
 }
 
 /** シーケンス（クリップをつないだ順路 / Phase 2.6） */
@@ -199,8 +207,15 @@ export interface DcmApi {
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>
   deleteSegment: (id: number) => Promise<void>
   // --- クリップ一覧（Phase 2.5） ---
-  /** 全動画の区間を横断取得（動画メタを結合） */
+  /** 全動画の区間を横断取得（動画メタ + タグを結合） */
   listAllClips: () => Promise<ClipItem[]>
+  // --- 区間タグ（Phase 2.8） ---
+  /** 使用中の全タグと使用件数（補完・絞り込み用） */
+  getAllTags: () => Promise<TagCount[]>
+  /** 区間にタグを付与。更新後のその区間のタグ一覧を返す。 */
+  addSegmentTag: (segmentId: number, tag: string) => Promise<string[]>
+  /** 区間からタグを外す。更新後のその区間のタグ一覧を返す。 */
+  removeSegmentTag: (segmentId: number, tag: string) => Promise<string[]>
   // --- シーケンス（Phase 2.6） ---
   listSequences: () => Promise<Sequence[]>
   createSequence: (name: string) => Promise<Sequence>

@@ -9,6 +9,9 @@ import {
   deleteSegment,
   listAllClips,
   listVideoPathsMissingMeta,
+  getAllTags,
+  addSegmentTag,
+  removeSegmentTag,
   listSequences,
   createSequence,
   renameSequence,
@@ -128,6 +131,13 @@ export function registerIpc(): void {
 
   ipcMain.handle('thumbs:ensure', (_e, videoRelPath: string, timeSec: number) =>
     ensureThumb(videoRelPath, timeSec)
+  )
+
+  // 区間タグ（Phase 2.8）
+  ipcMain.handle('tags:all', () => getAllTags())
+  ipcMain.handle('tags:add', (_e, segmentId: number, tag: string) => addSegmentTag(segmentId, tag))
+  ipcMain.handle('tags:remove', (_e, segmentId: number, tag: string) =>
+    removeSegmentTag(segmentId, tag)
   )
 
   ipcMain.handle(
