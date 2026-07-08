@@ -280,6 +280,12 @@ input:focus-visible {
   background: #000;
   position: relative;
 }
+/* クリップビューでは一覧を主役にするため、プレイヤーは上部の固定高に縮める */
+.main.view-clips .player-pane {
+  flex: none;
+  height: 46%;
+  min-height: 220px;
+}
 .editor-pane {
   height: 320px;
   background: var(--surface);
@@ -910,6 +916,20 @@ input:focus-visible {
 .clip-card.selected {
   border-color: var(--accent-border);
   background: var(--selected);
+}
+/* いま上部プレイヤーで開いている動画のクリップを強調 */
+.clip-card.playing {
+  border-color: var(--accent);
+}
+.clip-card.playing::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
 }
 .clip-check {
   position: absolute;

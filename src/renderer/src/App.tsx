@@ -120,11 +120,11 @@ export function App() {
     }
   }, [mpvMode])
 
-  // mpv ウィンドウの表示可否（ライブラリビューで動画選択中 かつ モーダル非表示のときだけ表示）
+  // mpv ウィンドウの表示可否（動画選択中 かつ モーダル非表示なら、ライブラリ/クリップ両方で表示）
   useEffect(() => {
     if (!mpvMode) return
-    api.mpvSetVisible(!!selected && !exportItems && view === 'library')
-  }, [mpvMode, selected, exportItems, view])
+    api.mpvSetVisible(!!selected && !exportItems)
+  }, [mpvMode, selected, exportItems])
 
   // クリップから開いた場合の遅延シーク: 動画のロード完了（duration 確定）後に in 点へ飛ぶ
   useEffect(() => {
@@ -333,11 +333,11 @@ export function App() {
     api.updateSegment(id, { label }).catch(() => void 0)
   }, [])
 
-  // クリップ一覧から: 元動画を開いて in 点へシーク（Phase 2.5）
+  // クリップ一覧から: 元動画を上部プレイヤーで開いて in 点へシーク（Phase 2.5）
+  // ビューは切り替えず、クリップビューに留まったまま同じプレイヤーで再生できるようにする。
   const openClip = useCallback(
     (clip: ClipItem) => {
       const t = clip.inSnapped ?? clip.inTime
-      setView('library')
       if (currentRelRef.current === clip.videoRelPath) {
         seek(t)
         setSelectedSeg(clip.id)
@@ -362,10 +362,16 @@ export function App() {
   useEffect(() => {
     const pending: { in: number | null } = { in: null }
     const onKey = (e: KeyboardEvent) => {
-      if (view !== 'library') return // クリップビューでは編集ショートカットを無効化
       if (!selected || duration <= 0) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // Space（再生切替）は両ビューで有効。区間の作成/削除ショートカットはライブラリ限定。
+      if (e.key === ' ') {
+        e.preventDefault()
+        togglePlay()
+        return
+      }
+      if (view !== 'library') return
       if (e.key === 'i' || e.key === 'I') {
         pending.in = currentTime
       } else if (e.key === 'o' || e.key === 'O') {
@@ -373,9 +379,6 @@ export function App() {
           createSegment(pending.in, currentTime)
           pending.in = null
         }
-      } else if (e.key === ' ') {
-        e.preventDefault()
-        togglePlay()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedSeg != null) {
           e.preventDefault()
@@ -419,11 +422,7 @@ export function App() {
           <BgmPlayer />
         </aside>
 
-        <main className="main">
-          {view === 'clips' ? (
-            <ClipsView onOpenClip={openClip} onExport={setExportItems} />
-          ) : (
-            <>
+        <main className={`main${view === 'clips' ? ' view-clips' : ''}`}>
           <section className="player-pane">
             {mpvMode ? (
               <>
@@ -501,46 +500,52 @@ export function App() {
             )}
           </section>
 
-          <section className="editor-pane">
-            {selected ? (
-              <>
-                <div className="editor-toolbar">
-                  <span className="editor-count">{segments.length} 区間</span>
-                  <button
-                    className="btn primary"
-                    disabled={segments.length === 0}
-                    onClick={openExportForCurrent}
-                  >
-                    書き出し…
-                  </button>
+          {view === 'clips' ? (
+            <ClipsView
+              onOpenClip={openClip}
+              onExport={setExportItems}
+              selectedVideoRel={selected}
+            />
+          ) : (
+            <section className="editor-pane">
+              {selected ? (
+                <>
+                  <div className="editor-toolbar">
+                    <span className="editor-count">{segments.length} 区間</span>
+                    <button
+                      className="btn primary"
+                      disabled={segments.length === 0}
+                      onClick={openExportForCurrent}
+                    >
+                      書き出し…
+                    </button>
+                  </div>
+                  <Timeline
+                    duration={duration || meta?.durationSec || 0}
+                    currentTime={currentTime}
+                    keyframes={keyframes}
+                    segments={segments}
+                    selectedId={selectedSeg}
+                    onSeek={seek}
+                    onCreateSegment={createSegment}
+                    onSelectSegment={setSelectedSeg}
+                    onUpdateSegment={updateSegmentTimes}
+                  />
+                  <SegmentList
+                    segments={segments}
+                    selectedId={selectedSeg}
+                    onSelect={setSelectedSeg}
+                    onJump={seek}
+                    onDelete={deleteSeg}
+                    onRename={renameSeg}
+                  />
+                </>
+              ) : (
+                <div className="editor-empty">
+                  {busy ? '読み込み中…' : '動画を選択すると編集エリアが表示されます'}
                 </div>
-                <Timeline
-                  duration={duration || meta?.durationSec || 0}
-                  currentTime={currentTime}
-                  keyframes={keyframes}
-                  segments={segments}
-                  selectedId={selectedSeg}
-                  onSeek={seek}
-                  onCreateSegment={createSegment}
-                  onSelectSegment={setSelectedSeg}
-                  onUpdateSegment={updateSegmentTimes}
-                />
-                <SegmentList
-                  segments={segments}
-                  selectedId={selectedSeg}
-                  onSelect={setSelectedSeg}
-                  onJump={seek}
-                  onDelete={deleteSeg}
-                  onRename={renameSeg}
-                />
-              </>
-            ) : (
-              <div className="editor-empty">
-                {busy ? '読み込み中…' : '動画を選択すると編集エリアが表示されます'}
-              </div>
-            )}
-          </section>
-            </>
+              )}
+            </section>
           )}
         </main>
       </div>

@@ -10,6 +10,8 @@ const api = window.dcm
 interface Props {
   onOpenClip: (clip: ClipItem) => void
   onExport: (targets: ExportTarget[]) => void
+  /** 現在プレイヤーで開いている動画の相対パス（再生中クリップの強調に使う） */
+  selectedVideoRel: string | null
 }
 
 type SortKey = 'video' | 'newest' | 'duration' | 'label'
@@ -61,7 +63,7 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
   )
 }
 
-export function ClipsView({ onOpenClip, onExport }: Props) {
+export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -225,16 +227,17 @@ export function ClipsView({ onOpenClip, onExport }: Props) {
           const lo = c.inSnapped ?? c.inTime
           const hi = c.outSnapped ?? c.outTime
           const isSel = selected.has(c.id)
+          const isPlaying = selectedVideoRel === c.videoRelPath
           return (
             <div
               key={c.id}
-              className={`clip-card${isSel ? ' selected' : ''}`}
+              className={`clip-card${isSel ? ' selected' : ''}${isPlaying ? ' playing' : ''}`}
               onClick={(e) => {
-                // Ctrl/Shift+クリックは選択トグル、通常クリックは元動画を開いて in へ
+                // Ctrl/Shift+クリックは選択トグル、通常クリックは元動画を上部プレイヤーで再生
                 if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(c.id)
                 else onOpenClip(c)
               }}
-              title={`${c.videoRelPath}\nクリック: 元動画を開いて in へ / Ctrl+クリック: 選択`}
+              title={`${c.videoRelPath}\nクリック: 上部プレイヤーで再生（in 点へ）/ Ctrl+クリック: 選択`}
             >
               <input
                 type="checkbox"

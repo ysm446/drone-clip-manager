@@ -142,8 +142,10 @@ async function ensureMpv(): Promise<boolean> {
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1600,
-    height: 900,
+    // コンテンツ領域（描画領域）を 1920×1080 にする。useContentSize でフレームを除いた内寸を指定。
+    width: 1920,
+    height: 1080,
+    useContentSize: true,
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#14161a',
