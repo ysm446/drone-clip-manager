@@ -1,13 +1,83 @@
+/* ============================================================
+   デザイントークン（lm-text-editor のデザインルールを踏襲）
+   - 色: テーマ（ライト/ダーク）で切り替わる。[data-theme] で追加
+   - 上下バーはテーマ非依存の常時ダーク（VS Code / Obsidian 方式）
+   - アクセントは紫 1 色。選択はニュートラルなハイライト + 太字
+   ============================================================ */
 :root {
-  --bg: #14161a;
-  --bg-2: #1b1e24;
-  --bg-3: #22262e;
-  --line: #2c313b;
-  --fg: #e6e9ef;
-  --fg-dim: #9aa3b2;
-  --accent: #4f9dff;
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-ui: 13px;
+  --fs-md: 14px;
+
+  /* 上下バー（テーマ非依存ダーク） */
+  --bar-bg: #161616;
+  --bar-surface: #262626;
+  --bar-hover: #363636;
+  --bar-border: #333333;
+  --bar-text: #dadada;
+  --bar-muted: #999999;
+  --bar-faint: #666666;
+  --bar-danger: #fb7a7e;
+  --bar-ok: #44cf6e;
+
+  /* ライトテーマ */
+  color-scheme: light;
+  --bg: #f2f3f5;
+  --surface: #ffffff;
+  --text: #222222;
+  --border: #dcdde0;
+  --hover: rgba(0, 0, 0, 0.06);
+  --muted: #5c5c5c;
+  --faint: #9e9e9e;
+  --accent: #6c5cd8;
+  --accent-text: #ffffff;
+  --selected: rgba(108, 92, 216, 0.11);
+  --accent-border: #b5aaf0;
+  --primary: var(--accent);
+  --ok: #1a7f37;
+  --warn: #b58a00;
+  --danger: #d1242f;
+  --danger-bg: #ffebe9;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.32);
+  --overlay: rgba(0, 0, 0, 0.45);
+  --shadow-color: rgba(0, 0, 0, 0.15);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.05);
+  --shadow-2: 0 8px 24px var(--shadow-color);
 }
 
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #191919;
+  --surface: #1e1e1e;
+  --text: #dadada;
+  --border: #333333;
+  --hover: rgba(255, 255, 255, 0.055);
+  --muted: #999999;
+  --faint: #666666;
+  --accent: #7f6df2;
+  --accent-text: #ffffff;
+  --selected: rgba(255, 255, 255, 0.09);
+  --accent-border: rgba(127, 109, 242, 0.5);
+  --ok: #44cf6e;
+  --warn: #e0ac00;
+  --danger: #fb464c;
+  --danger-bg: rgba(251, 70, 76, 0.14);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.13);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 8px 24px var(--shadow-color);
+}
+
+/* ============================================================
+   ベース
+   ============================================================ */
 * {
   box-sizing: border-box;
 }
@@ -20,11 +90,53 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  font-size: 13px;
-  color: var(--fg);
+  font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
+  color: var(--text);
   background: var(--bg);
+  font-size: var(--fs-ui);
   user-select: none;
+}
+
+input {
+  background-color: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-ui);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+button {
+  font-family: inherit;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .app {
@@ -33,72 +145,99 @@ body {
   height: 100%;
 }
 
-/* ---- top bar ---- */
+/* ============================================================
+   共通ボタン
+   ============================================================ */
+/* ghost（枠付き・面はサーフェス）。目立たせるのは primary のみ */
+.btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--fs-ui);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.btn.primary:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.btn.primary:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+.btn:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* ============================================================
+   上部バー（常時ダーク）
+   ============================================================ */
 .topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  padding: 6px 12px;
+  background: var(--bar-bg);
+  color: var(--bar-text);
+  border-bottom: 1px solid var(--bar-border);
+  flex-shrink: 0;
 }
-.brand {
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--accent);
+/* バー内のボタンは chip スタイル（暗色面） */
+.topbar .btn {
+  background: var(--bar-surface);
+  border-color: transparent;
+  color: var(--bar-text);
+  padding: 3px 12px;
+  font-size: var(--fs-sm);
+}
+.topbar .btn:hover:not(:disabled) {
+  background: var(--bar-hover);
+}
+.topbar .btn:focus,
+.topbar .btn:focus-visible {
+  outline: none;
 }
 .root-path {
-  color: var(--fg-dim);
-  font-size: 12px;
+  color: var(--bar-muted);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.btn {
-  background: var(--bg-3);
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 12px;
-  cursor: pointer;
-}
-.btn:hover {
-  border-color: var(--accent);
-}
-.btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #08111f;
-  font-weight: 600;
-}
-.btn.primary:hover {
-  filter: brightness(1.08);
-}
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 
-/* ---- body layout ---- */
+/* ============================================================
+   本体レイアウト
+   ============================================================ */
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
 }
+
+/* サイドバー = 周辺クローム（--bg） */
 .sidebar {
   width: 280px;
-  min-width: 180px;
-  background: var(--bg-2);
-  border-right: 1px solid var(--line);
+  min-width: 200px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 .sidebar-head {
-  padding: 8px 12px;
+  padding: 10px 14px 6px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
   font-weight: 600;
-  color: var(--fg-dim);
-  border-bottom: 1px solid var(--line);
+  color: var(--muted);
 }
 .main {
   flex: 1;
@@ -114,111 +253,66 @@ body {
   background: #000;
   position: relative;
 }
-
-/* プロキシ生成中/失敗のオーバーレイ */
-.proxy-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 44px; /* meta-bar の上まで */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  text-align: center;
-  color: var(--fg);
-  background: rgba(10, 12, 16, 0.82);
-  padding: 20px;
-}
-.proxy-overlay small {
-  color: var(--fg-dim);
-  line-height: 1.6;
-}
-.proxy-overlay.err {
-  color: #ff8b98;
-}
-.proxy-spin {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.badge.proxy {
-  color: #08111f;
-  background: var(--accent);
-  border-color: var(--accent);
-  font-weight: 600;
-}
 .editor-pane {
-  height: 300px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  height: 320px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.editor-count {
-  color: var(--fg-dim);
-  margin-right: auto;
-}
 
-/* ---- tree ---- */
+/* ============================================================
+   ライブラリツリー
+   ============================================================ */
 .tree {
   overflow: auto;
   flex: 1;
-  padding: 4px 0;
+  padding: 2px 8px 8px;
 }
 .tree-empty {
-  padding: 16px 12px;
-  color: var(--fg-dim);
+  padding: 16px 14px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
 }
 .tree-row {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-m);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  color: var(--text);
 }
 .tree-row:hover {
-  background: var(--bg-3);
+  background: var(--hover);
 }
+/* 選択はニュートラルなハイライト + 太字（Obsidian 流。色で主張しない） */
 .tree-row.selected {
-  background: #2b3a55;
+  background: var(--selected);
+  font-weight: 600;
 }
 .tree-caret {
   width: 10px;
-  color: var(--fg-dim);
+  color: var(--faint);
+  font-size: var(--fs-xs);
 }
 .tree-icon {
   font-size: 12px;
+  opacity: 0.9;
 }
 .tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* ---- bgm ---- */
+/* ============================================================
+   BGM パネル（サイドバー下部）
+   ============================================================ */
 .bgm {
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
+  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   flex: none;
@@ -227,41 +321,52 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 8px 14px 4px;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
   font-weight: 600;
-  color: var(--fg-dim);
+  color: var(--muted);
 }
 .bgm-pick {
-  background: transparent;
   border: none;
+  background: none;
+  color: var(--muted);
   cursor: pointer;
+  border-radius: var(--radius-s);
+  padding: 2px 6px;
   font-size: 14px;
+}
+.bgm-pick:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .bgm-tracks {
   max-height: 128px;
   overflow: auto;
-  padding: 2px 0;
+  padding: 2px 8px;
 }
 .bgm-empty {
-  padding: 8px 12px;
-  color: var(--fg-dim);
-  font-size: 12px;
+  padding: 8px 6px;
+  color: var(--faint);
+  font-size: var(--fs-sm);
 }
 .bgm-track {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-m);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
 }
 .bgm-track:hover {
-  background: var(--bg-3);
+  background: var(--hover);
 }
 .bgm-track.active {
-  background: #2b3a55;
-  color: var(--fg);
+  background: var(--selected);
+  font-weight: 600;
 }
 .bgm-track-icon {
   width: 10px;
@@ -275,38 +380,43 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
 }
 .bgm-controls button {
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  color: var(--fg);
-  border-radius: 5px;
-  padding: 2px 7px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: var(--radius-m);
+  padding: 3px 8px;
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .bgm-controls button:hover {
-  border-color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
 }
 .bgm-controls button.on {
-  border-color: var(--accent);
+  background: var(--selected);
   color: var(--accent);
 }
 .bgm-controls input[type='range'] {
   flex: 1;
   min-width: 40px;
+  accent-color: var(--accent);
 }
 .bgm-now {
-  padding: 4px 12px 8px;
-  color: var(--fg-dim);
-  font-size: 12px;
+  padding: 2px 14px 8px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ---- player ---- */
+/* ============================================================
+   プレイヤー
+   ============================================================ */
 .player-video {
   flex: 1;
   width: 100%;
@@ -319,10 +429,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--fg-dim);
+  color: var(--bar-faint);
+  font-size: var(--fs-sm);
 }
-
-/* mpv 埋め込み時の動画領域（この矩形にネイティブ mpv ウィンドウを重ねる） */
 .mpv-host {
   flex: 1;
   min-height: 0;
@@ -336,67 +445,138 @@ body {
   align-items: center;
   gap: 12px;
   padding: 6px 12px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  background: var(--bar-bg);
+  border-top: 1px solid var(--bar-border);
 }
 .mpv-play {
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  color: var(--fg);
-  border-radius: 5px;
-  padding: 3px 12px;
+  background: var(--bar-surface);
+  border: 1px solid transparent;
+  color: var(--bar-text);
+  border-radius: var(--radius-m);
+  padding: 3px 14px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
-.mpv-play:hover {
-  border-color: var(--accent);
+.mpv-play:hover:not(:disabled) {
+  background: var(--bar-hover);
 }
 .mpv-play:disabled {
   opacity: 0.45;
-  cursor: not-allowed;
+  cursor: default;
 }
 .mpv-time {
-  color: var(--fg-dim);
+  color: var(--bar-muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
 }
+
+/* プロキシ生成 / 失敗のオーバーレイ */
+.proxy-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--bar-text);
+  background: rgba(10, 12, 16, 0.82);
+  padding: 24px;
+}
+.proxy-overlay small {
+  color: var(--bar-muted);
+  line-height: 1.7;
+}
+.proxy-overlay.err {
+  color: var(--bar-danger);
+}
+.proxy-spin {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--bar-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* メタバー（動画の直下） */
 .meta-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  padding: 7px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 .meta-name {
   font-weight: 600;
+  font-size: var(--fs-ui);
 }
 .meta-time {
-  color: var(--fg-dim);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
 }
 .badge {
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 11px;
-  color: var(--fg-dim);
+  background: var(--hover);
+  border-radius: var(--radius-s);
+  padding: 1px 7px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
 }
 .badge.muted {
-  opacity: 0.7;
+  opacity: 0.75;
+}
+.badge.proxy {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
 }
 
-/* ---- timeline ---- */
+/* ============================================================
+   編集エリア（ツールバー + タイムライン + 区間リスト）
+   ============================================================ */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-count {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin-right: auto;
+}
+.editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+}
+
+/* --- タイムライン --- */
 .timeline {
-  padding: 14px 16px 8px;
+  padding: 16px 16px 10px;
 }
 .tl-track {
   position: relative;
   height: 56px;
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
   cursor: crosshair;
   overflow: hidden;
   touch-action: none;
@@ -410,14 +590,14 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--border);
 }
 .tl-seg {
   position: absolute;
   top: 8px;
   bottom: 8px;
-  border-radius: 3px;
-  opacity: 0.72;
+  border-radius: var(--radius-s);
+  opacity: 0.78;
   cursor: pointer;
   overflow: hidden;
   display: flex;
@@ -425,12 +605,12 @@ body {
 }
 .tl-seg.selected {
   opacity: 1;
-  outline: 2px solid #fff;
+  outline: 2px solid var(--text);
 }
 .tl-seg-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: #0d0f12;
-  padding: 0 4px;
+  padding: 0 5px;
   white-space: nowrap;
   font-weight: 600;
 }
@@ -438,7 +618,7 @@ body {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(79, 157, 255, 0.28);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
   border: 1px solid var(--accent);
 }
 .tl-playhead {
@@ -446,71 +626,73 @@ body {
   top: -2px;
   bottom: -2px;
   width: 2px;
-  background: #ff5a5a;
+  background: var(--danger);
   pointer-events: none;
 }
 .tl-scale {
   display: flex;
   justify-content: space-between;
-  margin-top: 4px;
-  color: var(--fg-dim);
-  font-size: 11px;
+  margin-top: 5px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 .tl-hint {
-  color: var(--fg-dim);
+  color: var(--faint);
 }
 
-/* ---- segment list ---- */
+/* --- 区間リスト --- */
 .seg-list {
   flex: 1;
   overflow: auto;
-  padding: 4px 8px 8px;
+  padding: 4px 10px 10px;
 }
-.seg-empty,
-.editor-empty {
+.seg-empty {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--fg-dim);
+  color: var(--faint);
+  font-size: var(--fs-sm);
 }
 .seg-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 5px 8px;
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 .seg-item:hover {
-  background: var(--bg-3);
+  background: var(--hover);
 }
 .seg-item.selected {
-  background: #2b3a55;
+  background: var(--selected);
 }
 .seg-swatch {
   width: 12px;
   height: 12px;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   flex: none;
 }
 .seg-label-input {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--fg);
-  border-radius: 4px;
-  padding: 2px 6px;
-  width: 160px;
+  color: var(--text);
+  border-radius: var(--radius-m);
+  padding: 3px 8px;
+  width: 170px;
+  font-size: var(--fs-ui);
 }
 .seg-label-input:focus {
-  border-color: var(--line);
-  background: var(--bg);
+  border-color: var(--accent);
+  background: var(--surface);
   outline: none;
 }
 .seg-time {
-  color: var(--fg-dim);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 .seg-time:hover {
@@ -518,70 +700,81 @@ body {
 }
 .seg-dur {
   margin-left: auto;
-  color: var(--fg-dim);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
 }
 .seg-del {
   background: transparent;
   border: none;
-  color: var(--fg-dim);
+  color: var(--faint);
   cursor: pointer;
   font-size: 13px;
+  border-radius: var(--radius-s);
+  padding: 2px 6px;
 }
 .seg-del:hover {
-  color: #ff6b81;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
-/* ---- export modal ---- */
+/* ============================================================
+   書き出しモーダル
+   ============================================================ */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
 }
 .modal {
-  width: 560px;
+  width: 580px;
   max-width: 92vw;
   max-height: 86vh;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-2);
 }
 .modal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
+  font-size: var(--fs-md);
   font-weight: 600;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
 .modal-close {
   background: transparent;
   border: none;
-  color: var(--fg-dim);
+  color: var(--muted);
   cursor: pointer;
   font-size: 15px;
+  border-radius: var(--radius-s);
+  padding: 4px 6px;
 }
 .modal-close:hover {
-  color: var(--fg);
+  background: var(--hover);
+  color: var(--text);
 }
 .modal-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px 0;
+  padding: 12px 16px 0;
 }
 .modal-row label {
   width: 110px;
-  color: var(--fg-dim);
+  color: var(--muted);
   flex: none;
+  font-size: var(--fs-sm);
 }
 .modal-dir {
   display: flex;
@@ -591,33 +784,39 @@ body {
   flex: 1;
 }
 .modal-dir-path {
-  color: var(--fg-dim);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--fs-sm);
 }
 .modal-input {
   flex: 1;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  color: var(--fg);
-  border-radius: 5px;
-  padding: 5px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-m);
+  padding: 5px 10px;
+  font-size: var(--fs-ui);
+  outline: none;
+}
+.modal-input:focus {
+  border-color: var(--accent);
 }
 .modal-hint {
-  padding: 6px 16px 4px;
-  color: var(--fg-dim);
-  font-size: 12px;
+  padding: 8px 16px 4px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
 .modal-hint code {
-  background: var(--bg-3);
-  border-radius: 3px;
-  padding: 0 4px;
+  background: var(--hover);
+  border-radius: var(--radius-s);
+  padding: 0 5px;
 }
 .modal-list {
-  margin: 8px 16px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  margin: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
   overflow: auto;
   flex: 1;
   min-height: 80px;
@@ -626,40 +825,45 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--line);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
 }
 .modal-item:last-child {
   border-bottom: none;
+}
+.modal-item input[type='checkbox'] {
+  accent-color: var(--accent);
 }
 .modal-item-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 180px;
+  max-width: 190px;
+  font-size: var(--fs-ui);
 }
 .modal-item-time {
-  color: var(--fg-dim);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .modal-item-status {
   margin-left: auto;
   min-width: 90px;
   display: flex;
   justify-content: flex-end;
+  font-size: var(--fs-sm);
 }
 .modal-item-status .ok {
-  color: #54d19a;
+  color: var(--ok);
 }
 .modal-item-status .err {
-  color: #ff6b81;
+  color: var(--danger);
 }
 .pbar {
   width: 88px;
   height: 8px;
-  background: var(--bg-3);
-  border-radius: 4px;
+  background: var(--hover);
+  border-radius: 999px;
   overflow: hidden;
 }
 .pbar-fill {
@@ -673,10 +877,11 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
 }
 .modal-summary {
-  color: var(--fg-dim);
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
 .modal-actions {
   display: flex;

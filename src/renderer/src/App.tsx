@@ -279,7 +279,6 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">drone-clip-manager</div>
         <button className="btn" onClick={pickRoot}>
           ルートフォルダを選択…
         </button>
