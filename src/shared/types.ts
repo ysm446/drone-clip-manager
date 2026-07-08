@@ -131,6 +131,8 @@ export interface DcmApi {
   /** プレビュー用プロキシを用意（無ければ生成開始）。進捗は onProxyUpdate で受ける。 */
   proxyEnsure: (relPath: string, durationSec: number) => Promise<ProxyStatus>
   onProxyUpdate: (cb: (u: ProxyUpdate) => void) => () => void
+  /** 一時プロキシを再生するためのカスタムプロトコル URL */
+  proxyUrl: (relPath: string) => string
   listSegments: (relPath: string) => Promise<Segment[]>
   addSegment: (input: SegmentInput) => Promise<Segment>
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>

@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join, resolve, relative, sep } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 // ルートフォルダ・BGM フォルダはハードコードせず、ユーザー指定値を app のユーザーデータ領域に永続化する。
 // ライブラリのメタデータ自体は各ルート直下の .dcm/ に閉じる（spec §3 参照）。
@@ -94,4 +94,32 @@ export function toBgmRelPosix(absPath: string): string {
   const dir = getBgmDir()
   if (!dir) throw new Error('BGM フォルダが未設定です')
   return toRelPosixOf(dir, absPath)
+}
+
+// 一時プロキシは永続キャッシュを作らないため OS の一時フォルダに置き、終了時に消す。
+function tempProxyBaseRaw(): string {
+  return join(app.getPath('temp'), 'drone-clip-manager', 'proxies')
+}
+
+export function tempProxyDir(): string {
+  const dir = tempProxyBaseRaw()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export function resolveInTempProxy(relPath: string): string {
+  return resolveInBase(tempProxyDir(), relPath)
+}
+
+export function toTempProxyRelPosix(absPath: string): string {
+  return toRelPosixOf(tempProxyDir(), absPath)
+}
+
+/** 一時プロキシを丸ごと削除（起動時・終了時に呼ぶ） */
+export function cleanTempProxies(): void {
+  try {
+    rmSync(tempProxyBaseRaw(), { recursive: true, force: true })
+  } catch {
+    /* noop */
+  }
 }

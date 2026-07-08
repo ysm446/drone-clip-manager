@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { metaDir, resolveInRoot, toRelPosix } from '../util/paths'
+import { resolveInRoot, tempProxyDir, toTempProxyRelPosix } from '../util/paths'
 
 // プレビュー用プロキシ生成（spec §11-1）。
-// Electron/Chromium は HEVC 10bit 等をデコードできないため、再生用に H.264 8bit 720p の
-// 軽量プロキシを .dcm/proxies/ に生成してキャッシュする。書き出しは元素材を使う（プロキシは使わない）。
+// 原本を直接再生できない機種向けのフォールバック。H.264 8bit 720p の軽量プロキシを
+// OS の一時フォルダに生成する（永続キャッシュは作らない。アプリ終了時に削除）。
+// 書き出しは常に元素材を使う（プロキシは使わない）。
 const FFMPEG = 'ffmpeg'
 
 interface Candidate {
@@ -22,13 +23,7 @@ const CANDIDATES: Candidate[] = [
   { decode: ['-hwaccel', 'auto'], encode: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25'] }
 ]
 
-function proxyDir(): string {
-  const dir = join(metaDir(), 'proxies')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return dir
-}
-
-/** 元素材の相対パス + サイズ + 更新時刻からキャッシュキーを作る（素材が変われば自動で無効化） */
+/** 元素材の相対パス + サイズ + 更新時刻から一意名を作る（同一セッション内は再利用） */
 function keyFor(relPath: string): { abs: string; rel: string } {
   const src = resolveInRoot(relPath)
   const st = statSync(src)
@@ -36,8 +31,8 @@ function keyFor(relPath: string): { abs: string; rel: string } {
     .update(`${relPath}|${st.size}|${Math.round(st.mtimeMs)}`)
     .digest('hex')
     .slice(0, 16)
-  const abs = join(proxyDir(), `${h}.mp4`)
-  return { abs, rel: toRelPosix(abs) }
+  const abs = join(tempProxyDir(), `${h}.mp4`)
+  return { abs, rel: toTempProxyRelPosix(abs) }
 }
 
 export function proxyStatus(relPath: string): { ready: boolean; proxyRelPath?: string } {

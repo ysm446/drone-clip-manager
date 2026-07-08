@@ -20,6 +20,7 @@ const api: DcmApi = {
     ipcRenderer.on('proxy:update', handler)
     return () => ipcRenderer.removeListener('proxy:update', handler)
   },
+  proxyUrl: (relPath) => `dcm-media://tmp/${encodeURIComponent(relPath)}`,
   listSegments: (relPath) => ipcRenderer.invoke('segments:list', relPath),
   addSegment: (input: SegmentInput) => ipcRenderer.invoke('segments:add', input),
   updateSegment: (id, patch) => ipcRenderer.invoke('segments:update', id, patch),

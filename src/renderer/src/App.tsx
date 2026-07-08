@@ -23,6 +23,7 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
   const [usingProxy, setUsingProxy] = useState(false)
+  const [playError, setPlayError] = useState(false)
   const [proxyGen, setProxyGen] = useState<{ active: boolean; percent: number; error: string | null }>({
     active: false,
     percent: 0,
@@ -43,14 +44,22 @@ export function App() {
       if (u.status === 'progress') {
         setProxyGen((g) => ({ ...g, active: true, percent: u.percent ?? g.percent }))
       } else if (u.status === 'done' && u.proxyRelPath) {
-        setVideoSrc(api.mediaUrl(u.proxyRelPath))
+        setVideoSrc(api.proxyUrl(u.proxyRelPath))
         setUsingProxy(true)
+        setPlayError(false)
         setProxyGen({ active: false, percent: 0, error: null })
       } else if (u.status === 'error') {
         setProxyGen({ active: false, percent: 0, error: u.error ?? '不明なエラー' })
       }
     })
   }, [])
+
+  const resetPlayback = () => {
+    setVideoSrc(null)
+    setUsingProxy(false)
+    setPlayError(false)
+    setProxyGen({ active: false, percent: 0, error: null })
+  }
 
   const pickRoot = async () => {
     const info = await api.pickRoot()
@@ -60,14 +69,8 @@ export function App() {
     setMeta(null)
     setSegments([])
     setKeyframes([])
-    setVideoSrc(null)
-    setUsingProxy(false)
-    setProxyGen({ active: false, percent: 0, error: null })
+    resetPlayback()
   }
-
-  // h264 8bit は Chromium がそのまま再生できる。それ以外（HEVC / 10bit / av1 等）はプロキシで再生する。
-  const canPlayNative = (m: VideoMeta): boolean =>
-    m.codec === 'h264' && (m.bitDepth == null || m.bitDepth <= 8)
 
   const selectVideo = useCallback(async (relPath: string) => {
     setSelected(relPath)
@@ -78,9 +81,10 @@ export function App() {
     setMeta(null)
     setKeyframes([])
     setSegments([])
-    setVideoSrc(null)
-    setUsingProxy(false)
-    setProxyGen({ active: false, percent: 0, error: null })
+    resetPlayback()
+    // まず原本を直接再生する（HEVC は platform デコーダ経由。再生できない場合のみ
+    // 手動で一時プロキシに切り替える）。
+    setVideoSrc(api.mediaUrl(relPath))
     setBusy(true)
     try {
       const [m, segs] = await Promise.all([api.probeVideo(relPath), api.listSegments(relPath)])
@@ -91,25 +95,45 @@ export function App() {
       api.getKeyframes(relPath).then((kf) => {
         if (currentRelRef.current === relPath) setKeyframes(kf)
       }).catch(() => void 0)
-
-      if (canPlayNative(m)) {
-        setVideoSrc(api.mediaUrl(relPath))
-        setUsingProxy(false)
-      } else {
-        // プロキシを用意（キャッシュ済みなら即、無ければ生成 → onProxyUpdate で反映）
-        setProxyGen({ active: true, percent: 0, error: null })
-        const st = await api.proxyEnsure(relPath, m.durationSec ?? 0)
-        if (currentRelRef.current !== relPath) return
-        if (st.ready && st.proxyRelPath) {
-          setVideoSrc(api.mediaUrl(st.proxyRelPath))
-          setUsingProxy(true)
-          setProxyGen({ active: false, percent: 0, error: null })
-        }
-      }
     } finally {
       setBusy(false)
     }
   }, [])
+
+  // 原本が再生できない機種向け: 一時プロキシ（保存しない）を生成して再生に切り替える。
+  const useTempProxy = useCallback(async () => {
+    const relPath = currentRelRef.current
+    if (!relPath) return
+    setPlayError(false)
+    setProxyGen({ active: true, percent: 0, error: null })
+    const st = await api.proxyEnsure(relPath, meta?.durationSec ?? duration ?? 0)
+    if (currentRelRef.current !== relPath) return
+    if (st.ready && st.proxyRelPath) {
+      setVideoSrc(api.proxyUrl(st.proxyRelPath))
+      setUsingProxy(true)
+      setProxyGen({ active: false, percent: 0, error: null })
+    }
+    // 生成中なら onProxyUpdate で done を受けて切り替わる
+  }, [meta, duration])
+
+  // 再生失敗の検出:
+  //  1) <video> の error イベント
+  //  2) 再生開始後に時間が進まない（HEVC デコーダ非対応でフレームが出ないケース）
+  const onVideoError = () => {
+    if (!usingProxy) setPlayError(true)
+  }
+  const onVideoPlay = () => {
+    if (usingProxy) return
+    const v = videoRef.current
+    if (!v) return
+    const startAt = v.currentTime
+    window.setTimeout(() => {
+      const vv = videoRef.current
+      if (vv && !vv.paused && vv.currentTime - startAt < 0.1 && !usingProxy) {
+        setPlayError(true)
+      }
+    }, 2200)
+  }
 
   const seek = useCallback((t: number) => {
     const v = videoRef.current
@@ -198,16 +222,14 @@ export function App() {
               src={videoSrc}
               onTimeUpdate={setCurrentTime}
               onDuration={setDuration}
+              onError={onVideoError}
+              onPlay={onVideoPlay}
             />
             {proxyGen.active && (
               <div className="proxy-overlay">
                 <div className="proxy-spin" />
-                <div>プレビュー用プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
-                <small>
-                  元が HEVC / 10bit のため Chromium で直接再生できません。
-                  <br />
-                  次回以降はキャッシュから即再生されます（書き出しは元素材を使用）。
-                </small>
+                <div>一時プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
+                <small>H.264 に変換して再生します（保存しません・終了時に自動削除）。</small>
               </div>
             )}
             {proxyGen.error && (
@@ -217,11 +239,24 @@ export function App() {
                 <small>{proxyGen.error}</small>
               </div>
             )}
+            {playError && !usingProxy && !proxyGen.active && (
+              <div className="proxy-overlay">
+                <div>この素材を直接再生できませんでした（HEVC / 10bit の可能性）。</div>
+                <small>
+                  Windows の「HEVC ビデオ拡張機能」を入れると原本のまま再生できる場合があります。
+                  <br />
+                  すぐ確認したい場合は、一時的に H.264 プロキシで再生できます（保存しません）。
+                </small>
+                <button className="btn primary" onClick={useTempProxy}>
+                  一時プロキシで再生
+                </button>
+              </div>
+            )}
             {meta && (
               <div className="meta-bar">
                 <span className="meta-name">{meta.filename}</span>
                 <span className="badge">{meta.codec ?? '?'}</span>
-                {usingProxy && <span className="badge proxy">プロキシ再生</span>}
+                {usingProxy && <span className="badge proxy">プロキシ再生（一時）</span>}
                 <span className="badge">
                   {meta.width}×{meta.height}
                 </span>
