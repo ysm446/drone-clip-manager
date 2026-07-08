@@ -242,6 +242,23 @@ export function App() {
     [selected, keyframes, duration, segments.length]
   )
 
+  // 区間のリサイズ/移動: 新しい in/out をキーフレームスナップして永続化
+  const updateSegmentTimes = useCallback(
+    (id: number, inT: number, outT: number) => {
+      const inSnapped = keyframes.length ? keyframeBefore(keyframes, inT) : inT
+      const outSnapped = keyframes.length ? keyframeAfter(keyframes, outT, duration || outT) : outT
+      setSegments((prev) =>
+        prev
+          .map((s) =>
+            s.id === id ? { ...s, inTime: inT, outTime: outT, inSnapped, outSnapped } : s
+          )
+          .sort((a, b) => a.inTime - b.inTime)
+      )
+      api.updateSegment(id, { inTime: inT, outTime: outT, inSnapped, outSnapped }).catch(() => void 0)
+    },
+    [keyframes, duration]
+  )
+
   const deleteSeg = useCallback(async (id: number) => {
     await api.deleteSegment(id)
     setSegments((prev) => prev.filter((s) => s.id !== id))
@@ -270,11 +287,16 @@ export function App() {
       } else if (e.key === ' ') {
         e.preventDefault()
         togglePlay()
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedSeg != null) {
+          e.preventDefault()
+          deleteSeg(selectedSeg)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, duration, currentTime, createSegment, togglePlay])
+  }, [selected, duration, currentTime, createSegment, togglePlay, selectedSeg, deleteSeg])
 
   return (
     <div className="app">
@@ -394,6 +416,7 @@ export function App() {
                   onSeek={seek}
                   onCreateSegment={createSegment}
                   onSelectSegment={setSelectedSeg}
+                  onUpdateSegment={updateSegmentTimes}
                 />
                 <SegmentList
                   segments={segments}

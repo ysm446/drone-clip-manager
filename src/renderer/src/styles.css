@@ -598,7 +598,7 @@ input:focus-visible {
   bottom: 8px;
   border-radius: var(--radius-s);
   opacity: 0.78;
-  cursor: pointer;
+  cursor: grab;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -607,12 +607,57 @@ input:focus-visible {
   opacity: 1;
   outline: 2px solid var(--text);
 }
+.tl-seg.editing {
+  opacity: 1;
+  cursor: grabbing;
+}
 .tl-seg-label {
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-xs);
   color: #0d0f12;
-  padding: 0 5px;
+  padding: 0 8px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 600;
+  pointer-events: none; /* ラベルは本体ドラッグ（移動）に委ねる */
+}
+/* 左右のリサイズハンドル: 端に薄い掴みしろ、hover で明示 */
+.tl-seg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.tl-seg-handle-left {
+  left: 0;
+}
+.tl-seg-handle-right {
+  right: 0;
+}
+.tl-seg-handle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.tl-seg-handle-left::after {
+  left: 2px;
+}
+.tl-seg-handle-right::after {
+  right: 2px;
+}
+.tl-seg:hover .tl-seg-handle::after,
+.tl-seg.editing .tl-seg-handle::after {
+  opacity: 1;
 }
 .tl-pending {
   position: absolute;
