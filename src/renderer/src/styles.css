@@ -667,12 +667,45 @@ input:focus-visible {
   color: var(--faint);
   font-size: var(--fs-xs);
 }
+/* ルーラー + トラックのまとまり（再生ヘッドはこの上を貫く） */
+.tl-body {
+  position: relative;
+}
+/* 上部の動画シーク専用ルーラー（区間バーとは重ならない） */
+.tl-ruler {
+  position: relative;
+  height: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: none;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.tl-tick-label {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 .tl-track {
   position: relative;
   height: 56px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius-m);
+  /* 上はルーラーと接するので角を落とす */
+  border-radius: 0 0 var(--radius-m) var(--radius-m);
   cursor: crosshair;
   overflow: hidden;
   touch-action: none;
@@ -765,13 +798,40 @@ input:focus-visible {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
   border: 1px solid var(--accent);
 }
+/* ルーラー上端からトラック下端までを貫く再生ヘッド */
 .tl-playhead {
   position: absolute;
-  top: -2px;
-  bottom: -2px;
+  top: 0;
+  bottom: 0;
   width: 2px;
+  transform: translateX(-1px);
   background: var(--danger);
   pointer-events: none;
+  z-index: 5;
+}
+.tl-playhead-head {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 14px;
+  background: var(--danger);
+  /* 下向きに尖った五角形（DaVinci 風のマーカー） */
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+}
+.tl-playhead-time {
+  position: absolute;
+  top: 2px;
+  left: 9px;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .tl-scale {
   display: flex;

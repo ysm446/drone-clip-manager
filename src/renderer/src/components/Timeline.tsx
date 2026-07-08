@@ -1,6 +1,28 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
 import { colorForIndex, fmtTime } from '../util'
+
+/** ルーラー目盛り用の短い表記（mm:ss / 1時間超は h:mm:ss） */
+function fmtTick(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const ss = s % 60
+  const mm = String(m).padStart(2, '0')
+  const s2 = String(ss).padStart(2, '0')
+  return h > 0 ? `${h}:${mm}:${s2}` : `${mm}:${s2}`
+}
+
+/** duration を 8〜16 本程度の「キリのよい」目盛り時刻に割る */
+const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+function makeTicks(duration: number): number[] {
+  if (duration <= 0) return []
+  const raw = duration / 10
+  const step = TICK_STEPS.find((s) => s >= raw) ?? Math.ceil(raw / 3600) * 3600
+  const arr: number[] = []
+  for (let t = 0; t <= duration + 1e-6; t += step) arr.push(t)
+  return arr
+}
 
 interface Props {
   duration: number
@@ -164,6 +186,31 @@ export function Timeline({
     window.addEventListener('pointerup', onUp)
   }
 
+  // --- 上部ルーラー: 常に「動画だけのシーク」（区間バーとは重ならない専用エリア） ---
+  const [rulerDrag, setRulerDrag] = useState(false)
+  const onRulerDown = (e: React.PointerEvent) => {
+    if (duration <= 0) return
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    onSeek(timeAt(e.clientX))
+    lastScrubRef.current = performance.now()
+    setRulerDrag(true)
+  }
+  const onRulerMove = (e: React.PointerEvent) => {
+    if (!rulerDrag) return
+    const now = performance.now()
+    if (now - lastScrubRef.current >= SCRUB_INTERVAL_MS) {
+      lastScrubRef.current = now
+      onSeek(timeAt(e.clientX))
+    }
+  }
+  const onRulerUp = (e: React.PointerEvent) => {
+    if (!rulerDrag) return
+    onSeek(timeAt(e.clientX))
+    setRulerDrag(false)
+  }
+
+  const ticks = useMemo(() => makeTicks(duration), [duration])
+
   const pending =
     mode === 'segment' && drag && drag.moved
       ? { lo: Math.min(drag.startT, drag.curT), hi: Math.max(drag.startT, drag.curT) }
@@ -196,56 +243,77 @@ export function Timeline({
         </button>
         <span className="tl-mode-label">{mode === 'seek' ? 'シーク' : '区間作成'}</span>
       </div>
-      <div
-        className={`tl-track mode-${mode}`}
-        ref={trackRef}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      >
-        <div className="tl-keyframes">
-          {keyframes.map((k, i) => (
-            <div key={i} className="tl-kf" style={{ left: `${pct(k)}%` }} />
+      <div className="tl-body">
+        {/* 動画シーク専用ルーラー（区間バーと重ならない上部エリア） */}
+        <div
+          className="tl-ruler"
+          onPointerDown={onRulerDown}
+          onPointerMove={onRulerMove}
+          onPointerUp={onRulerUp}
+          title="クリック/ドラッグで再生位置を移動（シーク専用）"
+        >
+          {ticks.map((t, i) => (
+            <div key={i} className="tl-tick" style={{ left: `${pct(t)}%` }}>
+              <span className="tl-tick-label">{fmtTick(t)}</span>
+            </div>
           ))}
         </div>
 
-        {segments.map((s, i) => {
-          const editing = preview?.id === s.id
-          const lo = editing ? preview!.lo : s.inSnapped ?? s.inTime
-          const hi = editing ? preview!.hi : s.outSnapped ?? s.outTime
-          return (
+        <div
+          className={`tl-track mode-${mode}`}
+          ref={trackRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          <div className="tl-keyframes">
+            {keyframes.map((k, i) => (
+              <div key={i} className="tl-kf" style={{ left: `${pct(k)}%` }} />
+            ))}
+          </div>
+
+          {segments.map((s, i) => {
+            const editing = preview?.id === s.id
+            const lo = editing ? preview!.lo : s.inSnapped ?? s.inTime
+            const hi = editing ? preview!.hi : s.outSnapped ?? s.outTime
+            return (
+              <div
+                key={s.id}
+                className={`tl-seg${selectedId === s.id ? ' selected' : ''}${editing ? ' editing' : ''}`}
+                style={{
+                  left: `${pct(lo)}%`,
+                  width: `${pct(hi) - pct(lo)}%`,
+                  background: s.color ?? colorForIndex(i)
+                }}
+                title={`${s.label ?? '区間'} ${fmtTime(lo)}–${fmtTime(hi)}（端=長さ変更 / 本体=移動）`}
+                onPointerDown={(e) => onSegDown(e, s, 'move')}
+              >
+                <div
+                  className="tl-seg-handle tl-seg-handle-left"
+                  onPointerDown={(e) => onSegDown(e, s, 'in')}
+                />
+                <span className="tl-seg-label">{s.label ?? `#${s.id}`}</span>
+                <div
+                  className="tl-seg-handle tl-seg-handle-right"
+                  onPointerDown={(e) => onSegDown(e, s, 'out')}
+                />
+              </div>
+            )
+          })}
+
+          {pending && (
             <div
-              key={s.id}
-              className={`tl-seg${selectedId === s.id ? ' selected' : ''}${editing ? ' editing' : ''}`}
-              style={{
-                left: `${pct(lo)}%`,
-                width: `${pct(hi) - pct(lo)}%`,
-                background: s.color ?? colorForIndex(i)
-              }}
-              title={`${s.label ?? '区間'} ${fmtTime(lo)}–${fmtTime(hi)}（端=長さ変更 / 本体=移動）`}
-              onPointerDown={(e) => onSegDown(e, s, 'move')}
-            >
-              <div
-                className="tl-seg-handle tl-seg-handle-left"
-                onPointerDown={(e) => onSegDown(e, s, 'in')}
-              />
-              <span className="tl-seg-label">{s.label ?? `#${s.id}`}</span>
-              <div
-                className="tl-seg-handle tl-seg-handle-right"
-                onPointerDown={(e) => onSegDown(e, s, 'out')}
-              />
-            </div>
-          )
-        })}
+              className="tl-pending"
+              style={{ left: `${pct(pending.lo)}%`, width: `${pct(pending.hi) - pct(pending.lo)}%` }}
+            />
+          )}
+        </div>
 
-        {pending && (
-          <div
-            className="tl-pending"
-            style={{ left: `${pct(pending.lo)}%`, width: `${pct(pending.hi) - pct(pending.lo)}%` }}
-          />
-        )}
-
-        <div className="tl-playhead" style={{ left: `${pct(currentTime)}%` }} />
+        {/* ルーラー + トラックを貫く再生ヘッド（頭部マーカー + 縦棒） */}
+        <div className="tl-playhead" style={{ left: `${pct(currentTime)}%` }}>
+          <div className="tl-playhead-head" />
+          <span className="tl-playhead-time">{fmtTime(currentTime)}</span>
+        </div>
       </div>
 
       <div className="tl-scale">
