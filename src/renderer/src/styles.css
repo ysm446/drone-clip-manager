@@ -867,11 +867,20 @@ input:focus-visible {
 }
 .seg-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 5px 8px;
   border-radius: var(--radius-m);
   cursor: pointer;
+}
+.seg-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 区間リスト内のタグはラベル入力に合わせて少しインデント */
+.seg-item .clip-tags {
+  padding-left: 20px;
 }
 .seg-item:hover {
   background: var(--hover);

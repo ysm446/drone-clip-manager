@@ -455,6 +455,11 @@ export function App() {
     api.updateSegment(id, { label }).catch(() => void 0)
   }, [])
 
+  // 区間リストからのタグ変更を segments state に反映（永続化は SegmentList 側で実施済み）
+  const onSegmentTagsChanged = useCallback((id: number, tags: string[]) => {
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, tags } : s)))
+  }, [])
+
   // クリップ一覧から: 元動画を上部プレイヤーで開いて in 点へシーク（Phase 2.5）
   // ビューは切り替えず、クリップビューに留まったまま同じプレイヤーで再生できるようにする。
   // 再生中に別ソースのクリップへ切り替えた場合は、再生状態を引き継いで新しい in 点から再生を継続する。
@@ -789,6 +794,7 @@ export function App() {
                     onJump={seek}
                     onDelete={deleteSeg}
                     onRename={renameSeg}
+                    onTagsChanged={onSegmentTagsChanged}
                   />
                 </>
               ) : (

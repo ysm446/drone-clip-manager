@@ -142,7 +142,7 @@ export function listSegments(videoRelPath: string): Segment[] {
   const rows = getDb()
     .prepare('SELECT * FROM segments WHERE video_rel_path = ? ORDER BY in_time ASC')
     .all(videoRelPath) as SegmentRow[]
-  return rows.map(rowToSegment)
+  return rows.map((r) => ({ ...rowToSegment(r), tags: getSegmentTags(r.id) }))
 }
 
 export function addSegment(input: SegmentInput): Segment {
@@ -167,7 +167,7 @@ export function addSegment(input: SegmentInput): Segment {
 export function getSegment(id: number): Segment {
   const row = getDb().prepare('SELECT * FROM segments WHERE id = ?').get(id) as SegmentRow | undefined
   if (!row) throw new Error(`区間が見つかりません: ${id}`)
-  return rowToSegment(row)
+  return { ...rowToSegment(row), tags: getSegmentTags(id) }
 }
 
 export function updateSegment(id: number, patch: Partial<SegmentInput>): Segment {

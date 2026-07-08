@@ -3,6 +3,7 @@ import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtTime } from '../util'
 import { IconFilm } from './icons'
+import { TagEditor } from './TagEditor'
 
 const api = window.dcm
 
@@ -60,50 +61,6 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
         <span className="clip-thumb-ph">{failed ? '×' : <IconFilm size={22} />}</span>
       )}
       <span className="clip-thumb-dur">{fmtTime(clipDuration(clip))}</span>
-    </div>
-  )
-}
-
-/** クリップのタグ表示 + 追加（既存タグは datalist で補完）。 */
-function TagEditor({
-  tags,
-  onAdd,
-  onRemove
-}: {
-  tags: string[]
-  onAdd: (tag: string) => void
-  onRemove: (tag: string) => void
-}) {
-  const [draft, setDraft] = useState('')
-  const commit = () => {
-    const t = draft.trim()
-    if (t) onAdd(t)
-    setDraft('')
-  }
-  return (
-    <div className="clip-tags" onClick={(e) => e.stopPropagation()}>
-      {tags.map((t) => (
-        <span key={t} className="tag-chip">
-          {t}
-          <button className="tag-chip-x" title="タグを外す" onClick={() => onRemove(t)}>
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        className="tag-add"
-        list="dcm-all-tags"
-        placeholder="＋タグ"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit()
-          }
-        }}
-        onBlur={commit}
-      />
     </div>
   )
 }

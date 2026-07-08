@@ -37,6 +37,8 @@ export interface Segment {
   note: string | null
   color: string | null
   createdAt: string
+  /** ユーザー定義タグ（自由記述 / Phase 2.8）。listSegments / getSegment で付与される。 */
+  tags?: string[]
 }
 
 /** 新規区間の入力（id / createdAt はメインが採番） */
