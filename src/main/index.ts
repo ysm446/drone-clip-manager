@@ -122,6 +122,9 @@ async function ensureMpv(): Promise<boolean> {
       skipTaskbar: true,
       backgroundColor: '#000000'
     })
+    // 映像領域に重なる子ウィンドウがクリックを飲み込まないよう透過させ、
+    // 背後（メインウィンドウの mpv-host）でクリック → 再生/一時停止トグルを受けられるようにする。
+    mpvWindow.setIgnoreMouseEvents(true)
     const wid = mpvWindow.getNativeWindowHandle().readBigUInt64LE(0).toString()
     const emit = (e: MpvEvent) => mainWindow?.webContents.send('mpv:event', e)
     const onDied = () => {

@@ -535,7 +535,11 @@ export function App() {
           <section className="player-pane">
             {mpvMode ? (
               <>
-                <div className="mpv-host" ref={mpvHostRef}>
+                <div
+                  className="mpv-host"
+                  ref={mpvHostRef}
+                  onClick={() => selected && togglePlay()}
+                >
                   {!selected && (
                     <div className="player-empty">左のツリーから動画を選択してください</div>
                   )}

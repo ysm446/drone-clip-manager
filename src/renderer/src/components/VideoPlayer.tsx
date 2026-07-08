@@ -22,6 +22,13 @@ export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPla
       className="player-video"
       src={src}
       controls
+      onClick={(e) => {
+        // 映像をクリックで再生/一時停止トグル。ただし下部のネイティブコントロール
+        // （再生ボタン・シークバー）上のクリックは二重トグルになるため無視する。
+        const v = e.currentTarget
+        if (e.clientY > v.getBoundingClientRect().bottom - 40) return
+        void (v.paused ? v.play() : v.pause())
+      }}
       onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
       onLoadedMetadata={(e) => onDuration(e.currentTarget.duration)}
       onError={() => onError?.()}
