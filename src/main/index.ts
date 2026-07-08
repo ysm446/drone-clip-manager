@@ -16,9 +16,13 @@ import {
 } from './services/mpv'
 import type { MpvEvent } from '../shared/types'
 
-// Chromium の HEVC を「プラットフォーム(OS/GPU)デコーダ」経由で有効化する。
-// これにより Windows の「HEVC ビデオ拡張機能」+ GPU が入っていれば HEVC(10bit 含む)を
-// 原本のまま再生できる。app ready より前に指定する必要がある。
+// mpv を子ウィンドウに埋め込むと Chromium の GPU コンポジタが前面を描画して mpv 映像が
+// 見えなくなる（真っ暗）。Chromium 側の HW アクセラレーションを切ると、埋め込んだネイティブ
+// mpv ウィンドウが正しく合成・表示される（mpv 自身は GPU でデコード/描画するので動画性能に影響なし）。
+// app ready より前に呼ぶ必要がある。
+app.disableHardwareAcceleration()
+
+// <video> フォールバック時のために Chromium の platform HEVC デコーダも有効化しておく。
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport')
 
 // 動画・BGM は file:// の制約を避け、Range 対応でスクラブできるよう独自プロトコルで配信する。
@@ -88,6 +92,9 @@ async function ensureMpv(): Promise<boolean> {
   mpvStarting = (async () => {
     mpvWindow = new BrowserWindow({
       parent: mainWindow ?? undefined,
+      width: 1280,
+      height: 720,
+      useContentSize: true,
       show: false,
       frame: false,
       resizable: false,
