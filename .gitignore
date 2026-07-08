@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build / bundler output
+dist/
+dist-electron/
+out/
+build/
+release/
+.vite/
+*.tsbuildinfo
+
+# Electron packaging
+app/dist/
+packages/*/dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Native modules (better-sqlite3 等のビルド成果物)
+prebuilds/
+*.node
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local media / generated caches
+# アプリのメタデータはユーザーのルートフォルダ直下 `.flightcut/` に作られる（リポジトリ外）。
+# リポジトリ内に検証用の素材やキャッシュを置いた場合に備えて無視しておく。
+.flightcut/
+*.mp4
+*.mov
+*.MP4
+*.MOV
+sample-media/
+tmp/
