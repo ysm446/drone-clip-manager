@@ -5,6 +5,7 @@ import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
 import { BgmPlayer } from './components/BgmPlayer'
+import { ExportModal } from './components/ExportModal'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
@@ -19,6 +20,7 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -165,6 +167,16 @@ export function App() {
           <section className="editor-pane">
             {selected ? (
               <>
+                <div className="editor-toolbar">
+                  <span className="editor-count">{segments.length} 区間</span>
+                  <button
+                    className="btn primary"
+                    disabled={segments.length === 0}
+                    onClick={() => setExportOpen(true)}
+                  >
+                    書き出し…
+                  </button>
+                </div>
                 <Timeline
                   duration={duration || meta?.durationSec || 0}
                   currentTime={currentTime}
@@ -192,6 +204,15 @@ export function App() {
           </section>
         </main>
       </div>
+
+      {exportOpen && selected && (
+        <ExportModal
+          videoRelPath={selected}
+          videoFilename={meta?.filename ?? selected}
+          segments={segments}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </div>
   )
 }

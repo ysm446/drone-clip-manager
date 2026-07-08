@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DcmApi, SegmentInput } from '../shared/types'
+import type { DcmApi, ExportJob, ExportOptions, ExportProgress, SegmentInput } from '../shared/types'
 
 const api: DcmApi = {
   pickRoot: () => ipcRenderer.invoke('root:pick'),
@@ -13,7 +13,15 @@ const api: DcmApi = {
   deleteSegment: (id) => ipcRenderer.invoke('segments:delete', id),
   pickBgmDir: () => ipcRenderer.invoke('bgm:pick'),
   getBgm: () => ipcRenderer.invoke('bgm:get'),
-  bgmUrl: (relPath) => `dcm-media://bgm/${encodeURIComponent(relPath)}`
+  bgmUrl: (relPath) => `dcm-media://bgm/${encodeURIComponent(relPath)}`,
+  pickExportDir: () => ipcRenderer.invoke('export:pickDir'),
+  exportSegments: (jobs: ExportJob[], options: ExportOptions) =>
+    ipcRenderer.invoke('export:run', jobs, options),
+  onExportProgress: (cb: (p: ExportProgress) => void) => {
+    const handler = (_e: unknown, p: ExportProgress) => cb(p)
+    ipcRenderer.on('export:progress', handler)
+    return () => ipcRenderer.removeListener('export:progress', handler)
+  }
 }
 
 contextBridge.exposeInMainWorld('dcm', api)

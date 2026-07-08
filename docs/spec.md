@@ -1,7 +1,7 @@
 # drone-clip-manager — spec
 
 作成日時: 2026-07-08 12:26
-更新日時: 2026-07-08 13:10
+更新日時: 2026-07-08 13:45
 
 > ドローン映像専用の動画管理アプリ。動画ライブラリを管理し、区間を「ブックマーク」として記録し、
 > それを **再エンコードなし（stream copy）** で個別クリップとして書き出す。
@@ -204,7 +204,7 @@ ffprobe -v error -select_streams v:0 \
 
 ```bash
 ffmpeg -ss <in_snapped> -i input.mp4 -t <duration> \
-  -c copy -map 0 -avoid_negative_ts make_zero \
+  -c copy -map 0 -map -0:d -avoid_negative_ts make_zero \
   output.mp4
 ```
 
@@ -213,8 +213,11 @@ ffmpeg -ss <in_snapped> -i input.mp4 -t <duration> \
 - `-ss` は `-i` の**前**（input seeking）。キーフレームへ高速シークし、copy と相性が良い。
 - 区間長は `-to <end>` より **`-t <duration>`（長さ指定）の方が堅い**。input seek 時の `-to` はシーク後基準になり挙動が紛らわしいため。`duration = out_snapped - in_snapped`。
 - `-avoid_negative_ts make_zero` でタイムスタンプを 0 起点に正規化。
-- `-map 0` で音声・データストリームも保持。音声も `copy`。
-- コンテナは基本 mp4 維持。ドローンの mp4/mov を素直に踏襲する。
+- `-map 0` で全ストリームを対象にしつつ、**`-map -0:d` で「データストリーム」を除外**する。
+  - 実機確認（DJI HEVC 10bit 4K60）で、DJI 素材は `codec=none` のデータストリーム（timecode / telemetry）を持ち、これを mp4 へ `-c copy` すると
+    `Could not find tag for codec none ... not currently supported in container` で**書き出しが失敗**する。`-ignore_unknown` では回避できなかった。
+  - `-map -0:d` により映像・音声・サムネイル（mjpeg カバー）は保持しつつ、コピー不能なデータストリームだけ落として確実に書き出す。
+- コンテナは基本、元素材の拡張子を踏襲する（mp4→mp4 / mov→mov）。
 
 ### 6.4 将来オプション: smart-cut（Phase 3 以降）
 

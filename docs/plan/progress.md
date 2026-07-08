@@ -1,17 +1,17 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-08 13:10
+更新日時: 2026-07-08 13:45
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
 ## 現状サマリ
 
-- フェーズ: **Phase 1 実装中 + Phase 2 前半に着手**。
+- フェーズ: **Phase 2（MVP）到達**。管理・区間マーク・**ロスレス書き出し**が一通り動作。
 - Electron + React + TS アプリのスキャフォールドを作成し、3ペインUI（ツリー / プレイヤー / タイムライン + 区間リスト）が動作。
 - ルート指定 → 走査 → ffprobe メタ / キーフレーム抽出 → タイムライン可視化 → ドラッグで区間作成（キーフレームスナップ）→ SQLite 永続化までが一通り通る。
 - `npm run typecheck` / `npm run build` 成功。Electron 起動（空ライブラリ）でクラッシュ無しを確認。better-sqlite3 は Electron ABI プレビルドで動作確認済み（SQLite 3.49.2）。
-- **書き出し（Export）は未実装**（次の作業）。
+- ロスレス書き出し（Export）実装済み。実機（DJI HEVC 10bit 4K60）で書き出し成功を確認（in/out キーフレーム整合、区間長一致）。
 
 ## 完了済み
 
@@ -29,6 +29,9 @@
 - [x] BGM プレイヤー（BGM フォルダを独立指定、mp3 等を再帰走査、`<audio>` で再生・前後送り・音量・ループ / spec §13）
 - [x] 起動用 `start.bat`（必要なら `npm install` してから `npm run dev`）
 - [x] プロジェクト名を `flight-cut` → `drone-clip-manager` に統一（内部識別子: `.dcm/`、`dcm-media`、`window.dcm`）
+- [x] ロスレス書き出し（`ExportService`）: stream copy、命名テンプレート（{filename}/{label}/{index}）、書き出し先選択、逐次バッチ + 進捗イベント、書き出しモーダル UI（spec §6.3 / §7.3）
+- [x] DJI データストリーム対策: `-map 0 -map -0:d`（copy 不能な data ストリームを除外）。実機で検証
+- [x] `start.bat` 修正: CRLF + goto 構造（LF だと cmd が複数行 if をパースできず起動失敗）+ `ELECTRON_RUN_AS_NODE` の防御的解除。`.gitattributes` で `*.bat` を CRLF 固定
 
 ## 未完了（次にやること）
 
@@ -44,8 +47,9 @@
 ### Phase 2 — 区間 & 書き出し（MVP ゴール）
 - [x] キーフレーム抽出・キャッシュ・タイムライン可視化
 - [x] 区間ブックマーク CRUD、スナップ（前/後キーフレーム）
-- [ ] ロスレス書き出し（`ExportService`、stream copy、単発 / バッチ）※ 次の作業
-- [ ] Export Queue（出力先 / 命名テンプレート / 進捗 / ログ）※ 次の作業
+- [x] ロスレス書き出し（`ExportService`、stream copy、単発 / バッチ）
+- [x] 書き出しモーダル（出力先 / 命名テンプレート / 進捗 / 成功・失敗サマリ）
+  - [ ] 複数動画横断のキュー（現状は選択中の1動画の区間が対象）※ 今後
 
 ### Phase 3 — ドローン強化 & 拡張（未着手）
 - [ ] `flight_group` グルーピング、（任意）smart-cut、（任意）解析サイドカー、（任意）跨ぎ書き出し

@@ -69,6 +69,42 @@ export interface BgmInfo {
   tracks: BgmTrack[]
 }
 
+/** 書き出し対象の1区間 */
+export interface ExportJob {
+  segmentId: number
+  videoRelPath: string
+  inSec: number
+  outSec: number
+  label: string | null
+  index: number
+}
+
+/** 書き出しオプション */
+export interface ExportOptions {
+  outDir: string
+  /** 命名テンプレート。{filename} / {label} / {index} を置換。拡張子は元素材から自動付与。 */
+  template: string
+}
+
+/** 書き出し進捗（main → renderer の逐次イベント） */
+export interface ExportProgress {
+  segmentId: number
+  index: number
+  total: number
+  percent: number
+  status: 'running' | 'done' | 'error'
+  outPath?: string
+  error?: string
+}
+
+/** 書き出し結果 */
+export interface ExportResult {
+  segmentId: number
+  ok: boolean
+  outPath?: string
+  error?: string
+}
+
 /** プリロードが contextBridge で公開する API の型 */
 export interface DcmApi {
   pickRoot: () => Promise<RootInfo>
@@ -86,4 +122,9 @@ export interface DcmApi {
   getBgm: () => Promise<BgmInfo>
   /** BGM を再生するためのカスタムプロトコル URL */
   bgmUrl: (relPath: string) => string
+  // --- 書き出し ---
+  pickExportDir: () => Promise<string | null>
+  exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>
+  /** 進捗イベントを購読。返り値で解除する。 */
+  onExportProgress: (cb: (p: ExportProgress) => void) => () => void
 }
