@@ -106,6 +106,7 @@ async function ensureMpv(): Promise<boolean> {
       useContentSize: true,
       show: false,
       frame: false,
+      roundedCorners: false, // Windows 11 の既定角丸を無効化（動画の角が欠けるため）
       resizable: false,
       movable: false,
       minimizable: false,
