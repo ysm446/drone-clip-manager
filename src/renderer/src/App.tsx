@@ -40,6 +40,10 @@ export function App() {
   const currentRelRef = useRef<string | null>(null)
   /** クリップから開いたときの遷移先秒（動画のロード完了後にシークする） */
   const pendingSeekRef = useRef<number | null>(null)
+  /** 最新の再生位置（mpv 死亡時の復帰位置に使う） */
+  const currentTimeRef = useRef(0)
+  /** mpv の直近死亡時刻（短時間に連続で死ぬ場合は <video> へフォールバック） */
+  const mpvDiedAtRef = useRef(0)
   const mpvHostRef = useRef<HTMLDivElement>(null)
   const mpvModeRef = useRef(false)
   const mpvPausedRef = useRef(true)
@@ -55,8 +59,10 @@ export function App() {
   // mpv からの時間/長さ/再生状態イベント
   useEffect(() => {
     return api.onMpvEvent((e) => {
-      if (e.type === 'time') setCurrentTime(e.value)
-      else if (e.type === 'duration') {
+      if (e.type === 'time') {
+        currentTimeRef.current = e.value
+        setCurrentTime(e.value)
+      } else if (e.type === 'duration') {
         if (e.value > 0) setDuration(e.value)
       } else if (e.type === 'pause') {
         mpvPausedRef.current = e.value
@@ -64,6 +70,30 @@ export function App() {
       } else if (e.type === 'eof' && e.value) {
         mpvPausedRef.current = true
         setMpvPaused(true)
+      } else if (e.type === 'died') {
+        // mpv プロセスが死んだ: 同じ動画を同じ位置から自動復帰。
+        // 短時間に連続で死ぬ場合は mpv を諦めて <video> フォールバックへ。
+        const rel = currentRelRef.current
+        const now = Date.now()
+        const repeated = now - mpvDiedAtRef.current < 10000
+        mpvDiedAtRef.current = now
+        if (!rel) return
+        mpvPausedRef.current = true
+        setMpvPaused(true)
+        if (repeated) {
+          mpvModeRef.current = false
+          setMpvMode(false)
+          setVideoSrc(api.mediaUrl(rel))
+        } else {
+          const t = currentTimeRef.current
+          api.mpvLoad(rel, t > 0.1 ? t : undefined).then((ok) => {
+            if (!ok && currentRelRef.current === rel) {
+              mpvModeRef.current = false
+              setMpvMode(false)
+              setVideoSrc(api.mediaUrl(rel))
+            }
+          })
+        }
       }
     })
   }, [])
@@ -241,6 +271,7 @@ export function App() {
       const v = videoRef.current
       if (v) v.currentTime = t
     }
+    currentTimeRef.current = t
     setCurrentTime(t)
   }, [])
 

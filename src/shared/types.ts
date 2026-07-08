@@ -137,6 +137,8 @@ export type MpvEvent =
   | { type: 'duration'; value: number }
   | { type: 'pause'; value: boolean }
   | { type: 'eof'; value: boolean }
+  /** mpv プロセス / IPC が死んだ（レンダラは現在の動画を再ロードする） */
+  | { type: 'died' }
 
 /** 動画領域の矩形（メインウィンドウのコンテンツ左上を原点とした CSS px） */
 export interface MpvBounds {

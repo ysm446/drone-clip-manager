@@ -41,6 +41,34 @@ let reqId = 0
 const pending = new Map<number, (msg: unknown) => void>()
 let emit: (e: MpvEvent) => void = () => {}
 let started = false
+let onDiedCb: (() => void) | null = null
+let shuttingDown = false
+let startCount = 0
+
+/** mpv プロセス / IPC の死亡時に状態を破棄する（次回 mpvStart で再起動できる状態に戻す） */
+function markDead(): void {
+  if (!proc && !sock && !started) return
+  started = false
+  const s = sock
+  const p = proc
+  sock = null
+  proc = null
+  buf = ''
+  try {
+    s?.destroy()
+  } catch {
+    /* noop */
+  }
+  try {
+    p?.kill()
+  } catch {
+    /* noop */
+  }
+  // 待機中のコマンドを全部解放（永久 pending を防ぐ）
+  for (const resolve of pending.values()) resolve({ error: 'mpv terminated' })
+  pending.clear()
+  if (!shuttingDown) onDiedCb?.()
+}
 
 function connect(pipe: string, retries = 50): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
@@ -93,13 +121,24 @@ function command(args: unknown[]): Promise<{ data?: unknown; error?: string }> {
   })
 }
 
-/** mpv を起動して wid のウィンドウに埋め込む。1度だけ。 */
-export async function mpvStart(wid: string, onEvent: (e: MpvEvent) => void): Promise<boolean> {
+/** mpv を起動して wid のウィンドウに埋め込む。onDied は死亡時（終了時を除く）に呼ばれる。 */
+export async function mpvStart(
+  wid: string,
+  onEvent: (e: MpvEvent) => void,
+  onDied?: () => void
+): Promise<boolean> {
   if (started) return true
   const bin = detectMpv()
   if (!bin) return false
   emit = onEvent
-  const pipe = `\\\\.\\pipe\\dcm-mpv-${process.pid}`
+  onDiedCb = null // 起動成功後に登録（起動失敗で died 通知 → 再試行ループにしない）
+  // 世代トークン: 旧世代のプロセス/ソケットから遅れて届く exit/close で
+  // 再起動中の新しい mpv を殺さないように、現行世代のイベントだけ処理する。
+  const gen = ++startCount
+  const dieIfCurrent = () => {
+    if (gen === startCount) markDead()
+  }
+  const pipe = `\\\\.\\pipe\\dcm-mpv-${process.pid}-${gen}`
   proc = spawn(
     bin,
     [
@@ -118,20 +157,24 @@ export async function mpvStart(wid: string, onEvent: (e: MpvEvent) => void): Pro
       '--no-input-default-bindings',
       '--input-vo-keyboard=no',
       '--no-input-cursor',
-      '--cursor-autohide=no'
+      '--cursor-autohide=no',
+      // ターミナル出力を完全に止める。パイプ出力を読む側がいないため、ログが
+      // OS のパイプバッファ(約64KB)を埋めると mpv の write がブロックして
+      // プレイヤー全体が応答しなくなる（IPC 埋め込み時の mpv 推奨設定でもある）。
+      '--no-terminal'
     ],
-    { windowsHide: true }
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] }
   )
-  proc.on('exit', () => {
-    started = false
-    sock = null
-    proc = null
-  })
+  proc.on('exit', dieIfCurrent)
+  proc.on('error', dieIfCurrent)
   try {
     sock = await connect(pipe)
   } catch {
+    dieIfCurrent()
     return false
   }
+  sock.on('error', dieIfCurrent) // ハンドラ無しだと main が未処理例外で落ちる
+  sock.on('close', dieIfCurrent)
   sock.on('data', (d: Buffer) => {
     buf += d.toString()
     let i
@@ -147,6 +190,7 @@ export async function mpvStart(wid: string, onEvent: (e: MpvEvent) => void): Pro
   await command(['observe_property', 3, 'pause'])
   await command(['observe_property', 4, 'eof-reached'])
   started = true
+  onDiedCb = onDied ?? null
   return true
 }
 
@@ -180,17 +224,6 @@ export function mpvStop(): void {
 }
 
 export function mpvKill(): void {
-  try {
-    sock?.end()
-  } catch {
-    /* noop */
-  }
-  try {
-    proc?.kill()
-  } catch {
-    /* noop */
-  }
-  started = false
-  sock = null
-  proc = null
+  shuttingDown = true // 意図した終了なので onDied（自動再起動）は呼ばない
+  markDead()
 }

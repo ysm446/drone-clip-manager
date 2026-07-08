@@ -117,10 +117,23 @@ async function ensureMpv(): Promise<boolean> {
     })
     const wid = mpvWindow.getNativeWindowHandle().readBigUInt64LE(0).toString()
     const emit = (e: MpvEvent) => mainWindow?.webContents.send('mpv:event', e)
-    const ok = await mpvStart(wid, emit)
-    if (!ok) {
-      mpvWindow.destroy()
+    const onDied = () => {
+      // mpv プロセス / IPC が死んだ: 状態を破棄して次回 mpv:load で再起動できるようにし、
+      // レンダラへ通知（現在の動画の再ロードを促す）。
+      try {
+        mpvWindow?.destroy()
+      } catch {
+        /* noop */
+      }
       mpvWindow = null
+      mpvStarting = null
+      mainWindow?.webContents.send('mpv:event', { type: 'died' })
+    }
+    const ok = await mpvStart(wid, emit, onDied)
+    if (!ok) {
+      mpvWindow?.destroy()
+      mpvWindow = null
+      mpvStarting = null // 次回 load で再挑戦できるようにする
     }
     return ok
   })()
