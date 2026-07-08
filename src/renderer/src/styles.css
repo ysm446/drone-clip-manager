@@ -889,7 +889,6 @@ input:focus-visible {
   height: 72px;
   flex: none;
   background: #000;
-  border-radius: var(--radius-m);
   overflow: hidden;
   display: flex;
   align-items: center;
