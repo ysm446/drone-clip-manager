@@ -58,5 +58,5 @@ desktop.ini
 sample-media/
 tmp/
 
-# Claude Code の個人ローカル設定（自動生成の許可など。共有は settings.json に）
-.claude/settings.local.json
+# Claude Code のローカル設定（自動生成の許可など）は追跡しない
+.claude/
