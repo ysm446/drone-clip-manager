@@ -29,13 +29,66 @@ export function App() {
     percent: 0,
     error: null
   })
+  const [mpvMode, setMpvMode] = useState(false)
+  const [mpvPaused, setMpvPaused] = useState(true)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const currentRelRef = useRef<string | null>(null)
+  const mpvHostRef = useRef<HTMLDivElement>(null)
+  const mpvModeRef = useRef(false)
+  const mpvPausedRef = useRef(true)
 
   useEffect(() => {
     api.getRoot().then(setRoot)
+    api.mpvAvailable().then((ok) => {
+      mpvModeRef.current = ok
+      setMpvMode(ok)
+    })
   }, [])
+
+  // mpv からの時間/長さ/再生状態イベント
+  useEffect(() => {
+    return api.onMpvEvent((e) => {
+      if (e.type === 'time') setCurrentTime(e.value)
+      else if (e.type === 'duration') {
+        if (e.value > 0) setDuration(e.value)
+      } else if (e.type === 'pause') {
+        mpvPausedRef.current = e.value
+        setMpvPaused(e.value)
+      } else if (e.type === 'eof' && e.value) {
+        mpvPausedRef.current = true
+        setMpvPaused(true)
+      }
+    })
+  }, [])
+
+  // mpv ウィンドウを動画領域にぴったり重ねる（レイアウト変化に追従）
+  useEffect(() => {
+    if (!mpvMode) return
+    const report = () => {
+      const h = mpvHostRef.current
+      if (!h) return
+      const r = h.getBoundingClientRect()
+      api.mpvSetBounds({ x: r.left, y: r.top, w: r.width, h: r.height })
+    }
+    report()
+    const host = mpvHostRef.current
+    const ro = new ResizeObserver(report)
+    if (host) ro.observe(host)
+    window.addEventListener('resize', report)
+    const id = window.setInterval(report, 500) // 取りこぼし対策の保険
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', report)
+      window.clearInterval(id)
+    }
+  }, [mpvMode])
+
+  // mpv ウィンドウの表示可否（動画選択中 かつ モーダル非表示のときだけ表示）
+  useEffect(() => {
+    if (!mpvMode) return
+    api.mpvSetVisible(!!selected && !exportOpen)
+  }, [mpvMode, selected, exportOpen])
 
   // プロキシ生成の進捗/完了を受ける（現在選択中の動画のものだけ反映）
   useEffect(() => {
@@ -82,9 +135,23 @@ export function App() {
     setKeyframes([])
     setSegments([])
     resetPlayback()
-    // まず原本を直接再生する（HEVC は platform デコーダ経由。再生できない場合のみ
-    // 手動で一時プロキシに切り替える）。
-    setVideoSrc(api.mediaUrl(relPath))
+    if (mpvModeRef.current) {
+      // mpv 埋め込み再生（原本を HW デコード）。読み込み後は一時停止で先頭表示。
+      mpvPausedRef.current = true
+      setMpvPaused(true)
+      api.mpvLoad(relPath).then((ok) => {
+        if (currentRelRef.current !== relPath) return
+        if (!ok) {
+          // mpv 起動に失敗 → <video> フォールバックへ
+          mpvModeRef.current = false
+          setMpvMode(false)
+          setVideoSrc(api.mediaUrl(relPath))
+        }
+      })
+    } else {
+      // フォールバック: <video> で原本を直接再生（HEVC は platform デコーダ経由）。
+      setVideoSrc(api.mediaUrl(relPath))
+    }
     setBusy(true)
     try {
       const [m, segs] = await Promise.all([api.probeVideo(relPath), api.listSegments(relPath)])
@@ -136,9 +203,23 @@ export function App() {
   }
 
   const seek = useCallback((t: number) => {
-    const v = videoRef.current
-    if (v) v.currentTime = t
+    if (mpvModeRef.current) {
+      api.mpvSeek(t)
+    } else {
+      const v = videoRef.current
+      if (v) v.currentTime = t
+    }
     setCurrentTime(t)
+  }, [])
+
+  const togglePlay = useCallback(() => {
+    if (mpvModeRef.current) {
+      if (mpvPausedRef.current) api.mpvPlay()
+      else api.mpvPause()
+    } else {
+      const v = videoRef.current
+      if (v) (v.paused ? v.play() : v.pause())
+    }
   }, [])
 
   const createSegment = useCallback(
@@ -188,13 +269,12 @@ export function App() {
         }
       } else if (e.key === ' ') {
         e.preventDefault()
-        const v = videoRef.current
-        if (v) v.paused ? v.play() : v.pause()
+        togglePlay()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, duration, currentTime, createSegment])
+  }, [selected, duration, currentTime, createSegment, togglePlay])
 
   return (
     <div className="app">
@@ -217,45 +297,66 @@ export function App() {
 
         <main className="main">
           <section className="player-pane">
-            <VideoPlayer
-              ref={videoRef}
-              src={videoSrc}
-              onTimeUpdate={setCurrentTime}
-              onDuration={setDuration}
-              onError={onVideoError}
-              onPlay={onVideoPlay}
-            />
-            {proxyGen.active && (
-              <div className="proxy-overlay">
-                <div className="proxy-spin" />
-                <div>一時プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
-                <small>H.264 に変換して再生します（保存しません・終了時に自動削除）。</small>
-              </div>
-            )}
-            {proxyGen.error && (
-              <div className="proxy-overlay err">
-                プロキシ生成に失敗しました
-                <br />
-                <small>{proxyGen.error}</small>
-              </div>
-            )}
-            {playError && !usingProxy && !proxyGen.active && (
-              <div className="proxy-overlay">
-                <div>この素材を直接再生できませんでした（HEVC / 10bit の可能性）。</div>
-                <small>
-                  Windows の「HEVC ビデオ拡張機能」を入れると原本のまま再生できる場合があります。
-                  <br />
-                  すぐ確認したい場合は、一時的に H.264 プロキシで再生できます（保存しません）。
-                </small>
-                <button className="btn primary" onClick={useTempProxy}>
-                  一時プロキシで再生
-                </button>
-              </div>
+            {mpvMode ? (
+              <>
+                <div className="mpv-host" ref={mpvHostRef}>
+                  {!selected && (
+                    <div className="player-empty">左のツリーから動画を選択してください</div>
+                  )}
+                </div>
+                <div className="mpv-controls">
+                  <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
+                    {mpvPaused ? '▶' : '⏸'}
+                  </button>
+                  <span className="mpv-time">
+                    {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <VideoPlayer
+                  ref={videoRef}
+                  src={videoSrc}
+                  onTimeUpdate={setCurrentTime}
+                  onDuration={setDuration}
+                  onError={onVideoError}
+                  onPlay={onVideoPlay}
+                />
+                {proxyGen.active && (
+                  <div className="proxy-overlay">
+                    <div className="proxy-spin" />
+                    <div>一時プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
+                    <small>H.264 に変換して再生します（保存しません・終了時に自動削除）。</small>
+                  </div>
+                )}
+                {proxyGen.error && (
+                  <div className="proxy-overlay err">
+                    プロキシ生成に失敗しました
+                    <br />
+                    <small>{proxyGen.error}</small>
+                  </div>
+                )}
+                {playError && !usingProxy && !proxyGen.active && (
+                  <div className="proxy-overlay">
+                    <div>この素材を直接再生できませんでした（HEVC / 10bit の可能性）。</div>
+                    <small>
+                      Windows の「HEVC ビデオ拡張機能」を入れると原本のまま再生できる場合があります。
+                      <br />
+                      すぐ確認したい場合は、一時的に H.264 プロキシで再生できます（保存しません）。
+                    </small>
+                    <button className="btn primary" onClick={useTempProxy}>
+                      一時プロキシで再生
+                    </button>
+                  </div>
+                )}
+              </>
             )}
             {meta && (
               <div className="meta-bar">
                 <span className="meta-name">{meta.filename}</span>
                 <span className="badge">{meta.codec ?? '?'}</span>
+                {mpvMode && <span className="badge proxy">mpv 再生</span>}
                 {usingProxy && <span className="badge proxy">プロキシ再生（一時）</span>}
                 <span className="badge">
                   {meta.width}×{meta.height}

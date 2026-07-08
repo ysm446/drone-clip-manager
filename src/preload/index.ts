@@ -4,6 +4,8 @@ import type {
   ExportJob,
   ExportOptions,
   ExportProgress,
+  MpvBounds,
+  MpvEvent,
   ProxyUpdate,
   SegmentInput
 } from '../shared/types'
@@ -35,6 +37,20 @@ const api: DcmApi = {
     const handler = (_e: unknown, p: ExportProgress) => cb(p)
     ipcRenderer.on('export:progress', handler)
     return () => ipcRenderer.removeListener('export:progress', handler)
+  },
+  mpvAvailable: () => ipcRenderer.invoke('mpv:available'),
+  mpvLoad: (relPath) => ipcRenderer.invoke('mpv:load', relPath),
+  mpvSetBounds: (b: MpvBounds) => ipcRenderer.send('mpv:setBounds', b),
+  mpvSetVisible: (visible) => ipcRenderer.send('mpv:setVisible', visible),
+  mpvPlay: () => ipcRenderer.send('mpv:play'),
+  mpvPause: () => ipcRenderer.send('mpv:pause'),
+  mpvSeek: (sec) => ipcRenderer.send('mpv:seek', sec),
+  mpvVolume: (v0to1) => ipcRenderer.send('mpv:volume', v0to1),
+  mpvStop: () => ipcRenderer.send('mpv:stop'),
+  onMpvEvent: (cb: (e: MpvEvent) => void) => {
+    const handler = (_e: unknown, ev: MpvEvent) => cb(ev)
+    ipcRenderer.on('mpv:event', handler)
+    return () => ipcRenderer.removeListener('mpv:event', handler)
   }
 }
 

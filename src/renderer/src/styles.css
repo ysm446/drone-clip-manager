@@ -321,6 +321,44 @@ body {
   justify-content: center;
   color: var(--fg-dim);
 }
+
+/* mpv 埋め込み時の動画領域（この矩形にネイティブ mpv ウィンドウを重ねる） */
+.mpv-host {
+  flex: 1;
+  min-height: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mpv-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+}
+.mpv-play {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 5px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.mpv-play:hover {
+  border-color: var(--accent);
+}
+.mpv-play:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mpv-time {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
 .meta-bar {
   display: flex;
   align-items: center;

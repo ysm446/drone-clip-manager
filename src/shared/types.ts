@@ -120,6 +120,21 @@ export interface ProxyStatus {
   proxyRelPath?: string
 }
 
+/** mpv からの状態通知（main → renderer） */
+export type MpvEvent =
+  | { type: 'time'; value: number }
+  | { type: 'duration'; value: number }
+  | { type: 'pause'; value: boolean }
+  | { type: 'eof'; value: boolean }
+
+/** 動画領域の矩形（メインウィンドウのコンテンツ左上を原点とした CSS px） */
+export interface MpvBounds {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /** プリロードが contextBridge で公開する API の型 */
 export interface DcmApi {
   pickRoot: () => Promise<RootInfo>
@@ -147,4 +162,15 @@ export interface DcmApi {
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>
   /** 進捗イベントを購読。返り値で解除する。 */
   onExportProgress: (cb: (p: ExportProgress) => void) => () => void
+  // --- mpv ネイティブ再生 ---
+  mpvAvailable: () => Promise<boolean>
+  mpvLoad: (relPath: string) => Promise<boolean>
+  mpvSetBounds: (b: MpvBounds) => void
+  mpvSetVisible: (visible: boolean) => void
+  mpvPlay: () => void
+  mpvPause: () => void
+  mpvSeek: (sec: number) => void
+  mpvVolume: (v0to1: number) => void
+  mpvStop: () => void
+  onMpvEvent: (cb: (e: MpvEvent) => void) => () => void
 }
