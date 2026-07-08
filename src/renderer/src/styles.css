@@ -37,8 +37,8 @@
   --accent-text: #ffffff;
   --selected: rgba(108, 92, 216, 0.11);
   --accent-border: #b5aaf0;
-  /* 再生ヘッド（赤は強すぎるので落ち着いた水色 / DaVinci 風） */
-  --playhead: #2f8fd6;
+  /* 再生ヘッド（シルバー / 明るい背景では見えるよう少し濃いめ） */
+  --playhead: #8a9099;
   --playhead-text: #ffffff;
   --primary: var(--accent);
   --ok: #1a7f37;
@@ -66,8 +66,8 @@
   --accent-text: #ffffff;
   --selected: rgba(255, 255, 255, 0.09);
   --accent-border: rgba(127, 109, 242, 0.5);
-  /* 再生ヘッド（赤は強すぎるので落ち着いた水色 / DaVinci 風） */
-  --playhead: #5cc0f5;
+  /* 再生ヘッド（シルバー / 暗い背景で映える明るめの銀） */
+  --playhead: #d5d9de;
   --playhead-text: #08121a;
   --ok: #44cf6e;
   --warn: #e0ac00;
