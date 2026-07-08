@@ -596,7 +596,39 @@ input:focus-visible {
 
 /* --- タイムライン --- */
 .timeline {
-  padding: 16px 16px 10px;
+  padding: 8px 16px 10px;
+}
+/* トラック上のモード切替（シーク / 区間作成） */
+.tl-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.tl-mode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: var(--radius-m);
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.tl-mode:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.tl-mode.on {
+  background: var(--selected);
+  color: var(--accent);
+}
+.tl-mode-label {
+  margin-left: 6px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
 }
 .tl-track {
   position: relative;
@@ -607,6 +639,9 @@ input:focus-visible {
   cursor: crosshair;
   overflow: hidden;
   touch-action: none;
+}
+.tl-track.mode-seek {
+  cursor: pointer;
 }
 .tl-keyframes {
   position: absolute;

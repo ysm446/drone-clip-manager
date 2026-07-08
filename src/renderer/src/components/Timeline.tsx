@@ -23,8 +23,14 @@ interface DragState {
 
 type EditMode = 'in' | 'out' | 'move'
 
+/** 空きエリアのドラッグ操作モード: seek=スクラブ / segment=区間作成 */
+type TrackMode = 'seek' | 'segment'
+
+const LS_TL_MODE = 'dcm.timelineMode'
 const DRAG_THRESHOLD_PX = 4
 const MIN_LEN = 0.05
+/** スクラブ中のシーク発行間隔（mpv への seek 連打を抑える） */
+const SCRUB_INTERVAL_MS = 80
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -42,6 +48,16 @@ export function Timeline({
   const trackRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const startXRef = useRef(0)
+  const [mode, setMode] = useState<TrackMode>(() =>
+    localStorage.getItem(LS_TL_MODE) === 'segment' ? 'segment' : 'seek'
+  )
+  const lastScrubRef = useRef(0)
+
+  const changeMode = (m: TrackMode) => {
+    setMode(m)
+    localStorage.setItem(LS_TL_MODE, m)
+    setDrag(null)
+  }
 
   // 区間の編集（リサイズ / 移動）中のプレビュー
   const [preview, setPreview] = useState<{ id: number; lo: number; hi: number } | null>(null)
@@ -59,25 +75,41 @@ export function Timeline({
     [duration]
   )
 
-  // --- 空きエリアのドラッグ = 新規区間作成 / クリック = シーク ---
+  // --- 空きエリアのドラッグ ---
+  //  seek モード: 押した位置へ即シークし、ドラッグでスクラブ
+  //  segment モード: ドラッグで新規区間作成 / クリックはシーク
   const onPointerDown = (e: React.PointerEvent) => {
     if (duration <= 0) return
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     startXRef.current = e.clientX
     const t = timeAt(e.clientX)
+    if (mode === 'seek') {
+      onSeek(t)
+      lastScrubRef.current = performance.now()
+    }
     setDrag({ startT: t, curT: t, moved: false })
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return
     const moved = drag.moved || Math.abs(e.clientX - startXRef.current) > DRAG_THRESHOLD_PX
-    setDrag({ ...drag, curT: timeAt(e.clientX), moved })
+    const curT = timeAt(e.clientX)
+    if (mode === 'seek' && moved) {
+      const now = performance.now()
+      if (now - lastScrubRef.current >= SCRUB_INTERVAL_MS) {
+        lastScrubRef.current = now
+        onSeek(curT)
+      }
+    }
+    setDrag({ ...drag, curT, moved })
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
     if (!drag) return
     const endT = timeAt(e.clientX)
-    if (!drag.moved) {
+    if (mode === 'seek') {
+      if (drag.moved) onSeek(endT) // 最終位置を確定
+    } else if (!drag.moved) {
       onSeek(drag.startT)
     } else {
       const inT = Math.min(drag.startT, endT)
@@ -133,14 +165,39 @@ export function Timeline({
   }
 
   const pending =
-    drag && drag.moved
+    mode === 'segment' && drag && drag.moved
       ? { lo: Math.min(drag.startT, drag.curT), hi: Math.max(drag.startT, drag.curT) }
       : null
 
   return (
     <div className="timeline">
+      <div className="tl-modes">
+        <button
+          className={`tl-mode${mode === 'seek' ? ' on' : ''}`}
+          title="シークモード: クリック/ドラッグで再生位置を動かす"
+          onClick={() => changeMode('seek')}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <line x1="7" y1="1.5" x2="7" y2="12.5" />
+            <path d="M4.5 4.5 L2 7 L4.5 9.5" />
+            <path d="M9.5 4.5 L12 7 L9.5 9.5" />
+          </svg>
+        </button>
+        <button
+          className={`tl-mode${mode === 'segment' ? ' on' : ''}`}
+          title="区間モード: ドラッグで区間を作成（クリックはシーク）"
+          onClick={() => changeMode('segment')}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M4 2.5 H1.5 V11.5 H4" />
+            <path d="M10 2.5 H12.5 V11.5 H10" />
+            <rect x="4.5" y="5.5" width="5" height="3" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+        <span className="tl-mode-label">{mode === 'seek' ? 'シーク' : '区間作成'}</span>
+      </div>
       <div
-        className="tl-track"
+        className={`tl-track mode-${mode}`}
         ref={trackRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -198,7 +255,9 @@ export function Timeline({
             ? `選択: ${fmtTime(pending.lo)} – ${fmtTime(pending.hi)}`
             : preview
               ? `${fmtTime(preview.lo)} – ${fmtTime(preview.hi)}`
-              : 'ドラッグで区間作成 / 端で長さ変更・本体で移動 / クリックでシーク'}
+              : mode === 'seek'
+                ? 'クリック/ドラッグでシーク / 区間は端で長さ変更・本体で移動'
+                : 'ドラッグで区間作成 / 端で長さ変更・本体で移動 / クリックでシーク'}
         </span>
         <span>{fmtTime(duration)}</span>
       </div>
