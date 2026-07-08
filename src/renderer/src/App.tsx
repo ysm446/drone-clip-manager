@@ -7,6 +7,7 @@ import { SegmentList } from './components/SegmentList'
 import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
+import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
@@ -433,7 +434,7 @@ export function App() {
                 </div>
                 <div className="mpv-controls">
                   <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
-                    {mpvPaused ? '▶' : '⏸'}
+                    {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
                   <span className="mpv-time">
                     {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}

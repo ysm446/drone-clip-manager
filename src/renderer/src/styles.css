@@ -333,7 +333,12 @@ input:focus-visible {
   font-size: var(--fs-xs);
 }
 .tree-icon {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+.tree-row.video .tree-icon,
+.tree-row.dir .tree-icon {
   opacity: 0.9;
 }
 .tree-label {
@@ -362,13 +367,14 @@ input:focus-visible {
   color: var(--muted);
 }
 .bgm-pick {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: none;
   color: var(--muted);
   cursor: pointer;
   border-radius: var(--radius-s);
-  padding: 2px 6px;
-  font-size: 14px;
+  padding: 3px 6px;
 }
 .bgm-pick:hover {
   background: var(--hover);
@@ -417,11 +423,14 @@ input:focus-visible {
   border-top: 1px solid var(--border);
 }
 .bgm-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 1px solid transparent;
   color: var(--muted);
   border-radius: var(--radius-m);
-  padding: 3px 8px;
+  padding: 4px 7px;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -433,10 +442,30 @@ input:focus-visible {
   background: var(--selected);
   color: var(--accent);
 }
+/* 音量スライダー: 幅を狭く・つまみを小さくしたフラットなスタイル */
 .bgm-controls input[type='range'] {
-  flex: 1;
-  min-width: 40px;
-  accent-color: var(--accent);
+  flex: none;
+  width: 68px;
+  height: 12px;
+  margin-left: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.bgm-controls input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.bgm-controls input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  margin-top: -3px; /* (track 3px - thumb 9px) / 2 で中央寄せ */
+  border-radius: 50%;
+  background: var(--accent);
 }
 .bgm-now {
   padding: 2px 14px 8px;
@@ -482,13 +511,15 @@ input:focus-visible {
   border-top: 1px solid var(--bar-border);
 }
 .mpv-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bar-surface);
   border: 1px solid transparent;
   color: var(--bar-text);
   border-radius: var(--radius-m);
-  padding: 3px 14px;
+  padding: 4px 16px;
   cursor: pointer;
-  font-size: var(--fs-ui);
 }
 .mpv-play:hover:not(:disabled) {
   background: var(--bar-hover);

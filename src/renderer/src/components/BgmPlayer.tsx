@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BgmInfo } from '../../../shared/types'
+import { IconFolder, IconLoop, IconNext, IconPause, IconPlay, IconPrev } from './icons'
 
 const api = window.dcm
 
@@ -78,7 +79,7 @@ export function BgmPlayer() {
       <div className="bgm-head">
         <span>BGM</span>
         <button className="bgm-pick" onClick={pickDir} title="BGM フォルダを選択">
-          📁
+          <IconFolder />
         </button>
       </div>
 
@@ -101,20 +102,20 @@ export function BgmPlayer() {
 
           <div className="bgm-controls">
             <button onClick={() => step(-1)} title="前へ">
-              ⏮
+              <IconPrev />
             </button>
             <button onClick={toggle} title="再生 / 一時停止">
-              {playing ? '⏸' : '▶'}
+              {playing ? <IconPause /> : <IconPlay />}
             </button>
             <button onClick={() => step(1)} title="次へ">
-              ⏭
+              <IconNext />
             </button>
             <button
               className={loop ? 'on' : ''}
               onClick={() => setLoop((v) => !v)}
               title="リスト全体をループ"
             >
-              🔁
+              <IconLoop />
             </button>
             <input
               type="range"
@@ -136,7 +137,7 @@ export function BgmPlayer() {
           />
         </>
       ) : (
-        <div className="bgm-empty">「📁」でBGMフォルダを指定</div>
+        <div className="bgm-empty">右上のフォルダアイコンでBGMフォルダを指定</div>
       )}
     </div>
   )

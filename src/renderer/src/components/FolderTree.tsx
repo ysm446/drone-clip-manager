@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { TreeNode } from '../../../shared/types'
+import { IconFilm, IconFolder } from './icons'
 
 interface Props {
   tree: TreeNode | null
@@ -29,7 +30,9 @@ function NodeRow({
         onClick={() => onSelect(node.relPath)}
         title={node.relPath}
       >
-        <span className="tree-icon">🎬</span>
+        <span className="tree-icon">
+          <IconFilm />
+        </span>
         <span className="tree-label">{node.name}</span>
       </div>
     )
@@ -44,7 +47,9 @@ function NodeRow({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="tree-caret">{children.length ? (open ? '▾' : '▸') : ' '}</span>
-        <span className="tree-icon">{open ? '📂' : '📁'}</span>
+        <span className="tree-icon">
+          <IconFolder />
+        </span>
         <span className="tree-label">{node.name}</span>
       </div>
       {open &&

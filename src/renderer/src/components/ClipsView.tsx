@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ClipItem } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtTime } from '../util'
+import { IconFilm } from './icons'
 
 const api = window.dcm
 
@@ -56,7 +57,7 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
       {url ? (
         <img src={url} alt="" draggable={false} />
       ) : (
-        <span className="clip-thumb-ph">{failed ? '×' : '🎬'}</span>
+        <span className="clip-thumb-ph">{failed ? '×' : <IconFilm size={22} />}</span>
       )}
       <span className="clip-thumb-dur">{fmtTime(clipDuration(clip))}</span>
     </div>
