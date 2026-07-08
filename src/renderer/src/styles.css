@@ -37,6 +37,9 @@
   --accent-text: #ffffff;
   --selected: rgba(108, 92, 216, 0.11);
   --accent-border: #b5aaf0;
+  /* 再生ヘッド（赤は強すぎるので落ち着いた水色 / DaVinci 風） */
+  --playhead: #2f8fd6;
+  --playhead-text: #ffffff;
   --primary: var(--accent);
   --ok: #1a7f37;
   --warn: #b58a00;
@@ -63,6 +66,9 @@
   --accent-text: #ffffff;
   --selected: rgba(255, 255, 255, 0.09);
   --accent-border: rgba(127, 109, 242, 0.5);
+  /* 再生ヘッド（赤は強すぎるので落ち着いた水色 / DaVinci 風） */
+  --playhead: #5cc0f5;
+  --playhead-text: #08121a;
   --ok: #44cf6e;
   --warn: #e0ac00;
   --danger: #fb464c;
@@ -805,7 +811,7 @@ input:focus-visible {
   bottom: 0;
   width: 2px;
   transform: translateX(-1px);
-  background: var(--danger);
+  background: var(--playhead);
   pointer-events: none;
   z-index: 5;
 }
@@ -816,7 +822,7 @@ input:focus-visible {
   transform: translateX(-50%);
   width: 12px;
   height: 14px;
-  background: var(--danger);
+  background: var(--playhead);
   /* 下向きに尖った五角形（DaVinci 風のマーカー） */
   clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
 }
@@ -826,8 +832,8 @@ input:focus-visible {
   left: 9px;
   padding: 0 3px;
   border-radius: 2px;
-  background: var(--danger);
-  color: #fff;
+  background: var(--playhead);
+  color: var(--playhead-text);
   font-size: 10px;
   line-height: 1.4;
   white-space: nowrap;
