@@ -264,48 +264,41 @@ input:focus-visible {
   overflow: hidden;
 }
 
-/* パネル境界のドラッグリサイズ用スプリッター */
+/* パネル境界のドラッグリサイズ用スプリッター。
+   見た目は 1px のライン、当たり判定は ::before で ±3px 広げる（レイアウトは 1px のまま）。 */
 .splitter {
   position: relative;
   flex: none;
   z-index: 6;
+  background: var(--border);
+  transition: background 0.12s ease;
 }
 .splitter::before {
   content: '';
   position: absolute;
-  background: var(--border);
-  transition: background 0.12s ease;
 }
 .splitter-x {
-  width: 7px;
+  width: 1px;
   cursor: col-resize;
 }
 .splitter-x::before {
   top: 0;
   bottom: 0;
-  left: 3px;
-  width: 1px;
+  left: -3px;
+  right: -3px;
 }
 .splitter-y {
-  height: 7px;
+  height: 1px;
   cursor: row-resize;
 }
 .splitter-y::before {
   left: 0;
   right: 0;
-  top: 3px;
-  height: 1px;
+  top: -3px;
+  bottom: -3px;
 }
-.splitter:hover::before {
+.splitter:hover {
   background: var(--accent);
-}
-.splitter-x:hover::before {
-  width: 2px;
-  left: 2px;
-}
-.splitter-y:hover::before {
-  height: 2px;
-  top: 2px;
 }
 body.resizing {
   user-select: none;
