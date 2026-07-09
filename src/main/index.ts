@@ -1,7 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain, protocol, net, Menu, nativeImage } from 'electron'
-import { join } from 'node:path'
-import { rmSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import { app, shell, BrowserWindow, ipcMain, protocol, Menu, nativeImage } from 'electron'
+import { extname, join } from 'node:path'
+import { createReadStream, rmSync, statSync } from 'node:fs'
+import { Readable } from 'node:stream'
 import { registerIpc } from './ipc'
 import {
   cleanTempProxies,
@@ -49,6 +49,65 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 
+const MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
+}
+
+/**
+ * ローカルファイルを Range 対応で配信する。
+ * net.fetch(file://) では Content-Length / Accept-Ranges が付かず <audio>/<video> が
+ * シーク不能（duration=NaN, seekable=[0,0]）になるため、Range を自前で処理して 206 を返す。
+ */
+function serveFile(abs: string, request: GlobalRequest): Response {
+  const size = statSync(abs).size
+  const type = MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream'
+  const range = request.headers.get('range')
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range)
+    let start = m && m[1] ? parseInt(m[1], 10) : 0
+    let end = m && m[2] ? parseInt(m[2], 10) : size - 1
+    if (Number.isNaN(start)) start = 0
+    if (Number.isNaN(end) || end >= size) end = size - 1
+    if (start > end || start >= size) {
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } })
+    }
+    const body = Readable.toWeb(createReadStream(abs, { start, end })) as ReadableStream
+    return new Response(body, {
+      status: 206,
+      headers: {
+        'Content-Type': type,
+        'Content-Range': `bytes ${start}-${end}/${size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(end - start + 1)
+      }
+    })
+  }
+  const body = Readable.toWeb(createReadStream(abs)) as ReadableStream
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': type,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': String(size)
+    }
+  })
+}
+
 function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, (request) => {
     try {
@@ -62,11 +121,7 @@ function registerMediaProtocol(): void {
             : url.host === 'thumb'
               ? resolveInThumbs(relPath)
               : resolveInRoot(relPath)
-      // net.fetch(file://) は Range リクエストを解釈してくれる
-      return net.fetch(pathToFileURL(abs).toString(), {
-        headers: request.headers,
-        method: request.method
-      })
+      return serveFile(abs, request)
     } catch (err) {
       return new Response(`Not found: ${(err as Error).message}`, { status: 404 })
     }

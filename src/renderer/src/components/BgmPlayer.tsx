@@ -92,6 +92,17 @@ export function BgmPlayer({ height }: { height?: number }) {
     setCurTime(t)
   }
 
+  // mp3 は duration が NaN のことがあるので、seekable の終端を代替に使う
+  const updateDur = () => {
+    const a = audioRef.current
+    if (!a) return
+    let d = a.duration
+    if (!Number.isFinite(d) || d <= 0) {
+      d = a.seekable.length ? a.seekable.end(a.seekable.length - 1) : 0
+    }
+    setDur(d)
+  }
+
   return (
     <div className="bgm" style={{ height }}>
       <div className="bgm-head">
@@ -169,8 +180,13 @@ export function BgmPlayer({ height }: { height?: number }) {
             onEnded={onEnded}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
-            onTimeUpdate={(e) => setCurTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
+            onTimeUpdate={(e) => {
+              setCurTime(e.currentTarget.currentTime)
+              if (dur <= 0) updateDur()
+            }}
+            onLoadedMetadata={updateDur}
+            onDurationChange={updateDur}
+            onProgress={updateDur}
           />
         </>
       ) : (
