@@ -389,11 +389,12 @@ body.resizing {
 /* ============================================================
    BGM パネル（サイドバー下部）
    ============================================================ */
+/* 高さは inline style で制御（スプリッターでリサイズ）。上の境界線はスプリッターが描く */
 .bgm {
-  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   flex: none;
+  min-height: 0;
 }
 .bgm-head {
   display: flex;
@@ -421,7 +422,8 @@ body.resizing {
   color: var(--text);
 }
 .bgm-tracks {
-  max-height: 128px;
+  flex: 1;
+  min-height: 40px;
   overflow: auto;
   padding: 2px 8px;
 }
@@ -514,6 +516,43 @@ body.resizing {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* BGM シークバー */
+.bgm-seek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 2px;
+}
+.bgm-seek input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.bgm-seek input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.bgm-seek input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.bgm-time {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ============================================================

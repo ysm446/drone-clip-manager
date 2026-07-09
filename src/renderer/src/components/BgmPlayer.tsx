@@ -4,12 +4,22 @@ import { IconFolder, IconLoop, IconNext, IconPause, IconPlay, IconPrev } from '.
 
 const api = window.dcm
 
-export function BgmPlayer() {
+/** 秒 → m:ss */
+function fmtClock(s: number): string {
+  if (!Number.isFinite(s) || s < 0) s = 0
+  const m = Math.floor(s / 60)
+  const ss = Math.floor(s % 60)
+  return `${m}:${String(ss).padStart(2, '0')}`
+}
+
+export function BgmPlayer({ height }: { height?: number }) {
   const [info, setInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
   const [index, setIndex] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
   const [volume, setVolume] = useState(0.7)
   const [loop, setLoop] = useState(true)
+  const [curTime, setCurTime] = useState(0)
+  const [dur, setDur] = useState(0)
   const audioRef = useRef<HTMLAudioElement>(null)
 
   useEffect(() => {
@@ -30,6 +40,8 @@ export function BgmPlayer() {
   const playAt = (i: number) => {
     setIndex(i)
     setPlaying(true)
+    setCurTime(0)
+    setDur(0)
     // src 反映後に再生
     requestAnimationFrame(() => {
       const a = audioRef.current
@@ -74,8 +86,14 @@ export function BgmPlayer() {
 
   const current = index != null ? info.tracks[index] : null
 
+  const seek = (t: number) => {
+    const a = audioRef.current
+    if (a) a.currentTime = t
+    setCurTime(t)
+  }
+
   return (
-    <div className="bgm">
+    <div className="bgm" style={{ height }}>
       <div className="bgm-head">
         <span>BGM</span>
         <button className="bgm-pick" onClick={pickDir} title="BGM フォルダを選択">
@@ -99,6 +117,23 @@ export function BgmPlayer() {
               </div>
             ))}
           </div>
+
+          {current && (
+            <div className="bgm-seek">
+              <input
+                type="range"
+                min={0}
+                max={dur || 0}
+                step={0.1}
+                value={Math.min(curTime, dur || 0)}
+                onChange={(e) => seek(Number(e.target.value))}
+                title="再生位置"
+              />
+              <span className="bgm-time">
+                {fmtClock(curTime)} / {fmtClock(dur)}
+              </span>
+            </div>
+          )}
 
           <div className="bgm-controls">
             <button onClick={() => step(-1)} title="前へ">
@@ -134,6 +169,8 @@ export function BgmPlayer() {
             onEnded={onEnded}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
+            onTimeUpdate={(e) => setCurTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
           />
         </>
       ) : (

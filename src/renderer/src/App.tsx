@@ -39,8 +39,13 @@ export function App() {
     const v = Number(localStorage.getItem('dcm.playerH'))
     return v >= 140 ? v : 480
   })
+  const [bgmH, setBgmH] = useState<number>(() => {
+    const v = Number(localStorage.getItem('dcm.bgmH'))
+    return v >= 120 ? v : 220
+  })
   const sidebarBaseRef = useRef(0)
   const playerBaseRef = useRef(0)
+  const bgmBaseRef = useRef(0)
   /** 一時的な通知（スクリーンショット保存など）。数秒で消える。 */
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -96,6 +101,9 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('dcm.playerH', String(playerH))
   }, [playerH])
+  useEffect(() => {
+    localStorage.setItem('dcm.bgmH', String(bgmH))
+  }, [bgmH])
 
   // mpv からの時間/長さ/再生状態イベント
   useEffect(() => {
@@ -681,7 +689,12 @@ export function App() {
         <aside className="sidebar" style={{ width: sidebarW }}>
           <div className="sidebar-head">ライブラリ</div>
           <FolderTree tree={root.tree} selected={selected} onSelect={selectVideo} />
-          <BgmPlayer />
+          <Splitter
+            axis="y"
+            onStart={() => (bgmBaseRef.current = bgmH)}
+            onDelta={(dy) => setBgmH(Math.max(120, Math.min(520, bgmBaseRef.current - dy)))}
+          />
+          <BgmPlayer height={bgmH} />
         </aside>
 
         <Splitter
