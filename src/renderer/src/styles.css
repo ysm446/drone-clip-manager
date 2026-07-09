@@ -746,17 +746,19 @@ body.resizing {
   color: var(--faint);
   font-size: var(--fs-xs);
 }
-/* ルーラー + トラックのまとまり（再生ヘッドはこの上を貫く） */
+/* ルーラー + トラックを 1 つの枠にまとめる（再生ヘッドはこの中を貫く） */
 .tl-body {
   position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
 }
-/* 上部の動画シーク専用ルーラー（区間バーとは重ならない） */
+/* 枠内の上部を動画シーク専用ルーラーにする（区間バーとは重ならない・仕切りは下線 1px） */
 .tl-ruler {
   position: relative;
   height: 22px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   overflow: hidden;
   touch-action: none;
@@ -782,9 +784,6 @@ body.resizing {
   position: relative;
   height: 56px;
   background: var(--bg);
-  border: 1px solid var(--border);
-  /* 上はルーラーと接するので角を落とす */
-  border-radius: 0 0 var(--radius-m) var(--radius-m);
   cursor: crosshair;
   overflow: hidden;
   touch-action: none;
