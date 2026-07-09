@@ -86,6 +86,14 @@ export function App() {
   const autoPlayNextRef = useRef(false)
   /** 最新の自動送り関数を保持（mpv イベント購読は 1 度きりのため ref 経由で呼ぶ） */
   const advanceRef = useRef<(t: number) => void>(() => {})
+  // --- クリップ単体のループ再生（クリップ画面 / Phase 2.5） ---
+  /** クリップ再生中の in–out（クリップ画面でクリップを開くと設定。in→out をループ）。null で通常再生。 */
+  const [clipPlay, setClipPlay] = useState<{ in: number; out: number } | null>(null)
+  const clipPlayRef = useRef<{ in: number; out: number } | null>(null)
+  const setClipPlayRange = useCallback((r: { in: number; out: number } | null) => {
+    clipPlayRef.current = r
+    setClipPlay(r)
+  }, [])
 
   useEffect(() => {
     api.getRoot().then(setRoot)
@@ -113,6 +121,12 @@ export function App() {
         currentTimeRef.current = e.value
         setCurrentTime(e.value)
         if (seqActiveRef.current) advanceRef.current(e.value)
+        else if (clipPlayRef.current && e.value >= clipPlayRef.current.out - 0.02) {
+          // クリップのループ再生: out に達したら in へ戻る
+          api.mpvSeek(clipPlayRef.current.in)
+          currentTimeRef.current = clipPlayRef.current.in
+          setCurrentTime(clipPlayRef.current.in)
+        }
       } else if (e.type === 'duration') {
         if (e.value > 0) setDuration(e.value)
       } else if (e.type === 'pause') {
@@ -242,6 +256,9 @@ export function App() {
     setSelected(relPath)
     currentRelRef.current = relPath
     setSelectedSeg(null)
+    // 通常の動画選択ではクリップのループ範囲を解除（openClip の跨ぎ時は直後に再設定される）
+    clipPlayRef.current = null
+    setClipPlay(null)
     setCurrentTime(0)
     setDuration(0)
     setMeta(null)
@@ -429,12 +446,21 @@ export function App() {
     [loadSeqIndex]
   )
 
-  // <video> の時刻更新（シーケンス自動送りを兼ねる）
-  const onVideoTime = useCallback((t: number) => {
-    currentTimeRef.current = t
-    setCurrentTime(t)
-    if (seqActiveRef.current) advanceRef.current(t)
-  }, [])
+  // <video> の時刻更新（シーケンス自動送り / クリップのループを兼ねる）
+  const onVideoTime = useCallback(
+    (t: number) => {
+      currentTimeRef.current = t
+      setCurrentTime(t)
+      if (seqActiveRef.current) advanceRef.current(t)
+      else if (clipPlayRef.current && t >= clipPlayRef.current.out - 0.02) {
+        const v = videoRef.current
+        if (v) v.currentTime = clipPlayRef.current.in
+        currentTimeRef.current = clipPlayRef.current.in
+        setCurrentTime(clipPlayRef.current.in)
+      }
+    },
+    []
+  )
 
   const createSegment = useCallback(
     async (inT: number, outT: number) => {
@@ -495,10 +521,12 @@ export function App() {
   const openClip = useCallback(
     (clip: ClipItem) => {
       const t = clip.inSnapped ?? clip.inTime
+      const range = { in: t, out: clip.outSnapped ?? clip.outTime }
       if (currentRelRef.current === clip.videoRelPath) {
         // 同一動画: シークのみ（再生中ならそのまま継続、停止中なら停止のまま）
         seek(t)
         setSelectedSeg(clip.id)
+        setClipPlayRange(range)
       } else {
         // 別動画: 現在の再生状態を見て、再生中ならロード後に自動再生を続ける
         const wasPlaying = mpvModeRef.current
@@ -507,9 +535,11 @@ export function App() {
         autoPlayNextRef.current = wasPlaying
         pendingSeekRef.current = t
         selectVideo(clip.videoRelPath).then(() => setSelectedSeg(clip.id))
+        // selectVideo が同期的に clipPlay を解除するので、その後に設定する
+        setClipPlayRange(range)
       }
     },
-    [seek, selectVideo]
+    [seek, selectVideo, setClipPlayRange]
   )
 
   const showToast = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
@@ -655,6 +685,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [captureApp, captureVideoFrame])
 
+  // クリップ画面以外に切り替えたらクリップのループ再生を解除
+  useEffect(() => {
+    if (view !== 'clips') {
+      clipPlayRef.current = null
+      setClipPlay(null)
+    }
+  }, [view])
+
   // 選択中クリップ（区間）の in–out。プレイヤーのシークバーに範囲帯として表示する。
   const selClipRange = useMemo(() => {
     if (selectedSeg == null) return null
@@ -662,6 +700,10 @@ export function App() {
     if (!s) return null
     return { in: s.inSnapped ?? s.inTime, out: s.outSnapped ?? s.outTime }
   }, [selectedSeg, segments])
+
+  // クリップ画面でクリップを開いている間は、シークバーをクリップ範囲 [in,out] 表示にする
+  const clipMode = view === 'clips' && clipPlay != null
+  const fullDur = duration || meta?.durationSec || 0
 
   return (
     <div className="app">
@@ -734,10 +776,11 @@ export function App() {
                     {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
                   <PlayerSeek
-                    duration={duration || meta?.durationSec || 0}
+                    start={clipMode ? clipPlay!.in : 0}
+                    end={clipMode ? clipPlay!.out : fullDur}
                     currentTime={currentTime}
-                    clipIn={selClipRange?.in ?? null}
-                    clipOut={selClipRange?.out ?? null}
+                    clipIn={clipMode ? null : selClipRange?.in ?? null}
+                    clipOut={clipMode ? null : selClipRange?.out ?? null}
                     onSeek={seek}
                     disabled={!selected}
                   />
