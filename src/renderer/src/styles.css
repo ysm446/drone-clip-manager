@@ -613,6 +613,63 @@ body.resizing {
   font-size: var(--fs-sm);
 }
 
+/* 動画プレイヤー用シークバー（BGM とは別系統の動画デザイン） */
+.player-seek {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  cursor: pointer;
+  touch-action: none;
+}
+.player-seek.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+/* トラック（動画全体の帯） */
+.player-seek::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bar-border);
+}
+/* クリップの in–out 範囲を示す帯 */
+.player-seek-clip {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* 再生済み（0→現在位置）の塗り */
+.player-seek-fill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+/* 再生ヘッド */
+.player-seek-head {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* プロキシ生成 / 失敗のオーバーレイ */
 .proxy-overlay {
   position: absolute;

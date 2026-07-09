@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipItem, RootInfo, Segment, VideoMeta } from '../../shared/types'
 import { FolderTree } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
@@ -9,6 +9,7 @@ import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
 import { SequenceView, type SeqPlayItem } from './components/SequenceView'
 import { Splitter } from './components/Splitter'
+import { PlayerSeek } from './components/PlayerSeek'
 import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -654,6 +655,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [captureApp, captureVideoFrame])
 
+  // 選択中クリップ（区間）の in–out。プレイヤーのシークバーに範囲帯として表示する。
+  const selClipRange = useMemo(() => {
+    if (selectedSeg == null) return null
+    const s = segments.find((x) => x.id === selectedSeg)
+    if (!s) return null
+    return { in: s.inSnapped ?? s.inTime, out: s.outSnapped ?? s.outTime }
+  }, [selectedSeg, segments])
+
   return (
     <div className="app">
       <header className="topbar">
@@ -724,6 +733,14 @@ export function App() {
                   <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
                     {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
+                  <PlayerSeek
+                    duration={duration || meta?.durationSec || 0}
+                    currentTime={currentTime}
+                    clipIn={selClipRange?.in ?? null}
+                    clipOut={selClipRange?.out ?? null}
+                    onSeek={seek}
+                    disabled={!selected}
+                  />
                   <span className="mpv-time">
                     {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}
                   </span>
