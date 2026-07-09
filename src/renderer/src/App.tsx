@@ -8,6 +8,7 @@ import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
 import { SequenceView, type SeqPlayItem } from './components/SequenceView'
+import { Splitter } from './components/Splitter'
 import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -29,6 +30,17 @@ export function App() {
   const [view, setView] = useState<'library' | 'clips' | 'sequence'>('library')
   /** シーケンス連続再生中のノード id（停止中は null / Phase 2.6） */
   const [playingNodeId, setPlayingNodeId] = useState<number | null>(null)
+  /** パネルサイズ（サイドバー幅 / プレイヤー高さ）。ドラッグで変更し localStorage に保存。 */
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('dcm.sidebarW'))
+    return v >= 200 ? v : 280
+  })
+  const [playerH, setPlayerH] = useState<number>(() => {
+    const v = Number(localStorage.getItem('dcm.playerH'))
+    return v >= 140 ? v : 480
+  })
+  const sidebarBaseRef = useRef(0)
+  const playerBaseRef = useRef(0)
   /** 一時的な通知（スクリーンショット保存など）。数秒で消える。 */
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -76,6 +88,14 @@ export function App() {
       setMpvMode(ok)
     })
   }, [])
+
+  // パネルサイズを永続化
+  useEffect(() => {
+    localStorage.setItem('dcm.sidebarW', String(sidebarW))
+  }, [sidebarW])
+  useEffect(() => {
+    localStorage.setItem('dcm.playerH', String(playerH))
+  }, [playerH])
 
   // mpv からの時間/長さ/再生状態イベント
   useEffect(() => {
@@ -658,18 +678,24 @@ export function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar">
+        <aside className="sidebar" style={{ width: sidebarW }}>
           <div className="sidebar-head">ライブラリ</div>
           <FolderTree tree={root.tree} selected={selected} onSelect={selectVideo} />
           <BgmPlayer />
         </aside>
+
+        <Splitter
+          axis="x"
+          onStart={() => (sidebarBaseRef.current = sidebarW)}
+          onDelta={(dx) => setSidebarW(Math.max(200, Math.min(640, sidebarBaseRef.current + dx)))}
+        />
 
         <main
           className={`main${view === 'clips' ? ' view-clips' : ''}${
             view === 'sequence' ? ' view-sequence' : ''
           }`}
         >
-          <section className="player-pane">
+          <section className="player-pane" style={{ height: playerH }}>
             {mpvMode ? (
               <>
                 <div
@@ -749,6 +775,14 @@ export function App() {
               </div>
             )}
           </section>
+
+          <Splitter
+            axis="y"
+            onStart={() => (playerBaseRef.current = playerH)}
+            onDelta={(dy) =>
+              setPlayerH(Math.max(140, Math.min(window.innerHeight - 240, playerBaseRef.current + dy)))
+            }
+          />
 
           {view === 'clips' ? (
             <ClipsView
