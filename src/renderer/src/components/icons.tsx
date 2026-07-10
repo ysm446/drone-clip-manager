@@ -86,6 +86,27 @@ export function IconNext({ size = 14, className }: IconProps) {
   )
 }
 
+export function IconZoomIn({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <circle cx="6.8" cy="6.8" r="3.9" />
+      <line x1="9.8" y1="9.8" x2="13" y2="13" />
+      <line x1="5.1" y1="6.8" x2="8.5" y2="6.8" />
+      <line x1="6.8" y1="5.1" x2="6.8" y2="8.5" />
+    </svg>
+  )
+}
+
+export function IconZoomOut({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <circle cx="6.8" cy="6.8" r="3.9" />
+      <line x1="9.8" y1="9.8" x2="13" y2="13" />
+      <line x1="5.1" y1="6.8" x2="8.5" y2="6.8" />
+    </svg>
+  )
+}
+
 export function IconLoop({ size = 14, className }: IconProps) {
   return (
     <svg {...stroke(size, className)}>

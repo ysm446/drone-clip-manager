@@ -1,6 +1,7 @@
 import { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
+import { IconZoomIn, IconZoomOut } from './icons'
 
 /** ルーラー目盛り用の短い表記（mm:ss / 1時間超は h:mm:ss） */
 function fmtTick(sec: number): string {
@@ -338,7 +339,7 @@ export function Timeline({
           onClick={() => zoomTo(zoom / ZOOM_STEP)}
           disabled={zoom <= 1}
         >
-          −
+          <IconZoomOut size={17} />
         </button>
         <button
           className="tl-mode"
@@ -346,7 +347,7 @@ export function Timeline({
           onClick={() => zoomTo(zoom * ZOOM_STEP)}
           disabled={zoom >= MAX_ZOOM}
         >
-          ＋
+          <IconZoomIn size={17} />
         </button>
         {zoom > 1 && (
           <>
