@@ -2107,6 +2107,35 @@ body.resizing {
   border-style: solid;
   border-color: var(--accent);
 }
+/* タグ補完の候補ポップアップ（datalist の代替。必ず入力欄の下に開く =
+   mpv のネイティブ映像ウィンドウに隠れない） */
+.tag-suggest {
+  position: fixed;
+  z-index: 150;
+  overflow-y: auto;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+.tag-suggest-item {
+  display: block;
+  text-align: left;
+  padding: 4px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tag-suggest-item.active {
+  background: var(--hover);
+}
 
 /* ツールバー下のタグ絞り込み行 */
 .clips-tagfilter {

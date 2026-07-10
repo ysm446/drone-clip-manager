@@ -50,13 +50,6 @@ export const SegmentList = memo(function SegmentList({
   }
   return (
     <div className="seg-list">
-      {/* タグ入力の補完候補（区間リスト共通） */}
-      <datalist id="dcm-all-tags">
-        {allTags.map((t) => (
-          <option key={t.tag} value={t.tag} />
-        ))}
-      </datalist>
-
       {segments.map((s, i) => {
         const lo = s.inSnapped ?? s.inTime
         const hi = s.outSnapped ?? s.outTime
@@ -82,6 +75,7 @@ export const SegmentList = memo(function SegmentList({
                 tags={s.tags ?? []}
                 onAdd={(t) => addTag(s.id, t)}
                 onRemove={(t) => removeTag(s.id, t)}
+                suggestions={allTags.map((t) => t.tag)}
               />
               <span className="seg-dur">{fmtTime(hi - lo)}</span>
               <button

@@ -259,13 +259,6 @@ export const ClipsView = memo(function ClipsView({ onOpenClip, onExport, selecte
         </button>
       </div>
 
-      {/* タグ入力の補完候補（全カード共通） */}
-      <datalist id="dcm-all-tags">
-        {allTags.map((t) => (
-          <option key={t.tag} value={t.tag} />
-        ))}
-      </datalist>
-
       {allTags.length > 0 && (
         <div className="clips-tagfilter">
           <span className="clips-tagfilter-label">タグ絞り込み</span>
@@ -339,6 +332,7 @@ export const ClipsView = memo(function ClipsView({ onOpenClip, onExport, selecte
                   tags={c.tags}
                   onAdd={(t) => addTag(c.id, t)}
                   onRemove={(t) => removeTag(c.id, t)}
+                  suggestions={allTags.map((t) => t.tag)}
                 />
               </div>
               <div className="clip-actions">

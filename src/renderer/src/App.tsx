@@ -1344,7 +1344,7 @@ export function App() {
                       tags={videoTags}
                       onAdd={addVideoTag}
                       onRemove={removeVideoTag}
-                      listId="dcm-video-tag-suggest"
+                      suggestions={allTags.map((t) => t.tag)}
                     />
                     <button
                       className="btn primary"
