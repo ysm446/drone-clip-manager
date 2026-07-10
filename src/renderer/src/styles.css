@@ -686,6 +686,40 @@ body.resizing {
   border-radius: 2px;
   background: var(--accent);
 }
+/* ホバー位置のサムネイルプレビュー。mpv がネイティブ最前面のためバーの「下」に出す */
+.player-seek-thumb {
+  position: absolute;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 3px;
+  box-shadow: var(--shadow-2);
+}
+.player-seek-thumb img {
+  display: block;
+  width: 160px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: #000;
+}
+.player-seek-thumb-empty {
+  width: 160px;
+  height: 90px;
+  border-radius: 3px;
+  background: #000;
+}
+.player-seek-thumb-time {
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
 /* 再生ヘッド */
 .player-seek-head {
   position: absolute;

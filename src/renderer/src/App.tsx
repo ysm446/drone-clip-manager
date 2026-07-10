@@ -301,6 +301,7 @@ export function App() {
     setMultiSel(new Set())
     multiAnchorRef.current = null
     setKeyframes([])
+    seekThumbCacheRef.current.clear() // 別ルートの同名相対パスと混ざらないように
     resetPlayback()
     api.getAllTags().then(setAllTags) // ルートが変わると DB も変わる
   }
@@ -401,6 +402,31 @@ export function App() {
       }
     }, 2200)
   }
+
+  // シークバーのホバーサムネイル: 時刻をグリッドに量子化して ensureThumb（ffmpeg 1 フレーム +
+  // .dcm/thumbnails/ キャッシュ）を叩く。取得済み URL はメモリにも持ち再ホバーを即時にする。
+  const seekThumbCacheRef = useRef(new Map<string, string>())
+  const getSeekThumb = useCallback(
+    async (t: number): Promise<string | null> => {
+      const rel = currentRelRef.current
+      if (!rel) return null
+      const dur = duration || meta?.durationSec || 0
+      if (dur <= 0) return null
+      // バーの表示範囲（クリップ再生中は in–out）に応じた間隔で量子化。
+      // 例: 20 分動画 → 10s / 60s 動画 → 1s / 15s クリップ → 0.5s
+      const span = clipPlay ? clipPlay.out - clipPlay.in : dur
+      const step = Math.max(0.5, Math.min(10, span / 60))
+      const qt = Math.min(Math.max(0, Math.round(t / step) * step), Math.max(0, dur - 0.1))
+      const key = `${rel}|${qt.toFixed(3)}`
+      const cached = seekThumbCacheRef.current.get(key)
+      if (cached) return cached
+      const name = await api.ensureThumb(rel, qt)
+      const url = api.thumbUrl(name)
+      seekThumbCacheRef.current.set(key, url)
+      return url
+    },
+    [duration, meta, clipPlay]
+  )
 
   const seek = useCallback((t: number) => {
     if (mpvModeRef.current) {
@@ -943,6 +969,7 @@ export function App() {
                     clipOut={clipMode ? null : selClipRange?.out ?? null}
                     onSeek={seek}
                     disabled={!selected}
+                    getThumb={getSeekThumb}
                   />
                   <span className="mpv-time">
                     {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}
