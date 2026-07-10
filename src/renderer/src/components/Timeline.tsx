@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useMemo } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
 import { colorForIndex, fmtTime } from '../util'
 
@@ -35,6 +35,8 @@ interface Props {
   onSelectSegment: (id: number) => void
   /** 区間の in/out を変更（リサイズ・移動）して確定 */
   onUpdateSegment: (id: number, inTime: number, outTime: number) => void
+  /** 作成・リサイズ・移動ドラッグ中の範囲をリアルタイム通知（終了で null。フィルムストリップの追従用） */
+  onLiveRange?: (r: { lo: number; hi: number } | null) => void
 }
 
 interface DragState {
@@ -65,7 +67,8 @@ export function Timeline({
   onSeek,
   onCreateSegment,
   onSelectSegment,
-  onUpdateSegment
+  onUpdateSegment,
+  onLiveRange
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -215,6 +218,13 @@ export function Timeline({
     mode === 'segment' && drag && drag.moved
       ? { lo: Math.min(drag.startT, drag.curT), hi: Math.max(drag.startT, drag.curT) }
       : null
+
+  // ドラッグ中の範囲（作成 or 編集）を親へ通知
+  const liveLo = pending?.lo ?? preview?.lo ?? null
+  const liveHi = pending?.hi ?? preview?.hi ?? null
+  useEffect(() => {
+    onLiveRange?.(liveLo != null && liveHi != null ? { lo: liveLo, hi: liveHi } : null)
+  }, [liveLo, liveHi, onLiveRange])
 
   return (
     <div className="timeline">

@@ -841,6 +841,60 @@ body.resizing {
   font-size: var(--fs-sm);
 }
 
+/* --- フィルムストリップ（プレイヤーとタイムラインの間のサムネイル帯） --- */
+.filmstrip {
+  position: relative;
+  display: flex;
+  gap: 1px;
+  height: 52px;
+  flex: none;
+  margin: 8px 16px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+}
+.filmstrip-cell {
+  flex: 1;
+  min-width: 0;
+  background: #000;
+}
+.filmstrip-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+/* 区間範囲の外側を暗くする覆い */
+.filmstrip-dim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--overlay);
+  pointer-events: none;
+}
+/* 区間範囲の枠（アクセント色の左右エッジ） */
+.filmstrip-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  pointer-events: none;
+}
+.filmstrip-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--playhead);
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+
 /* --- タイムライン --- */
 .timeline {
   padding: 8px 16px 10px;

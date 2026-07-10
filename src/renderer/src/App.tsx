@@ -11,6 +11,7 @@ import { SequenceView, type SeqPlayItem } from './components/SequenceView'
 import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
+import { Filmstrip } from './components/Filmstrip'
 import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -70,6 +71,8 @@ export function App() {
   /** Shift+クリックの範囲選択の起点 */
   const multiAnchorRef = useRef<string | null>(null)
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null)
+  /** タイムラインでドラッグ中の範囲（作成/編集）。フィルムストリップのハイライトに使う */
+  const [liveRange, setLiveRange] = useState<{ lo: number; hi: number } | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -867,6 +870,11 @@ export function App() {
     }
   }, [view])
 
+  const onTimelineLiveRange = useCallback(
+    (r: { lo: number; hi: number } | null) => setLiveRange(r),
+    []
+  )
+
   // 選択中クリップ（区間）の in–out。プレイヤーのシークバーに範囲帯として表示する。
   const selClipRange = useMemo(() => {
     if (selectedSeg == null) return null
@@ -1079,6 +1087,17 @@ export function App() {
                       書き出し…
                     </button>
                   </div>
+                  {selected && fullDur > 0 && meta && (
+                    <Filmstrip
+                      videoRelPath={selected}
+                      duration={meta.durationSec || fullDur}
+                      range={
+                        liveRange ? { in: liveRange.lo, out: liveRange.hi } : selClipRange
+                      }
+                      currentTime={currentTime}
+                      onSeek={seek}
+                    />
+                  )}
                   <Timeline
                     duration={duration || meta?.durationSec || 0}
                     currentTime={currentTime}
@@ -1089,6 +1108,7 @@ export function App() {
                     onCreateSegment={createSegment}
                     onSelectSegment={setSelectedSeg}
                     onUpdateSegment={updateSegmentTimes}
+                    onLiveRange={onTimelineLiveRange}
                   />
                   <SegmentList
                     segments={segments}
