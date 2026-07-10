@@ -100,9 +100,14 @@ export function App() {
   const sidebarBaseRef = useRef(0)
   const playerBaseRef = useRef(0)
   const bgmBaseRef = useRef(0)
-  /** 一時的な通知（スクリーンショット保存など）。数秒で消える。 */
-  const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
-  const toastTimerRef = useRef<number | null>(null)
+  /** 下部ステータスバーに出すアクション通知（保存・削除・エラーなど）。数秒で消える。 */
+  const [status, setStatus] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
+  const statusTimerRef = useRef<number | null>(null)
+  const showStatus = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
+    setStatus({ text, kind })
+    if (statusTimerRef.current) window.clearTimeout(statusTimerRef.current)
+    statusTimerRef.current = window.setTimeout(() => setStatus(null), 6000)
+  }, [])
   /** スクリーンショットの多重発火防止（キーリピート / 二重イベント対策） */
   const lastShotRef = useRef(0)
   const lastAppShotRef = useRef(0)
@@ -653,8 +658,13 @@ export function App() {
       })
       setSegments((prev) => [...prev, created].sort((a, b) => a.inTime - b.inTime))
       setSelectedSeg(created.id)
+      showStatus(
+        `区間を作成しました（${fmtTime(created.inSnapped ?? created.inTime)} – ${fmtTime(
+          created.outSnapped ?? created.outTime
+        )}）`
+      )
     },
-    [selected, keyframes, duration, segments.length]
+    [selected, keyframes, duration, segments.length, showStatus]
   )
 
   // 区間のリサイズ/移動: 新しい in/out をキーフレームスナップして永続化
@@ -674,11 +684,15 @@ export function App() {
     [keyframes, duration]
   )
 
-  const deleteSeg = useCallback(async (id: number) => {
-    await api.deleteSegment(id)
-    setSegments((prev) => prev.filter((s) => s.id !== id))
-    setSelectedSeg((cur) => (cur === id ? null : cur))
-  }, [])
+  const deleteSeg = useCallback(
+    async (id: number) => {
+      await api.deleteSegment(id)
+      setSegments((prev) => prev.filter((s) => s.id !== id))
+      setSelectedSeg((cur) => (cur === id ? null : cur))
+      showStatus('区間を削除しました')
+    },
+    [showStatus]
+  )
 
   const renameSeg = useCallback((id: number, label: string) => {
     setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)))
@@ -786,11 +800,6 @@ export function App() {
     [seek, selectVideo, setClipPlayRange]
   )
 
-  const showToast = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
-    setToast({ text, kind })
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 3500)
-  }, [])
 
   // ツリーからのファイル / フォルダ名変更。実ファイルの rename と DB 参照の付け替えは
   // main 側で行うので、ここでは UI 側の参照（ツリー・複数選択・開いている動画）を新パスへ追従させる。
@@ -798,7 +807,7 @@ export function App() {
     async (relPath: string, newName: string): Promise<boolean> => {
       const res = await api.renameEntry(relPath, newName)
       if (!res.ok || !res.newRelPath) {
-        showToast(res.error ?? '名前の変更に失敗しました', 'err')
+        showStatus(res.error ?? '名前の変更に失敗しました', 'err')
         return false
       }
       const newRel = res.newRelPath
@@ -820,10 +829,10 @@ export function App() {
         }
       }
       setLibVersion((v) => v + 1) // クリップ / シーケンス画面に再取得させる
-      showToast('名前を変更しました')
+      showStatus('名前を変更しました')
       return true
     },
-    [selectVideo, setClipPlayRange, showToast]
+    [selectVideo, setClipPlayRange, showStatus]
   )
 
   // ツリーからのファイル / フォルダ削除。確認ダイアログとごみ箱移動 + DB 記録の削除は main 側。
@@ -833,7 +842,7 @@ export function App() {
       const res = await api.deleteEntry(relPath)
       if (res.canceled) return
       if (!res.ok) {
-        showToast(res.error ?? '削除に失敗しました', 'err')
+        showStatus(res.error ?? '削除に失敗しました', 'err')
         return
       }
       if (res.root) setRoot(res.root)
@@ -858,9 +867,9 @@ export function App() {
       }
       setLibVersion((v) => v + 1) // クリップ / シーケンス画面に再取得させる
       api.getAllTags().then(setAllTags) // 消えた動画の分のタグ件数を更新
-      showToast('ごみ箱に移動しました')
+      showStatus('ごみ箱に移動しました')
     },
-    [showToast]
+    [showStatus]
   )
 
   // 複数選択中の全動画へタグを一括付与（サイドバー下部のバーから）
@@ -877,10 +886,10 @@ export function App() {
             if (currentRelRef.current === rel) setVideoTags(tags)
           })
         }
-        showToast(`${targets.length} 本に「${tag}」を追加しました`)
+        showStatus(`${targets.length} 本に「${tag}」を追加しました`)
       })
     },
-    [multiSel, showToast]
+    [multiSel, showStatus]
   )
 
   // F9: 現在の動画フレームをスクリーンショット保存（ライブラリ直下 screenshots/）
@@ -891,20 +900,20 @@ export function App() {
     lastShotRef.current = now
     const rel = currentRelRef.current
     if (!rel) {
-      showToast('動画を選択してからスクリーンショットしてください', 'err')
+      showStatus('動画を選択してからスクリーンショットしてください', 'err')
       return
     }
     try {
       const path = await api.captureScreenshot(rel, currentTimeRef.current, mpvModeRef.current)
       const name = path.split(/[\\/]/).pop() ?? path
-      showToast(`動画フレームを保存: screenshots/${name}`)
+      showStatus(`動画フレームを保存: screenshots/${name}`)
     } catch (err) {
-      showToast(
+      showStatus(
         `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
         'err'
       )
     }
-  }, [showToast])
+  }, [showStatus])
 
   // F12: アプリ画面全体をスクリーンショット保存。
   // Chromium 層(capturePage)には mpv 映像が写らないため、mpv の現フレームを動画領域に合成する。
@@ -954,14 +963,14 @@ export function App() {
       const bytes = new Uint8Array(await blob.arrayBuffer())
       const path = await api.saveAppScreenshot(bytes)
       const name = path.split(/[\\/]/).pop() ?? path
-      showToast(`アプリのスクショを保存: screenshots/${name}`)
+      showStatus(`アプリのスクショを保存: screenshots/${name}`)
     } catch (err) {
-      showToast(
+      showStatus(
         `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
         'err'
       )
     }
-  }, [showToast])
+  }, [showStatus])
 
   // ライブラリビューの「書き出し…」: 選択中動画の全区間を対象にモーダルを開く
   const openExportForCurrent = useCallback(() => {
@@ -1311,6 +1320,23 @@ export function App() {
         </main>
       </div>
 
+      {/* 下部ステータスバー: 左にアクション通知、右に開いている動画の情報 */}
+      <footer className="statusbar">
+        <span className={`status-msg${status ? ` ${status.kind}` : ''}`}>
+          {status ? status.text : busy ? '読み込み中…' : '準備完了'}
+        </span>
+        <span className="status-spacer" />
+        {meta && (
+          <>
+            <span className="status-item" title={selected ?? ''}>
+              {meta.filename}
+            </span>
+            <span className="status-item">{fmtTime(duration || meta.durationSec || 0)}</span>
+            <span className="status-item">{segments.length} 区間</span>
+          </>
+        )}
+      </footer>
+
       {/* 動画タグ入力の補完候補（ツールバー / 一括タグバー共通） */}
       <datalist id="dcm-video-tag-suggest">
         {allTags.map((t) => (
@@ -1321,8 +1347,6 @@ export function App() {
       {exportItems && exportItems.length > 0 && (
         <ExportModal items={exportItems} onClose={() => setExportItems(null)} />
       )}
-
-      {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
     </div>
   )
 }

@@ -1495,40 +1495,39 @@ body.resizing {
 }
 
 /* ============================================================
-   トースト通知（スクリーンショット保存など）
+   下部ステータスバー（アクション通知 + 開いている動画の情報）
    ============================================================ */
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  max-width: 70vw;
-  padding: 8px 16px;
-  border-radius: var(--radius-m);
-  background: var(--bar-surface);
-  color: var(--bar-text);
-  border: 1px solid var(--bar-border);
-  box-shadow: var(--shadow-2);
-  font-size: var(--fs-sm);
-  z-index: 200;
+.statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.status-msg {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  animation: toast-in 0.16s ease;
 }
-.toast.err {
-  border-color: var(--danger);
-  color: var(--bar-danger);
+.status-msg.ok {
+  color: var(--text);
 }
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 6px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
+.status-msg.err {
+  color: var(--danger);
+}
+.status-spacer {
+  flex: 1;
+}
+.status-item {
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
 }
 
 /* ============================================================
