@@ -926,6 +926,7 @@ export function App() {
             selected={selected}
             multiSelected={multiSel}
             onVideoClick={onTreeVideoClick}
+            rootKey={root.root}
           />
           {multiSel.size > 0 && (
             <BulkTagBar

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { TreeNode } from '../../../shared/types'
 import { IconFilm, IconFolder } from './icons'
 
@@ -14,6 +14,21 @@ interface Props {
   /** 一括タグ付け用の複数選択（Ctrl/Shift+クリック） */
   multiSelected: Set<string>
   onVideoClick: (relPath: string, mods: VideoClickMods) => void
+  /** 開閉状態の保存キー（ルートの絶対パス。ルートごとに別々に記憶する） */
+  rootKey: string | null
+}
+
+/** フォルダ開閉のユーザー操作の上書き（相対パス → 開閉）。未操作のフォルダは既定（第1階層のみ開）。 */
+type OpenOverrides = Record<string, boolean>
+
+const openStorageKey = (rootKey: string | null) => `dcm.treeOpen:${rootKey ?? ''}`
+
+function loadOverrides(rootKey: string | null): OpenOverrides {
+  try {
+    return JSON.parse(localStorage.getItem(openStorageKey(rootKey)) ?? '{}') as OpenOverrides
+  } catch {
+    return {}
+  }
 }
 
 function NodeRow({
@@ -21,15 +36,19 @@ function NodeRow({
   depth,
   selected,
   multiSelected,
-  onVideoClick
+  onVideoClick,
+  overrides,
+  onToggleDir
 }: {
   node: TreeNode
   depth: number
   selected: string | null
   multiSelected: Set<string>
   onVideoClick: (relPath: string, mods: VideoClickMods) => void
+  overrides: OpenOverrides
+  onToggleDir: (relPath: string, open: boolean) => void
 }) {
-  const [open, setOpen] = useState(depth < 1)
+  const open = overrides[node.relPath] ?? depth < 1
 
   if (node.type === 'video') {
     const isSel = selected === node.relPath
@@ -57,7 +76,7 @@ function NodeRow({
       <div
         className="tree-row dir"
         style={{ paddingLeft: 8 + depth * 14 }}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onToggleDir(node.relPath, !open)}
       >
         <span className="tree-caret">{children.length ? (open ? '▾' : '▸') : ' '}</span>
         <span className="tree-icon">
@@ -74,13 +93,30 @@ function NodeRow({
             selected={selected}
             multiSelected={multiSelected}
             onVideoClick={onVideoClick}
+            overrides={overrides}
+            onToggleDir={onToggleDir}
           />
         ))}
     </div>
   )
 }
 
-export function FolderTree({ tree, selected, multiSelected, onVideoClick }: Props) {
+export function FolderTree({ tree, selected, multiSelected, onVideoClick, rootKey }: Props) {
+  const [overrides, setOverrides] = useState<OpenOverrides>(() => loadOverrides(rootKey))
+
+  // ルートが切り替わったら、そのルートの保存済み開閉状態を読み直す
+  useEffect(() => {
+    setOverrides(loadOverrides(rootKey))
+  }, [rootKey])
+
+  const toggleDir = (relPath: string, open: boolean) => {
+    setOverrides((prev) => {
+      const next = { ...prev, [relPath]: open }
+      localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next))
+      return next
+    })
+  }
+
   if (!tree) {
     return <div className="tree-empty">ルートフォルダ未設定</div>
   }
@@ -98,6 +134,8 @@ export function FolderTree({ tree, selected, multiSelected, onVideoClick }: Prop
           selected={selected}
           multiSelected={multiSelected}
           onVideoClick={onVideoClick}
+          overrides={overrides}
+          onToggleDir={toggleDir}
         />
       ))}
     </div>
