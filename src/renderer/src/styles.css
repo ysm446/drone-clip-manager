@@ -870,6 +870,16 @@ body.resizing {
   font-weight: 600;
   font-size: var(--fs-ui);
 }
+/* メタバー右側の再生速度セレクタ */
+.speed-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-s);
+  font-size: var(--fs-xs);
+  padding: 1px 4px;
+  cursor: pointer;
+}
 .meta-time {
   color: var(--muted);
   font-variant-numeric: tabular-nums;

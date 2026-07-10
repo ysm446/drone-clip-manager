@@ -306,6 +306,8 @@ export interface DcmApi {
   mpvPause: () => void
   mpvSeek: (sec: number) => void
   mpvVolume: (v0to1: number) => void
+  /** 再生速度（1 = 等速） */
+  mpvSetSpeed: (v: number) => void
   mpvStop: () => void
   onMpvEvent: (cb: (e: MpvEvent) => void) => () => void
   // --- ウィンドウ操作 ---

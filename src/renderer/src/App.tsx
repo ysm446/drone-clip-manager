@@ -97,6 +97,11 @@ export function App() {
     const v = Number(localStorage.getItem('dcm.bgmH'))
     return v >= 120 ? v : 220
   })
+  /** 再生速度（1 = 等速）。mpv / <video> 共通で、localStorage に保存。 */
+  const [speed, setSpeed] = useState<number>(() => {
+    const v = Number(localStorage.getItem('dcm.speed'))
+    return v >= 0.25 && v <= 4 ? v : 1
+  })
   const sidebarBaseRef = useRef(0)
   const playerBaseRef = useRef(0)
   const bgmBaseRef = useRef(0)
@@ -175,6 +180,20 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('dcm.bgmH', String(bgmH))
   }, [bgmH])
+  useEffect(() => {
+    localStorage.setItem('dcm.speed', String(speed))
+  }, [speed])
+
+  // 再生速度の適用。mpv はプロセスが生きている限り保持されるが、再起動に備えて
+  // 動画選択のたびに送り直す。<video> は src が変わると playbackRate が 1 に戻るので、
+  // メタデータ確定（duration 変化）のたびに設定し直す。
+  useEffect(() => {
+    if (mpvMode) api.mpvSetSpeed(speed)
+  }, [speed, mpvMode, selected])
+  useEffect(() => {
+    const v = videoRef.current
+    if (v) v.playbackRate = speed
+  }, [speed, videoSrc, duration, mpvMode])
 
   // ウィンドウの高さが変わったら（最大化 / 復元・リサイズ）、プレイヤーの高さを
   // 比例スケールして上下分割の比率を保つ（px 固定のままだと最大化時に下側だけ広がる）
@@ -1298,6 +1317,18 @@ export function App() {
                       {fmtTime(currentTime)} / {fmtTime(duration || meta.durationSec || 0)}
                     </span>
                     <span className="badge muted">{keyframes.length} keyframes</span>
+                    <select
+                      className="speed-select"
+                      value={speed}
+                      onChange={(e) => setSpeed(Number(e.target.value))}
+                      title="再生速度"
+                    >
+                      {[0.25, 0.5, 1, 1.5, 2, 4].map((v) => (
+                        <option key={v} value={v}>
+                          {v}×
+                        </option>
+                      ))}
+                    </select>
                   </>
                 ) : (
                   <>

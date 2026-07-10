@@ -219,6 +219,10 @@ export function mpvVolume(v0to1: number): void {
   void command(['set_property', 'volume', Math.round(Math.max(0, Math.min(1, v0to1)) * 100)])
 }
 
+export function mpvSetSpeed(v: number): void {
+  void command(['set_property', 'speed', Math.max(0.1, Math.min(8, v))])
+}
+
 export function mpvStop(): void {
   void command(['stop'])
 }

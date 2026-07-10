@@ -17,6 +17,7 @@ import {
   mpvPause,
   mpvPlay,
   mpvSeek,
+  mpvSetSpeed,
   mpvStart,
   mpvStop,
   mpvVolume,
@@ -268,6 +269,7 @@ function registerMpvIpc(): void {
   ipcMain.on('mpv:pause', () => mpvPause())
   ipcMain.on('mpv:seek', (_e, t: number) => mpvSeek(t))
   ipcMain.on('mpv:volume', (_e, v: number) => mpvVolume(v))
+  ipcMain.on('mpv:speed', (_e, v: number) => mpvSetSpeed(v))
   ipcMain.on('mpv:stop', () => mpvStop())
 
   // mpv の現フレームを data URL で返す（アプリスクショの合成用。永続保存しない一時ファイル経由）。
