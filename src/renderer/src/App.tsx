@@ -826,6 +826,43 @@ export function App() {
     [selectVideo, setClipPlayRange, showToast]
   )
 
+  // ツリーからのファイル / フォルダ削除。確認ダイアログとごみ箱移動 + DB 記録の削除は main 側。
+  // ここでは UI 側の参照（ツリー・複数選択・開いている動画）を後始末する。
+  const deleteTreeEntry = useCallback(
+    async (relPath: string) => {
+      const res = await api.deleteEntry(relPath)
+      if (res.canceled) return
+      if (!res.ok) {
+        showToast(res.error ?? '削除に失敗しました', 'err')
+        return
+      }
+      if (res.root) setRoot(res.root)
+      const affects = (p: string) => p === relPath || p.startsWith(relPath + '/')
+      setMultiSel((prev) => new Set([...prev].filter((p) => !affects(p))))
+      const cur = currentRelRef.current
+      if (cur && affects(cur)) {
+        // 開いていた動画が消えた: プレイヤーを空にする
+        if (mpvModeRef.current) api.mpvStop()
+        setSelected(null)
+        currentRelRef.current = null
+        setSelectedSeg(null)
+        clipPlayRef.current = null
+        setClipPlay(null)
+        setCurrentTime(0)
+        setDuration(0)
+        setMeta(null)
+        setSegments([])
+        setVideoTags([])
+        setKeyframes([])
+        resetPlayback()
+      }
+      setLibVersion((v) => v + 1) // クリップ / シーケンス画面に再取得させる
+      api.getAllTags().then(setAllTags) // 消えた動画の分のタグ件数を更新
+      showToast('ごみ箱に移動しました')
+    },
+    [showToast]
+  )
+
   // 複数選択中の全動画へタグを一括付与（サイドバー下部のバーから）
   const bulkAddVideoTag = useCallback(
     (tag: string) => {
@@ -1048,6 +1085,7 @@ export function App() {
             multiSelected={multiSel}
             onVideoClick={onTreeVideoClick}
             onRename={renameTreeEntry}
+            onDelete={deleteTreeEntry}
             rootKey={root.root}
           />
           {multiSel.size > 0 && (

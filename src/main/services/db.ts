@@ -445,6 +445,40 @@ export function renamePathsInDb(oldRel: string, newRel: string, isDir: boolean):
   tx()
 }
 
+/**
+ * ファイル / フォルダの削除に伴い、DB 内の該当パスの記録（区間・タグ・キーフレーム・動画メタ）を消す。
+ * isDir の場合は配下（rel + '/…'）もまとめて消す。
+ * シーケンスノードの segment_id 参照は残す（画面側で「クリップが削除されています」と表示される）。
+ */
+export function deletePathsInDb(rel: string, isDir: boolean): void {
+  const d = getDb()
+  const match = (p: string): boolean => p === rel || (isDir && p.startsWith(rel + '/'))
+  const tx = d.transaction(() => {
+    // 区間はタグ → 本体の順に消す
+    const segRows = d
+      .prepare('SELECT id, video_rel_path FROM segments')
+      .all() as { id: number; video_rel_path: string }[]
+    const delSegTag = d.prepare('DELETE FROM segment_tags WHERE segment_id = ?')
+    const delSeg = d.prepare('DELETE FROM segments WHERE id = ?')
+    for (const r of segRows) {
+      if (match(r.video_rel_path)) {
+        delSegTag.run(r.id)
+        delSeg.run(r.id)
+      }
+    }
+    for (const [table, col] of [
+      ['videos', 'rel_path'],
+      ['keyframes', 'video_rel_path'],
+      ['video_tags', 'video_rel_path']
+    ] as const) {
+      const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
+      const del = d.prepare(`DELETE FROM ${table} WHERE ${col} = ?`)
+      for (const r of rows) if (match(r.p)) del.run(r.p)
+    }
+  })
+  tx()
+}
+
 // --- シーケンス（クリップをつないだ順路 / Phase 2.6） ---
 
 interface SequenceRow {

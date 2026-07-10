@@ -3,7 +3,8 @@ import { promisify } from 'node:util'
 import { existsSync, readdirSync, renameSync, statSync } from 'node:fs'
 import { join, basename, dirname, extname } from 'node:path'
 import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
-import { getCachedKeyframes, renamePathsInDb, saveKeyframes, upsertVideoMeta } from './db'
+import { shell } from 'electron'
+import { deletePathsInDb, getCachedKeyframes, renamePathsInDb, saveKeyframes, upsertVideoMeta } from './db'
 import { mpvStop } from './mpv'
 import type { BgmTrack, TreeNode, VideoMeta } from '../../shared/types'
 
@@ -244,6 +245,23 @@ export async function renameEntry(relPath: string, newName: string): Promise<str
     throw err
   }
   return newRelPath
+}
+
+/**
+ * ルート配下のファイル / フォルダを OS のごみ箱へ移動し、DB の該当記録も消す。
+ * 再生中の動画は mpv がファイルを掴んでいて失敗するため、解放して 1 回だけ再試行する。
+ */
+export async function deleteEntry(relPath: string): Promise<void> {
+  const abs = resolveInRoot(relPath)
+  const isDir = statSync(abs).isDirectory()
+  try {
+    await shell.trashItem(abs)
+  } catch {
+    mpvStop()
+    await new Promise((r) => setTimeout(r, 400))
+    await shell.trashItem(abs) // それでも失敗なら投げる
+  }
+  deletePathsInDb(relPath, isDir)
 }
 
 /** BGM フォルダ配下の音声ファイルを再帰走査して一覧を返す。 */

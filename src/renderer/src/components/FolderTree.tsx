@@ -14,8 +14,10 @@ interface Props {
   /** 一括タグ付け用の複数選択（Ctrl/Shift+クリック） */
   multiSelected: Set<string>
   onVideoClick: (relPath: string, mods: VideoClickMods) => void
-  /** 名前変更の確定（右クリック→インライン編集）。成功したら true を返す。 */
+  /** 名前変更の確定（右クリックメニュー→インライン編集）。成功したら true を返す。 */
   onRename: (relPath: string, newName: string) => Promise<boolean>
+  /** 削除（ごみ箱へ移動）。確認ダイアログは呼び出し先（main）が出す。 */
+  onDelete: (relPath: string) => void
   /** 開閉状態の保存キー（ルートの絶対パス。ルートごとに別々に記憶する） */
   rootKey: string | null
 }
@@ -31,6 +33,14 @@ function loadOverrides(rootKey: string | null): OpenOverrides {
   } catch {
     return {}
   }
+}
+
+/** 右クリックメニューの状態（表示位置と対象ノード） */
+interface MenuState {
+  x: number
+  y: number
+  relPath: string
+  type: 'dir' | 'video'
 }
 
 /** 名前変更のインライン入力。Enter で確定 / Esc でキャンセル / フォーカス喪失で確定。 */
@@ -84,9 +94,9 @@ function NodeRow({
   overrides,
   onToggleDir,
   editingPath,
-  onStartEdit,
   onEndEdit,
-  onRename
+  onRename,
+  onOpenMenu
 }: {
   node: TreeNode
   depth: number
@@ -96,9 +106,9 @@ function NodeRow({
   overrides: OpenOverrides
   onToggleDir: (relPath: string, open: boolean) => void
   editingPath: string | null
-  onStartEdit: (relPath: string) => void
   onEndEdit: () => void
   onRename: (relPath: string, newName: string) => Promise<boolean>
+  onOpenMenu: (e: React.MouseEvent, node: TreeNode) => void
 }) {
   const open = overrides[node.relPath] ?? depth < 1
   const editing = editingPath === node.relPath
@@ -115,11 +125,8 @@ function NodeRow({
             ? undefined
             : onVideoClick(node.relPath, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
         }
-        onContextMenu={(e) => {
-          e.preventDefault()
-          onStartEdit(node.relPath)
-        }}
-        title={`${node.relPath}\n右クリックで名前を変更`}
+        onContextMenu={(e) => onOpenMenu(e, node)}
+        title={node.relPath}
       >
         <span className="tree-icon">
           <IconFilm />
@@ -140,11 +147,7 @@ function NodeRow({
         className="tree-row dir"
         style={{ paddingLeft: 8 + depth * 14 }}
         onClick={() => (editing ? undefined : onToggleDir(node.relPath, !open))}
-        onContextMenu={(e) => {
-          e.preventDefault()
-          onStartEdit(node.relPath)
-        }}
-        title="右クリックで名前を変更"
+        onContextMenu={(e) => onOpenMenu(e, node)}
       >
         <span className="tree-caret">{children.length ? (open ? '▾' : '▸') : ' '}</span>
         <span className="tree-icon">
@@ -168,9 +171,9 @@ function NodeRow({
             overrides={overrides}
             onToggleDir={onToggleDir}
             editingPath={editingPath}
-            onStartEdit={onStartEdit}
             onEndEdit={onEndEdit}
             onRename={onRename}
+            onOpenMenu={onOpenMenu}
           />
         ))}
     </div>
@@ -184,17 +187,49 @@ export const FolderTree = memo(function FolderTree({
   multiSelected,
   onVideoClick,
   onRename,
+  onDelete,
   rootKey
 }: Props) {
   const [overrides, setOverrides] = useState<OpenOverrides>(() => loadOverrides(rootKey))
   /** 名前変更モード中のノード（相対パス）。null で通常表示。 */
   const [editingPath, setEditingPath] = useState<string | null>(null)
+  /** 右クリックメニュー。null で非表示。 */
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   // ルートが切り替わったら、そのルートの保存済み開閉状態を読み直す
   useEffect(() => {
     setOverrides(loadOverrides(rootKey))
     setEditingPath(null)
+    setMenu(null)
   }, [rootKey])
+
+  // メニュー外のクリック / Esc で閉じる
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return
+      setMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
+  const openMenu = (e: React.MouseEvent, node: TreeNode) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // 画面端では見切れないように少し内側へ寄せる
+    const x = Math.min(e.clientX, window.innerWidth - 170)
+    const y = Math.min(e.clientY, window.innerHeight - 90)
+    setMenu({ x, y, relPath: node.relPath, type: node.type })
+  }
 
   const toggleDir = (relPath: string, open: boolean) => {
     setOverrides((prev) => {
@@ -224,11 +259,33 @@ export const FolderTree = memo(function FolderTree({
           overrides={overrides}
           onToggleDir={toggleDir}
           editingPath={editingPath}
-          onStartEdit={setEditingPath}
           onEndEdit={() => setEditingPath(null)}
           onRename={onRename}
+          onOpenMenu={openMenu}
         />
       ))}
+      {menu && (
+        <div className="tree-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }}>
+          <button
+            className="tree-menu-item"
+            onClick={() => {
+              setEditingPath(menu.relPath)
+              setMenu(null)
+            }}
+          >
+            名前を変更
+          </button>
+          <button
+            className="tree-menu-item danger"
+            onClick={() => {
+              onDelete(menu.relPath)
+              setMenu(null)
+            }}
+          >
+            削除…
+          </button>
+        </div>
+      )}
     </div>
   )
 })

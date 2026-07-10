@@ -81,7 +81,8 @@ const api: DcmApi = {
     return () => ipcRenderer.removeListener('mpv:event', handler)
   },
   setFullScreen: (v) => ipcRenderer.send('win:setFullScreen', v),
-  renameEntry: (relPath, newName) => ipcRenderer.invoke('fs:rename', relPath, newName)
+  renameEntry: (relPath, newName) => ipcRenderer.invoke('fs:rename', relPath, newName),
+  deleteEntry: (relPath) => ipcRenderer.invoke('fs:delete', relPath)
 }
 
 contextBridge.exposeInMainWorld('dcm', api)

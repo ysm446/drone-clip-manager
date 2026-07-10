@@ -1,6 +1,8 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
-import { scanTree, probeVideo, getKeyframes, renameEntry, scanBgm } from './services/media'
+import { scanTree, probeVideo, getKeyframes, renameEntry, deleteEntry, scanBgm } from './services/media'
+import { statSync } from 'node:fs'
+import { resolveInRoot } from './util/paths'
 import {
   resetDb,
   listSegments,
@@ -33,6 +35,7 @@ import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BgmInfo,
+  DeleteResult,
   ExportJob,
   ExportOptions,
   ExportResult,
@@ -75,6 +78,34 @@ export function registerIpc(): void {
     try {
       const newRelPath = await renameEntry(relPath, newName)
       return { ok: true, newRelPath, root: currentRootInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // ファイル / フォルダの削除（ライブラリツリーから）。確認ダイアログ → ごみ箱へ移動 + DB 記録の削除。
+  ipcMain.handle('fs:delete', async (e, relPath: string): Promise<DeleteResult> => {
+    try {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+      const name = relPath.split('/').pop() ?? relPath
+      const isDir = statSync(resolveInRoot(relPath)).isDirectory()
+      const res = await dialog.showMessageBox(win!, {
+        type: 'warning',
+        title: '削除の確認',
+        message: isDir
+          ? `フォルダ「${name}」をごみ箱に移動しますか？`
+          : `「${name}」をごみ箱に移動しますか？`,
+        detail: isDir
+          ? '中のファイルもすべてごみ箱へ移動します。含まれる動画の区間・タグの記録も削除されます。'
+          : 'この動画に作成した区間・タグの記録も削除されます。',
+        buttons: ['キャンセル', 'ごみ箱に移動'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      })
+      if (res.response !== 1) return { ok: false, canceled: true }
+      await deleteEntry(relPath)
+      return { ok: true, root: currentRootInfo() }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

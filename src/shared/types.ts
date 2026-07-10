@@ -119,6 +119,14 @@ export interface RenameResult {
   root?: RootInfo
 }
 
+/** ファイル / フォルダ削除（ごみ箱へ移動）の結果。canceled は確認ダイアログでのキャンセル。 */
+export interface DeleteResult {
+  ok: boolean
+  canceled?: boolean
+  error?: string
+  root?: RootInfo
+}
+
 /** BGM トラック（BGM フォルダからの相対パス） */
 export interface BgmTrack {
   name: string
@@ -297,4 +305,6 @@ export interface DcmApi {
   // --- ファイル操作 ---
   /** ルート配下のファイル / フォルダの名前を変更（DB 参照も付け替え） */
   renameEntry: (relPath: string, newName: string) => Promise<RenameResult>
+  /** ルート配下のファイル / フォルダをごみ箱へ移動（確認ダイアログ込み。DB 記録も削除） */
+  deleteEntry: (relPath: string) => Promise<DeleteResult>
 }
