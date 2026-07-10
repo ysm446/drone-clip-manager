@@ -1024,23 +1024,35 @@ export function App() {
                 )}
               </>
             )}
-            {meta && (
+            {selected && (
+              // 動画切り替え中（meta 未取得）もバーを出したままにして高さを維持する。
+              // メタバーが一瞬消えると動画領域が伸縮し、mpv ウィンドウのリサイズで
+              // 表示中のフレームが歪んで見えるため。
               <div className="meta-bar">
-                <span className="meta-name">{meta.filename}</span>
-                <span className="badge">{meta.codec ?? '?'}</span>
-                {mpvMode && <span className="badge proxy">mpv 再生</span>}
-                {usingProxy && <span className="badge proxy">プロキシ再生（一時）</span>}
-                <span className="badge">
-                  {meta.width}×{meta.height}
-                </span>
-                <span className="badge">{meta.fps ? `${meta.fps.toFixed(2)}fps` : '?fps'}</span>
-                {meta.bitDepth && <span className="badge">{meta.bitDepth}bit</span>}
-                {meta.colorProfile && <span className="badge">{meta.colorProfile}</span>}
-                <span className="badge">{fmtSize(meta.fileSize)}</span>
-                <span className="meta-time">
-                  {fmtTime(currentTime)} / {fmtTime(duration || meta.durationSec || 0)}
-                </span>
-                <span className="badge muted">{keyframes.length} keyframes</span>
+                {meta ? (
+                  <>
+                    <span className="meta-name">{meta.filename}</span>
+                    <span className="badge">{meta.codec ?? '?'}</span>
+                    {mpvMode && <span className="badge proxy">mpv 再生</span>}
+                    {usingProxy && <span className="badge proxy">プロキシ再生（一時）</span>}
+                    <span className="badge">
+                      {meta.width}×{meta.height}
+                    </span>
+                    <span className="badge">{meta.fps ? `${meta.fps.toFixed(2)}fps` : '?fps'}</span>
+                    {meta.bitDepth && <span className="badge">{meta.bitDepth}bit</span>}
+                    {meta.colorProfile && <span className="badge">{meta.colorProfile}</span>}
+                    <span className="badge">{fmtSize(meta.fileSize)}</span>
+                    <span className="meta-time">
+                      {fmtTime(currentTime)} / {fmtTime(duration || meta.durationSec || 0)}
+                    </span>
+                    <span className="badge muted">{keyframes.length} keyframes</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="meta-name">{selected.split(/[\\/]/).pop()}</span>
+                    <span className="badge muted">読み込み中…</span>
+                  </>
+                )}
               </div>
             )}
           </section>
