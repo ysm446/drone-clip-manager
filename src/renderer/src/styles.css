@@ -326,6 +326,12 @@ body.resizing {
   background: #000;
   position: relative;
 }
+/* 動画の全画面表示: プレイヤーをビューポート全面に重ねる（モーダル/トーストより下） */
+.player-pane.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
 .editor-pane {
   flex: 1;
   min-height: 0;
@@ -413,6 +419,18 @@ body.resizing {
 .tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 名前変更のインライン入力（右クリックで表示） */
+.tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  padding: 1px 5px;
+  font-size: inherit;
+  outline: none;
 }
 
 /* ============================================================

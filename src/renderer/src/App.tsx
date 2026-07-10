@@ -82,6 +82,8 @@ export function App() {
   const [view, setView] = useState<'library' | 'clips' | 'sequence'>('library')
   /** シーケンス連続再生中のノード id（停止中は null / Phase 2.6） */
   const [playingNodeId, setPlayingNodeId] = useState<number | null>(null)
+  /** 名前変更などでライブラリ内容が変わった回数。クリップ / シーケンス画面の再取得キーに使う。 */
+  const [libVersion, setLibVersion] = useState(0)
   /** パネルサイズ（サイドバー幅 / プレイヤー高さ）。ドラッグで変更し localStorage に保存。 */
   const [sidebarW, setSidebarW] = useState<number>(() => {
     const v = Number(localStorage.getItem('dcm.sidebarW'))
@@ -168,6 +170,21 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('dcm.bgmH', String(bgmH))
   }, [bgmH])
+
+  // ウィンドウの高さが変わったら（最大化 / 復元・リサイズ）、プレイヤーの高さを
+  // 比例スケールして上下分割の比率を保つ（px 固定のままだと最大化時に下側だけ広がる）
+  useEffect(() => {
+    let prevH = window.innerHeight
+    const onResize = () => {
+      const nh = window.innerHeight
+      if (nh === prevH) return
+      const ratio = nh / prevH
+      prevH = nh
+      setPlayerH((h) => Math.max(140, Math.min(nh - 240, Math.round(h * ratio))))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // 時刻更新の setState を間引く。mpv はほぼフレーム毎に time イベントを送るため、
   // 毎回 setState すると App 全体（キーフレーム目盛りやクリップ一覧など）の再描画が
@@ -481,6 +498,46 @@ export function App() {
     }
   }, [])
 
+  // --- 動画の全画面表示（映像ダブルクリックで切り替え / Esc で解除） ---
+  const [fullscreen, setFullscreen] = useState(false)
+  const toggleFullscreen = useCallback(() => {
+    setFullscreen((v) => {
+      api.setFullScreen(!v)
+      return !v
+    })
+  }, [])
+  useEffect(() => {
+    if (!fullscreen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setFullscreen(false)
+        api.setFullScreen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fullscreen])
+
+  // 映像クリックの再生/停止トグルは少し遅らせて発火し、ダブルクリック（全画面切替）時は
+  // キャンセルする（ダブルクリックで再生状態が 2 回反転してチラつくのを防ぐ）
+  const hostClickTimerRef = useRef<number | null>(null)
+  const onHostClick = useCallback(() => {
+    if (!currentRelRef.current) return
+    if (hostClickTimerRef.current) return // 2 打目: dblclick 判定に任せる
+    hostClickTimerRef.current = window.setTimeout(() => {
+      hostClickTimerRef.current = null
+      togglePlay()
+    }, 220)
+  }, [togglePlay])
+  const onHostDblClick = useCallback(() => {
+    if (hostClickTimerRef.current) {
+      window.clearTimeout(hostClickTimerRef.current)
+      hostClickTimerRef.current = null
+    }
+    if (currentRelRef.current) toggleFullscreen()
+  }, [toggleFullscreen])
+
   // --- シーケンス連続再生コントローラ（Phase 2.6） ---
   const resumePlay = useCallback(() => {
     if (mpvModeRef.current) {
@@ -735,6 +792,40 @@ export function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3500)
   }, [])
 
+  // ツリーからのファイル / フォルダ名変更。実ファイルの rename と DB 参照の付け替えは
+  // main 側で行うので、ここでは UI 側の参照（ツリー・複数選択・開いている動画）を新パスへ追従させる。
+  const renameTreeEntry = useCallback(
+    async (relPath: string, newName: string): Promise<boolean> => {
+      const res = await api.renameEntry(relPath, newName)
+      if (!res.ok || !res.newRelPath) {
+        showToast(res.error ?? '名前の変更に失敗しました', 'err')
+        return false
+      }
+      const newRel = res.newRelPath
+      const mapPath = (p: string) =>
+        p === relPath ? newRel : p.startsWith(relPath + '/') ? newRel + p.slice(relPath.length) : p
+      if (res.root) setRoot(res.root)
+      setMultiSel((prev) => new Set([...prev].map(mapPath)))
+      const cur = currentRelRef.current
+      if (cur) {
+        const mapped = mapPath(cur)
+        if (mapped !== cur) {
+          // 開いている動画のパスが変わった: 再生位置とクリップ範囲を保って開き直す
+          // （再生中だった場合は main 側で mpv を解放して rename している）
+          const t = currentTimeRef.current
+          const clip = clipPlayRef.current
+          pendingSeekRef.current = t > 0.1 ? t : null
+          await selectVideo(mapped)
+          if (clip) setClipPlayRange(clip)
+        }
+      }
+      setLibVersion((v) => v + 1) // クリップ / シーケンス画面に再取得させる
+      showToast('名前を変更しました')
+      return true
+    },
+    [selectVideo, setClipPlayRange, showToast]
+  )
+
   // 複数選択中の全動画へタグを一括付与（サイドバー下部のバーから）
   const bulkAddVideoTag = useCallback(
     (tag: string) => {
@@ -956,6 +1047,7 @@ export function App() {
             selected={selected}
             multiSelected={multiSel}
             onVideoClick={onTreeVideoClick}
+            onRename={renameTreeEntry}
             rootKey={root.root}
           />
           {multiSel.size > 0 && (
@@ -984,13 +1076,18 @@ export function App() {
             view === 'sequence' ? ' view-sequence' : ''
           }`}
         >
-          <section className="player-pane" style={{ height: playerH }}>
+          <section
+            className={`player-pane${fullscreen ? ' fullscreen' : ''}`}
+            style={fullscreen ? undefined : { height: playerH }}
+          >
             {mpvMode ? (
               <>
                 <div
                   className="mpv-host"
                   ref={mpvHostRef}
-                  onClick={() => selected && togglePlay()}
+                  onClick={onHostClick}
+                  onDoubleClick={onHostDblClick}
+                  title="クリック: 再生/一時停止 / ダブルクリック: 全画面"
                 >
                   {!selected && (
                     <div className="player-empty">左のツリーから動画を選択してください</div>
@@ -1024,6 +1121,7 @@ export function App() {
                   onDuration={setDuration}
                   onError={onVideoError}
                   onPlay={onVideoPlay}
+                  onToggleFullscreen={toggleFullscreen}
                 />
                 {proxyGen.active && (
                   <div className="proxy-overlay">
@@ -1097,12 +1195,14 @@ export function App() {
 
           {view === 'clips' ? (
             <ClipsView
+              key={libVersion}
               onOpenClip={openClip}
               onExport={setExportItems}
               selectedVideoRel={selected}
             />
           ) : view === 'sequence' ? (
             <SequenceView
+              key={libVersion}
               onPlaySequence={playSequence}
               onStopSequence={stopSequence}
               playingNodeId={playingNodeId}

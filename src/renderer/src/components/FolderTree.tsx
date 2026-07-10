@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { TreeNode } from '../../../shared/types'
 import { IconFilm, IconFolder } from './icons'
 
@@ -14,6 +14,8 @@ interface Props {
   /** 一括タグ付け用の複数選択（Ctrl/Shift+クリック） */
   multiSelected: Set<string>
   onVideoClick: (relPath: string, mods: VideoClickMods) => void
+  /** 名前変更の確定（右クリック→インライン編集）。成功したら true を返す。 */
+  onRename: (relPath: string, newName: string) => Promise<boolean>
   /** 開閉状態の保存キー（ルートの絶対パス。ルートごとに別々に記憶する） */
   rootKey: string | null
 }
@@ -31,6 +33,48 @@ function loadOverrides(rootKey: string | null): OpenOverrides {
   }
 }
 
+/** 名前変更のインライン入力。Enter で確定 / Esc でキャンセル / フォーカス喪失で確定。 */
+function RenameInput({
+  node,
+  onRename,
+  onEnd
+}: {
+  node: TreeNode
+  onRename: (relPath: string, newName: string) => Promise<boolean>
+  onEnd: () => void
+}) {
+  const doneRef = useRef(false) // Enter 確定後の blur で二重コミットしない
+  const commit = async (value: string) => {
+    if (doneRef.current) return
+    doneRef.current = true
+    if (value.trim() && value !== node.name) await onRename(node.relPath, value)
+    onEnd()
+  }
+  return (
+    <input
+      className="tree-rename-input"
+      autoFocus
+      defaultValue={node.name}
+      onFocus={(e) => {
+        // 動画は拡張子を除いた部分だけを選択状態にする
+        const dot = node.type === 'video' ? e.currentTarget.value.lastIndexOf('.') : -1
+        e.currentTarget.setSelectionRange(0, dot > 0 ? dot : e.currentTarget.value.length)
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation() // Space（再生トグル等）のグローバルショートカットに食われない
+        if (e.key === 'Escape') {
+          doneRef.current = true
+          onEnd()
+        } else if (e.key === 'Enter') {
+          void commit(e.currentTarget.value)
+        }
+      }}
+      onBlur={(e) => void commit(e.currentTarget.value)}
+    />
+  )
+}
+
 function NodeRow({
   node,
   depth,
@@ -38,7 +82,11 @@ function NodeRow({
   multiSelected,
   onVideoClick,
   overrides,
-  onToggleDir
+  onToggleDir,
+  editingPath,
+  onStartEdit,
+  onEndEdit,
+  onRename
 }: {
   node: TreeNode
   depth: number
@@ -47,8 +95,13 @@ function NodeRow({
   onVideoClick: (relPath: string, mods: VideoClickMods) => void
   overrides: OpenOverrides
   onToggleDir: (relPath: string, open: boolean) => void
+  editingPath: string | null
+  onStartEdit: (relPath: string) => void
+  onEndEdit: () => void
+  onRename: (relPath: string, newName: string) => Promise<boolean>
 }) {
   const open = overrides[node.relPath] ?? depth < 1
+  const editing = editingPath === node.relPath
 
   if (node.type === 'video') {
     const isSel = selected === node.relPath
@@ -58,14 +111,24 @@ function NodeRow({
         className={`tree-row video${isSel ? ' selected' : ''}${isMulti ? ' multi' : ''}`}
         style={{ paddingLeft: 8 + depth * 14 }}
         onClick={(e) =>
-          onVideoClick(node.relPath, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
+          editing
+            ? undefined
+            : onVideoClick(node.relPath, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })
         }
-        title={node.relPath}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          onStartEdit(node.relPath)
+        }}
+        title={`${node.relPath}\n右クリックで名前を変更`}
       >
         <span className="tree-icon">
           <IconFilm />
         </span>
-        <span className="tree-label">{node.name}</span>
+        {editing ? (
+          <RenameInput node={node} onRename={onRename} onEnd={onEndEdit} />
+        ) : (
+          <span className="tree-label">{node.name}</span>
+        )}
       </div>
     )
   }
@@ -76,13 +139,22 @@ function NodeRow({
       <div
         className="tree-row dir"
         style={{ paddingLeft: 8 + depth * 14 }}
-        onClick={() => onToggleDir(node.relPath, !open)}
+        onClick={() => (editing ? undefined : onToggleDir(node.relPath, !open))}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          onStartEdit(node.relPath)
+        }}
+        title="右クリックで名前を変更"
       >
         <span className="tree-caret">{children.length ? (open ? '▾' : '▸') : ' '}</span>
         <span className="tree-icon">
           <IconFolder />
         </span>
-        <span className="tree-label">{node.name}</span>
+        {editing ? (
+          <RenameInput node={node} onRename={onRename} onEnd={onEndEdit} />
+        ) : (
+          <span className="tree-label">{node.name}</span>
+        )}
       </div>
       {open &&
         children.map((c) => (
@@ -95,6 +167,10 @@ function NodeRow({
             onVideoClick={onVideoClick}
             overrides={overrides}
             onToggleDir={onToggleDir}
+            editingPath={editingPath}
+            onStartEdit={onStartEdit}
+            onEndEdit={onEndEdit}
+            onRename={onRename}
           />
         ))}
     </div>
@@ -107,13 +183,17 @@ export const FolderTree = memo(function FolderTree({
   selected,
   multiSelected,
   onVideoClick,
+  onRename,
   rootKey
 }: Props) {
   const [overrides, setOverrides] = useState<OpenOverrides>(() => loadOverrides(rootKey))
+  /** 名前変更モード中のノード（相対パス）。null で通常表示。 */
+  const [editingPath, setEditingPath] = useState<string | null>(null)
 
   // ルートが切り替わったら、そのルートの保存済み開閉状態を読み直す
   useEffect(() => {
     setOverrides(loadOverrides(rootKey))
+    setEditingPath(null)
   }, [rootKey])
 
   const toggleDir = (relPath: string, open: boolean) => {
@@ -143,6 +223,10 @@ export const FolderTree = memo(function FolderTree({
           onVideoClick={onVideoClick}
           overrides={overrides}
           onToggleDir={toggleDir}
+          editingPath={editingPath}
+          onStartEdit={setEditingPath}
+          onEndEdit={() => setEditingPath(null)}
+          onRename={onRename}
         />
       ))}
     </div>

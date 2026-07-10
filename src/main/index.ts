@@ -259,6 +259,11 @@ function registerMpvIpc(): void {
     mpvVisible = v
     positionMpv()
   })
+  // 動画の全画面表示（レンダラ側でプレイヤーを全面に広げ、ウィンドウも全画面にする）
+  ipcMain.on('win:setFullScreen', (_e, v: boolean) => {
+    mainWindow?.setFullScreen(!!v)
+    positionMpv() // 全画面化でウィンドウ座標が変わるので mpv を追従させる
+  })
   ipcMain.on('mpv:play', () => mpvPlay())
   ipcMain.on('mpv:pause', () => mpvPause())
   ipcMain.on('mpv:seek', (_e, t: number) => mpvSeek(t))

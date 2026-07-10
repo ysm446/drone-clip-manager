@@ -111,6 +111,14 @@ export interface RootInfo {
   tree: TreeNode | null
 }
 
+/** ファイル / フォルダ名変更の結果。成功時は新パスと再走査済みツリーを返す。 */
+export interface RenameResult {
+  ok: boolean
+  error?: string
+  newRelPath?: string
+  root?: RootInfo
+}
+
 /** BGM トラック（BGM フォルダからの相対パス） */
 export interface BgmTrack {
   name: string
@@ -283,4 +291,10 @@ export interface DcmApi {
   mpvVolume: (v0to1: number) => void
   mpvStop: () => void
   onMpvEvent: (cb: (e: MpvEvent) => void) => () => void
+  // --- ウィンドウ操作 ---
+  /** メインウィンドウの全画面表示を切り替える（動画の全画面表示用） */
+  setFullScreen: (v: boolean) => void
+  // --- ファイル操作 ---
+  /** ルート配下のファイル / フォルダの名前を変更（DB 参照も付け替え） */
+  renameEntry: (relPath: string, newName: string) => Promise<RenameResult>
 }

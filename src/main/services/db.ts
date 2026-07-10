@@ -409,6 +409,42 @@ export function saveKeyframes(videoRelPath: string, times: number[]): void {
   tx(times)
 }
 
+/**
+ * ファイル / フォルダの名前変更に伴い、DB 内の相対パス参照を旧→新へ付け替える。
+ * isDir の場合は配下（oldRel + '/…'）もまとめて付け替える。
+ * シーケンスは segment_id 参照なので影響しない。
+ */
+export function renamePathsInDb(oldRel: string, newRel: string, isDir: boolean): void {
+  const d = getDb()
+  const mapPath = (p: string): string | null => {
+    if (p === oldRel) return newRel
+    if (isDir && p.startsWith(oldRel + '/')) return newRel + p.slice(oldRel.length)
+    return null
+  }
+  const tx = d.transaction(() => {
+    // videos は filename 列も一緒に更新する
+    const videos = d.prepare('SELECT rel_path FROM videos').all() as { rel_path: string }[]
+    const updVideo = d.prepare('UPDATE videos SET rel_path = ?, filename = ? WHERE rel_path = ?')
+    for (const r of videos) {
+      const np = mapPath(r.rel_path)
+      if (np) updVideo.run(np, np.split('/').pop(), r.rel_path)
+    }
+    for (const [table, col] of [
+      ['segments', 'video_rel_path'],
+      ['keyframes', 'video_rel_path'],
+      ['video_tags', 'video_rel_path']
+    ] as const) {
+      const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
+      const upd = d.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`)
+      for (const r of rows) {
+        const np = mapPath(r.p)
+        if (np) upd.run(np, r.p)
+      }
+    }
+  })
+  tx()
+}
+
 // --- シーケンス（クリップをつないだ順路 / Phase 2.6） ---
 
 interface SequenceRow {

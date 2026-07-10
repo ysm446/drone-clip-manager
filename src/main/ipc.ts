@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
-import { scanTree, probeVideo, getKeyframes, scanBgm } from './services/media'
+import { scanTree, probeVideo, getKeyframes, renameEntry, scanBgm } from './services/media'
 import {
   resetDb,
   listSegments,
@@ -37,6 +37,7 @@ import type {
   ExportOptions,
   ExportResult,
   ProxyStatus,
+  RenameResult,
   RootInfo,
   SegmentInput
 } from '../shared/types'
@@ -67,6 +68,16 @@ export function registerIpc(): void {
     setRoot(res.filePaths[0])
     resetDb() // ルートが変わったので DB を開き直す
     return currentRootInfo()
+  })
+
+  // ファイル / フォルダの名前変更（ライブラリツリーから）。実ファイルの rename + DB 参照の付け替え。
+  ipcMain.handle('fs:rename', async (_e, relPath: string, newName: string): Promise<RenameResult> => {
+    try {
+      const newRelPath = await renameEntry(relPath, newName)
+      return { ok: true, newRelPath, root: currentRootInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle('video:probe', (_e, relPath: string) => probeVideo(relPath))

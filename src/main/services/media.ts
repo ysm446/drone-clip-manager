@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { readdirSync, statSync } from 'node:fs'
-import { join, basename, extname } from 'node:path'
+import { existsSync, readdirSync, renameSync, statSync } from 'node:fs'
+import { join, basename, dirname, extname } from 'node:path'
 import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
-import { getCachedKeyframes, saveKeyframes, upsertVideoMeta } from './db'
+import { getCachedKeyframes, renamePathsInDb, saveKeyframes, upsertVideoMeta } from './db'
+import { mpvStop } from './mpv'
 import type { BgmTrack, TreeNode, VideoMeta } from '../../shared/types'
 
 const execFileP = promisify(execFile)
@@ -180,6 +181,69 @@ export async function getKeyframes(relPath: string): Promise<number[]> {
   times.sort((a, b) => a - b)
   saveKeyframes(relPath, times)
   return times
+}
+
+// Windows のファイル名で使えない文字（制御文字は charCode で別途チェック）
+const FORBIDDEN_NAME_CHARS = /[<>:"/\\|?*]/
+
+/**
+ * ルート配下のファイル / フォルダの名前を変更し、DB の参照パスも付け替える。
+ * 成功時は新しい相対パスを返す。検証エラーや rename 失敗は Error を投げる。
+ * サムネイル / キーフレームの一部キャッシュは旧パスのキーのまま残るが、
+ * 新パスで参照した時点で再生成されるだけなので実害はない。
+ */
+export async function renameEntry(relPath: string, newName: string): Promise<string> {
+  const name = newName.trim()
+  if (!name || name === '.' || name === '..') throw new Error('名前を入力してください')
+  if (FORBIDDEN_NAME_CHARS.test(name) || [...name].some((c) => c.charCodeAt(0) < 0x20))
+    throw new Error('名前に使えない文字が含まれています（< > : " / \\ | ? * など）')
+  if (/[. ]$/.test(name)) throw new Error('末尾のピリオドや空白は使えません')
+
+  const abs = resolveInRoot(relPath)
+  const st = statSync(abs)
+  const isDir = st.isDirectory()
+  const oldName = basename(abs)
+  if (name === oldName) return relPath
+
+  if (!isDir) {
+    const oldExt = extname(oldName).toLowerCase()
+    if (extname(name).toLowerCase() !== oldExt)
+      throw new Error(`拡張子は変更できません（${oldExt} のままにしてください）`)
+  }
+
+  const newAbs = join(dirname(abs), name)
+  // Windows は大文字小文字を区別しないため、大小文字だけの変更は「既に存在」を許す
+  const caseOnly = name.toLowerCase() === oldName.toLowerCase()
+  if (!caseOnly && existsSync(newAbs))
+    throw new Error('同名のファイル / フォルダが既に存在します')
+
+  try {
+    renameSync(abs, newAbs)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+      // 再生中の動画は mpv がファイルを掴んでいて rename できない → 解放して 1 回だけ再試行
+      mpvStop()
+      await new Promise((r) => setTimeout(r, 400))
+      renameSync(abs, newAbs)
+    } else {
+      throw err
+    }
+  }
+
+  const newRelPath = toRelPosix(newAbs)
+  try {
+    renamePathsInDb(relPath, newRelPath, isDir)
+  } catch (err) {
+    // DB の付け替えに失敗したらファイル名を戻す（参照が壊れた状態を残さない）
+    try {
+      renameSync(newAbs, abs)
+    } catch {
+      /* noop */
+    }
+    throw err
+  }
+  return newRelPath
 }
 
 /** BGM フォルダ配下の音声ファイルを再帰走査して一覧を返す。 */
