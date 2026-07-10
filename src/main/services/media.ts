@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, readdirSync, renameSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs'
 import { join, basename, dirname, extname } from 'node:path'
 import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
 import { shell } from 'electron'
@@ -50,10 +50,8 @@ export function scanTree(): TreeNode | null {
         continue
       }
       if (st.isDirectory()) {
-        const children = walk(abs)
-        if (children.length > 0) {
-          dirs.push({ name, relPath: toRelPosix(abs), type: 'dir', children })
-        }
+        // 動画を含まないフォルダも表示する（新規フォルダの作成先 / ドロップでの移動先にするため）
+        dirs.push({ name, relPath: toRelPosix(abs), type: 'dir', children: walk(abs) })
       } else if (isVideo(name)) {
         files.push({ name, relPath: toRelPosix(abs), type: 'video' })
       }
@@ -187,6 +185,51 @@ export async function getKeyframes(relPath: string): Promise<number[]> {
 // Windows のファイル名で使えない文字（制御文字は charCode で別途チェック）
 const FORBIDDEN_NAME_CHARS = /[<>:"/\\|?*]/
 
+/** ファイル / フォルダ名として妥当かを検証する（NG なら Error を投げる） */
+function validateEntryName(name: string): void {
+  if (!name || name === '.' || name === '..') throw new Error('名前を入力してください')
+  if (FORBIDDEN_NAME_CHARS.test(name) || [...name].some((c) => c.charCodeAt(0) < 0x20))
+    throw new Error('名前に使えない文字が含まれています（< > : " / \\ | ? * など）')
+  if (/[. ]$/.test(name)) throw new Error('末尾のピリオドや空白は使えません')
+}
+
+/**
+ * ディスク上の rename + DB 参照の付け替え（rename / 移動の共通処理）。
+ * 再生中の動画は mpv がファイルを掴んでいて失敗するため、解放して 1 回だけ再試行する。
+ * DB の付け替えに失敗したらファイル名を戻す（参照が壊れた状態を残さない）。
+ */
+async function renameOnDiskAndDb(
+  abs: string,
+  newAbs: string,
+  relPath: string,
+  isDir: boolean
+): Promise<string> {
+  try {
+    renameSync(abs, newAbs)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+      mpvStop()
+      await new Promise((r) => setTimeout(r, 400))
+      renameSync(abs, newAbs)
+    } else {
+      throw err
+    }
+  }
+  const newRelPath = toRelPosix(newAbs)
+  try {
+    renamePathsInDb(relPath, newRelPath, isDir)
+  } catch (err) {
+    try {
+      renameSync(newAbs, abs)
+    } catch {
+      /* noop */
+    }
+    throw err
+  }
+  return newRelPath
+}
+
 /**
  * ルート配下のファイル / フォルダの名前を変更し、DB の参照パスも付け替える。
  * 成功時は新しい相対パスを返す。検証エラーや rename 失敗は Error を投げる。
@@ -195,10 +238,7 @@ const FORBIDDEN_NAME_CHARS = /[<>:"/\\|?*]/
  */
 export async function renameEntry(relPath: string, newName: string): Promise<string> {
   const name = newName.trim()
-  if (!name || name === '.' || name === '..') throw new Error('名前を入力してください')
-  if (FORBIDDEN_NAME_CHARS.test(name) || [...name].some((c) => c.charCodeAt(0) < 0x20))
-    throw new Error('名前に使えない文字が含まれています（< > : " / \\ | ? * など）')
-  if (/[. ]$/.test(name)) throw new Error('末尾のピリオドや空白は使えません')
+  validateEntryName(name)
 
   const abs = resolveInRoot(relPath)
   const st = statSync(abs)
@@ -218,33 +258,42 @@ export async function renameEntry(relPath: string, newName: string): Promise<str
   if (!caseOnly && existsSync(newAbs))
     throw new Error('同名のファイル / フォルダが既に存在します')
 
-  try {
-    renameSync(abs, newAbs)
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
-      // 再生中の動画は mpv がファイルを掴んでいて rename できない → 解放して 1 回だけ再試行
-      mpvStop()
-      await new Promise((r) => setTimeout(r, 400))
-      renameSync(abs, newAbs)
-    } else {
-      throw err
-    }
-  }
+  return renameOnDiskAndDb(abs, newAbs, relPath, isDir)
+}
 
-  const newRelPath = toRelPosix(newAbs)
-  try {
-    renamePathsInDb(relPath, newRelPath, isDir)
-  } catch (err) {
-    // DB の付け替えに失敗したらファイル名を戻す（参照が壊れた状態を残さない）
-    try {
-      renameSync(newAbs, abs)
-    } catch {
-      /* noop */
-    }
-    throw err
-  }
-  return newRelPath
+/**
+ * ルート配下のファイル / フォルダを destDirRel フォルダの中へ移動し、DB の参照パスも付け替える。
+ * destDirRel は '' でルート直下。同じ場所への移動は no-op（元のパスを返す）。
+ */
+export async function moveEntry(relPath: string, destDirRel: string): Promise<string> {
+  const abs = resolveInRoot(relPath)
+  const isDir = statSync(abs).isDirectory()
+  const destAbs = resolveInRoot(destDirRel)
+  if (!statSync(destAbs).isDirectory()) throw new Error('移動先がフォルダではありません')
+  if (isDir && (destDirRel === relPath || destDirRel.startsWith(relPath + '/')))
+    throw new Error('フォルダを自身の中へは移動できません')
+
+  const name = basename(abs)
+  const newAbs = join(destAbs, name)
+  if (newAbs === abs) return relPath // 同じ場所への移動は no-op
+  if (existsSync(newAbs)) throw new Error(`移動先に同名の「${name}」が既に存在します`)
+
+  return renameOnDiskAndDb(abs, newAbs, relPath, isDir)
+}
+
+/**
+ * parentRel フォルダ（'' でルート直下）に新しいフォルダを作る。
+ * 同名があれば「名前 (2)」のように枝番を付ける。作成したフォルダの相対パスを返す。
+ */
+export function createFolder(parentRel: string, baseName: string): string {
+  const name = baseName.trim()
+  validateEntryName(name)
+  const parentAbs = resolveInRoot(parentRel)
+  let candidate = name
+  for (let i = 2; existsSync(join(parentAbs, candidate)); i++) candidate = `${name} (${i})`
+  const abs = join(parentAbs, candidate)
+  mkdirSync(abs)
+  return toRelPosix(abs)
 }
 
 /**

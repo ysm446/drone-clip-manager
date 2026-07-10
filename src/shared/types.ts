@@ -127,6 +127,15 @@ export interface DeleteResult {
   root?: RootInfo
 }
 
+/** ファイル / フォルダの一括移動の結果。moves は実際に移動した分（no-op は含まない）。 */
+export interface MoveResult {
+  /** 全件成功なら true */
+  ok: boolean
+  moves: { from: string; to: string }[]
+  errors: string[]
+  root?: RootInfo
+}
+
 /** BGM トラック（BGM フォルダからの相対パス） */
 export interface BgmTrack {
   name: string
@@ -307,4 +316,8 @@ export interface DcmApi {
   renameEntry: (relPath: string, newName: string) => Promise<RenameResult>
   /** ルート配下のファイル / フォルダをごみ箱へ移動（確認ダイアログ込み。DB 記録も削除） */
   deleteEntry: (relPath: string) => Promise<DeleteResult>
+  /** parentRel（'' でルート直下）に新しいフォルダを作成。同名があれば枝番を付ける */
+  createFolder: (parentRel: string, name: string) => Promise<RenameResult>
+  /** 複数のファイル / フォルダを destDir フォルダ（'' でルート直下）へ移動 */
+  moveEntries: (relPaths: string[], destDir: string) => Promise<MoveResult>
 }

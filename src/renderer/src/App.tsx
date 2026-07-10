@@ -872,6 +872,69 @@ export function App() {
     [showStatus]
   )
 
+  // ツリーからの新規フォルダ作成（右クリックメニュー）。作成後は FolderTree 側で名前入力に入る。
+  const createTreeFolder = useCallback(
+    async (parentRel: string): Promise<string | null> => {
+      const res = await api.createFolder(parentRel, '新しいフォルダ')
+      if (!res.ok || !res.newRelPath) {
+        showStatus(res.error ?? 'フォルダを作成できませんでした', 'err')
+        return null
+      }
+      if (res.root) setRoot(res.root)
+      showStatus('フォルダを作成しました')
+      return res.newRelPath
+    },
+    [showStatus]
+  )
+
+  // ツリーのドラッグ＆ドロップによる移動。実ファイルの移動と DB 参照の付け替えは main 側。
+  // ここでは UI 側の参照（複数選択・開いている動画）を新パスへ追従させる。
+  const moveTreeEntries = useCallback(
+    async (relPaths: string[], destDir: string) => {
+      const res = await api.moveEntries(relPaths, destDir)
+      if (res.root) setRoot(res.root)
+      if (res.moves.length > 0) {
+        const mapPath = (p: string): string => {
+          for (const m of res.moves) {
+            if (p === m.from) return m.to
+            if (p.startsWith(m.from + '/')) return m.to + p.slice(m.from.length)
+          }
+          return p
+        }
+        setMultiSel((prev) => new Set([...prev].map(mapPath)))
+        const cur = currentRelRef.current
+        if (cur) {
+          const mapped = mapPath(cur)
+          if (mapped !== cur) {
+            // 開いている動画のパスが変わった: 再生位置とクリップ範囲を保って開き直す
+            const t = currentTimeRef.current
+            const clip = clipPlayRef.current
+            pendingSeekRef.current = t > 0.1 ? t : null
+            await selectVideo(mapped)
+            if (clip) setClipPlayRange(clip)
+          }
+        }
+        setLibVersion((v) => v + 1) // クリップ / シーケンス画面に再取得させる
+      }
+      if (res.errors.length > 0) {
+        const more = res.errors.length > 1 ? ` ほか ${res.errors.length - 1} 件` : ''
+        showStatus(res.errors[0] + more, 'err')
+      } else if (res.moves.length > 0) {
+        const destName = destDir ? destDir.split('/').pop() : 'ルート直下'
+        showStatus(`${res.moves.length} 件を「${destName}」へ移動しました`)
+      }
+    },
+    [selectVideo, setClipPlayRange, showStatus]
+  )
+
+  /** ヘッダの＋ボタンからのルート直下フォルダ作成 → FolderTree に名前入力を要求する */
+  const [treeEditRequest, setTreeEditRequest] = useState<string | null>(null)
+  const onTreeEditHandled = useCallback(() => setTreeEditRequest(null), [])
+  const createRootFolder = useCallback(async () => {
+    const rel = await createTreeFolder('')
+    if (rel) setTreeEditRequest(rel)
+  }, [createTreeFolder])
+
   // 複数選択中の全動画へタグを一括付与（サイドバー下部のバーから）
   const bulkAddVideoTag = useCallback(
     (tag: string) => {
@@ -1087,7 +1150,17 @@ export function App() {
 
       <div className="body">
         <aside className="sidebar" style={{ width: sidebarW }}>
-          <div className="sidebar-head">ライブラリ</div>
+          <div className="sidebar-head">
+            <span>ライブラリ</span>
+            <button
+              className="sidebar-head-btn"
+              title="ルート直下に新しいフォルダを作成"
+              disabled={!root.root}
+              onClick={createRootFolder}
+            >
+              ＋
+            </button>
+          </div>
           <FolderTree
             tree={root.tree}
             selected={selected}
@@ -1095,6 +1168,10 @@ export function App() {
             onVideoClick={onTreeVideoClick}
             onRename={renameTreeEntry}
             onDelete={deleteTreeEntry}
+            onCreateFolder={createTreeFolder}
+            onMove={moveTreeEntries}
+            editRequestPath={treeEditRequest}
+            onEditRequestHandled={onTreeEditHandled}
             rootKey={root.root}
           />
           {multiSel.size > 0 && (

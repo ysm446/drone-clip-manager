@@ -18,6 +18,13 @@ interface Props {
   onRename: (relPath: string, newName: string) => Promise<boolean>
   /** 削除（ごみ箱へ移動）。確認ダイアログは呼び出し先（main）が出す。 */
   onDelete: (relPath: string) => void
+  /** 新しいフォルダを parentRel（'' でルート直下）に作成。成功したら新しい相対パスを返す。 */
+  onCreateFolder: (parentRel: string) => Promise<string | null>
+  /** ドラッグ＆ドロップでの移動（destDir は '' でルート直下） */
+  onMove: (relPaths: string[], destDir: string) => void
+  /** 外（ヘッダの＋ボタン等）から名前入力を開始したいノードの相対パス。処理後 onEditRequestHandled を呼ぶ。 */
+  editRequestPath?: string | null
+  onEditRequestHandled?: () => void
   /** 開閉状態の保存キー（ルートの絶対パス。ルートごとに別々に記憶する） */
   rootKey: string | null
 }
@@ -35,7 +42,12 @@ function loadOverrides(rootKey: string | null): OpenOverrides {
   }
 }
 
-/** 右クリックメニューの状態（表示位置と対象ノード） */
+/** ツリー内 DnD のデータ型（外部からのファイルドロップと区別する） */
+const DND_MIME = 'application/x-dcm-paths'
+
+const hasDndPaths = (e: React.DragEvent): boolean => e.dataTransfer.types.includes(DND_MIME)
+
+/** 右クリックメニューの状態（表示位置と対象ノード。relPath '' はツリー背景 = ルート） */
 interface MenuState {
   x: number
   y: number
@@ -96,7 +108,13 @@ function NodeRow({
   editingPath,
   onEndEdit,
   onRename,
-  onOpenMenu
+  onOpenMenu,
+  dropTarget,
+  onRowDragStart,
+  onRowDragEnd,
+  onDirDragOver,
+  onDirDragLeave,
+  onDirDrop
 }: {
   node: TreeNode
   depth: number
@@ -109,6 +127,12 @@ function NodeRow({
   onEndEdit: () => void
   onRename: (relPath: string, newName: string) => Promise<boolean>
   onOpenMenu: (e: React.MouseEvent, node: TreeNode) => void
+  dropTarget: string | null
+  onRowDragStart: (e: React.DragEvent, node: TreeNode) => void
+  onRowDragEnd: () => void
+  onDirDragOver: (e: React.DragEvent, relPath: string) => void
+  onDirDragLeave: (relPath: string) => void
+  onDirDrop: (e: React.DragEvent, relPath: string) => void
 }) {
   const open = overrides[node.relPath] ?? depth < 1
   const editing = editingPath === node.relPath
@@ -120,6 +144,10 @@ function NodeRow({
       <div
         className={`tree-row video${isSel ? ' selected' : ''}${isMulti ? ' multi' : ''}`}
         style={{ paddingLeft: 8 + depth * 14 }}
+        draggable={!editing}
+        onDragStart={(e) => onRowDragStart(e, node)}
+        onDragEnd={onRowDragEnd}
+        onDragOver={(e) => e.stopPropagation()} // 動画の上はドロップ先にしない（ルート扱いも防ぐ）
         onClick={(e) =>
           editing
             ? undefined
@@ -144,8 +172,14 @@ function NodeRow({
   return (
     <div>
       <div
-        className="tree-row dir"
+        className={`tree-row dir${dropTarget === node.relPath ? ' drop' : ''}`}
         style={{ paddingLeft: 8 + depth * 14 }}
+        draggable={!editing}
+        onDragStart={(e) => onRowDragStart(e, node)}
+        onDragEnd={onRowDragEnd}
+        onDragOver={(e) => onDirDragOver(e, node.relPath)}
+        onDragLeave={() => onDirDragLeave(node.relPath)}
+        onDrop={(e) => onDirDrop(e, node.relPath)}
         onClick={() => (editing ? undefined : onToggleDir(node.relPath, !open))}
         onContextMenu={(e) => onOpenMenu(e, node)}
       >
@@ -174,6 +208,12 @@ function NodeRow({
             onEndEdit={onEndEdit}
             onRename={onRename}
             onOpenMenu={onOpenMenu}
+            dropTarget={dropTarget}
+            onRowDragStart={onRowDragStart}
+            onRowDragEnd={onRowDragEnd}
+            onDirDragOver={onDirDragOver}
+            onDirDragLeave={onDirDragLeave}
+            onDirDrop={onDirDrop}
           />
         ))}
     </div>
@@ -188,6 +228,10 @@ export const FolderTree = memo(function FolderTree({
   onVideoClick,
   onRename,
   onDelete,
+  onCreateFolder,
+  onMove,
+  editRequestPath,
+  onEditRequestHandled,
   rootKey
 }: Props) {
   const [overrides, setOverrides] = useState<OpenOverrides>(() => loadOverrides(rootKey))
@@ -195,6 +239,8 @@ export const FolderTree = memo(function FolderTree({
   const [editingPath, setEditingPath] = useState<string | null>(null)
   /** 右クリックメニュー。null で非表示。 */
   const [menu, setMenu] = useState<MenuState | null>(null)
+  /** ドロップ先のフォルダ（'' はルート = ツリーの余白）。null でドラッグ中でない。 */
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // ルートが切り替わったら、そのルートの保存済み開閉状態を読み直す
@@ -203,6 +249,14 @@ export const FolderTree = memo(function FolderTree({
     setEditingPath(null)
     setMenu(null)
   }, [rootKey])
+
+  // 外部（ヘッダの＋ボタン等）からの名前入力リクエスト
+  useEffect(() => {
+    if (editRequestPath) {
+      setEditingPath(editRequestPath)
+      onEditRequestHandled?.()
+    }
+  }, [editRequestPath, onEditRequestHandled])
 
   // メニュー外のクリック / Esc で閉じる
   useEffect(() => {
@@ -222,15 +276,6 @@ export const FolderTree = memo(function FolderTree({
     }
   }, [menu])
 
-  const openMenu = (e: React.MouseEvent, node: TreeNode) => {
-    e.preventDefault()
-    e.stopPropagation()
-    // 画面端では見切れないように少し内側へ寄せる
-    const x = Math.min(e.clientX, window.innerWidth - 170)
-    const y = Math.min(e.clientY, window.innerHeight - 90)
-    setMenu({ x, y, relPath: node.relPath, type: node.type })
-  }
-
   const toggleDir = (relPath: string, open: boolean) => {
     setOverrides((prev) => {
       const next = { ...prev, [relPath]: open }
@@ -239,15 +284,87 @@ export const FolderTree = memo(function FolderTree({
     })
   }
 
+  const openMenu = (e: React.MouseEvent, node: TreeNode) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // 画面端では見切れないように少し内側へ寄せる
+    const x = Math.min(e.clientX, window.innerWidth - 170)
+    const y = Math.min(e.clientY, window.innerHeight - 120)
+    setMenu({ x, y, relPath: node.relPath, type: node.type })
+  }
+
+  /** ツリー背景の右クリック = ルート直下が対象（新しいフォルダのみ） */
+  const openRootMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const x = Math.min(e.clientX, window.innerWidth - 170)
+    const y = Math.min(e.clientY, window.innerHeight - 120)
+    setMenu({ x, y, relPath: '', type: 'dir' })
+  }
+
+  const createFolderAt = async (parentRel: string) => {
+    setMenu(null)
+    const newRel = await onCreateFolder(parentRel)
+    if (newRel) {
+      if (parentRel) toggleDir(parentRel, true) // 親を開いて新フォルダを見せる
+      setEditingPath(newRel) // そのまま名前を入力できるように
+    }
+  }
+
+  // --- ドラッグ＆ドロップ（ライブラリ内の移動） ---
+  const onRowDragStart = (e: React.DragEvent, node: TreeNode) => {
+    // 複数選択中の動画をドラッグしたら選択全部をまとめて移動
+    const paths =
+      node.type === 'video' && multiSelected.has(node.relPath) && multiSelected.size > 1
+        ? [...multiSelected]
+        : [node.relPath]
+    e.dataTransfer.setData(DND_MIME, JSON.stringify(paths))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  const onRowDragEnd = () => setDropTarget(null)
+  const onDirDragOver = (e: React.DragEvent, relPath: string) => {
+    if (!hasDndPaths(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    setDropTarget(relPath)
+  }
+  const onDirDragLeave = (relPath: string) =>
+    setDropTarget((cur) => (cur === relPath ? null : cur))
+  const dropPaths = (e: React.DragEvent): string[] => {
+    try {
+      return JSON.parse(e.dataTransfer.getData(DND_MIME)) as string[]
+    } catch {
+      return []
+    }
+  }
+  const onDirDrop = (e: React.DragEvent, destDir: string) => {
+    if (!hasDndPaths(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTarget(null)
+    const paths = dropPaths(e)
+    if (paths.length > 0) onMove(paths, destDir)
+  }
+
   if (!tree) {
     return <div className="tree-empty">ルートフォルダ未設定</div>
   }
   const children = tree.children ?? []
-  if (children.length === 0) {
-    return <div className="tree-empty">動画が見つかりませんでした</div>
-  }
   return (
-    <div className="tree">
+    <div
+      className={`tree${dropTarget === '' ? ' drop-root' : ''}`}
+      onContextMenu={openRootMenu}
+      onDragOver={(e) => onDirDragOver(e, '')}
+      onDragLeave={() => onDirDragLeave('')}
+      onDrop={(e) => onDirDrop(e, '')}
+    >
+      {children.length === 0 && (
+        <div className="tree-empty">
+          動画が見つかりませんでした
+          <br />
+          <small>右クリックでフォルダを作成できます</small>
+        </div>
+      )}
       {children.map((c) => (
         <NodeRow
           key={c.relPath}
@@ -262,28 +379,43 @@ export const FolderTree = memo(function FolderTree({
           onEndEdit={() => setEditingPath(null)}
           onRename={onRename}
           onOpenMenu={openMenu}
+          dropTarget={dropTarget}
+          onRowDragStart={onRowDragStart}
+          onRowDragEnd={onRowDragEnd}
+          onDirDragOver={onDirDragOver}
+          onDirDragLeave={onDirDragLeave}
+          onDirDrop={onDirDrop}
         />
       ))}
       {menu && (
         <div className="tree-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }}>
-          <button
-            className="tree-menu-item"
-            onClick={() => {
-              setEditingPath(menu.relPath)
-              setMenu(null)
-            }}
-          >
-            名前を変更
-          </button>
-          <button
-            className="tree-menu-item danger"
-            onClick={() => {
-              onDelete(menu.relPath)
-              setMenu(null)
-            }}
-          >
-            削除…
-          </button>
+          {menu.type === 'dir' && (
+            <button className="tree-menu-item" onClick={() => void createFolderAt(menu.relPath)}>
+              新しいフォルダ
+            </button>
+          )}
+          {menu.relPath !== '' && (
+            <>
+              <button
+                className="tree-menu-item"
+                onClick={() => {
+                  setEditingPath(menu.relPath)
+                  setMenu(null)
+                }}
+              >
+                名前を変更
+              </button>
+              <button
+                className="tree-menu-item danger"
+                onClick={() => {
+                  onDelete(menu.relPath)
+                  setMenu(null)
+                }}
+              >
+                削除…
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

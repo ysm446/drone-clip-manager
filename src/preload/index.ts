@@ -82,7 +82,9 @@ const api: DcmApi = {
   },
   setFullScreen: (v) => ipcRenderer.send('win:setFullScreen', v),
   renameEntry: (relPath, newName) => ipcRenderer.invoke('fs:rename', relPath, newName),
-  deleteEntry: (relPath) => ipcRenderer.invoke('fs:delete', relPath)
+  deleteEntry: (relPath) => ipcRenderer.invoke('fs:delete', relPath),
+  createFolder: (parentRel, name) => ipcRenderer.invoke('fs:createFolder', parentRel, name),
+  moveEntries: (relPaths, destDir) => ipcRenderer.invoke('fs:moveMany', relPaths, destDir)
 }
 
 contextBridge.exposeInMainWorld('dcm', api)

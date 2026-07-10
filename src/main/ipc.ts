@@ -1,6 +1,15 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
-import { scanTree, probeVideo, getKeyframes, renameEntry, deleteEntry, scanBgm } from './services/media'
+import {
+  scanTree,
+  probeVideo,
+  getKeyframes,
+  renameEntry,
+  deleteEntry,
+  createFolder,
+  moveEntry,
+  scanBgm
+} from './services/media'
 import { statSync } from 'node:fs'
 import { resolveInRoot } from './util/paths'
 import {
@@ -36,6 +45,7 @@ import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BgmInfo,
   DeleteResult,
+  MoveResult,
   ExportJob,
   ExportOptions,
   ExportResult,
@@ -82,6 +92,34 @@ export function registerIpc(): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  // 新しいフォルダの作成（ライブラリツリーから）。同名があれば枝番付き。
+  ipcMain.handle('fs:createFolder', (_e, parentRel: string, name: string): RenameResult => {
+    try {
+      const newRelPath = createFolder(parentRel, name)
+      return { ok: true, newRelPath, root: currentRootInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // ファイル / フォルダの一括移動（ツリーのドラッグ＆ドロップから）。失敗したものはスキップして続行。
+  ipcMain.handle(
+    'fs:moveMany',
+    async (_e, relPaths: string[], destDir: string): Promise<MoveResult> => {
+      const moves: { from: string; to: string }[] = []
+      const errors: string[] = []
+      for (const p of relPaths) {
+        try {
+          const to = await moveEntry(p, destDir)
+          if (to !== p) moves.push({ from: p, to })
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message : String(err))
+        }
+      }
+      return { ok: errors.length === 0, moves, errors, root: currentRootInfo() }
+    }
+  )
 
   // ファイル / フォルダの削除（ライブラリツリーから）。確認ダイアログ → ごみ箱へ移動 + DB 記録の削除。
   ipcMain.handle('fs:delete', async (e, relPath: string): Promise<DeleteResult> => {
