@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
-import { colorForIndex, fmtTime } from '../util'
+import { colorForIndex, fmtSec, fmtTime } from '../util'
 
 /** ルーラー目盛り用の短い表記（mm:ss / 1時間超は h:mm:ss） */
 function fmtTick(sec: number): string {
@@ -295,7 +295,7 @@ export function Timeline({
                   width: `${pct(hi) - pct(lo)}%`,
                   background: s.color ?? colorForIndex(i)
                 }}
-                title={`${s.label ?? '区間'} ${fmtTime(lo)}–${fmtTime(hi)}（端=長さ変更 / 本体=移動）`}
+                title={`${s.label ?? '区間'} ${fmtTime(lo)}–${fmtTime(hi)} 長さ ${fmtTime(hi - lo)}（端=長さ変更 / 本体=移動）`}
                 onPointerDown={(e) => onSegDown(e, s, 'move')}
               >
                 <div
@@ -303,6 +303,7 @@ export function Timeline({
                   onPointerDown={(e) => onSegDown(e, s, 'in')}
                 />
                 <span className="tl-seg-label">{s.label ?? `#${s.id}`}</span>
+                <span className="tl-seg-dur">{fmtSec(hi - lo)}</span>
                 <div
                   className="tl-seg-handle tl-seg-handle-right"
                   onPointerDown={(e) => onSegDown(e, s, 'out')}

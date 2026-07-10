@@ -108,8 +108,24 @@ export function getDb(): Database.Database {
   db = new Database(target)
   db.pragma('journal_mode = WAL')
   db.exec(SCHEMA)
+  migrateSegmentColors(db)
   dbPath = target
   return db
+}
+
+// 区間バーの配色を青〜紫パレットへ変更（2026-07-10）した際の、旧パレットで保存済みの色の置き換え。
+// 新パレット（renderer/util.ts の SEGMENT_COLORS）と位置対応。置換済みなら no-op。
+const SEGMENT_COLOR_REMAP: [string, string][] = [
+  ['#ffb454', '#a98bfa'],
+  ['#54d19a', '#86b6ff'],
+  ['#ff6b81', '#8f7ff5'],
+  ['#b98bff', '#c9b1ff'],
+  ['#f2d24b', '#6d8df7']
+]
+
+function migrateSegmentColors(d: Database.Database): void {
+  const upd = d.prepare('UPDATE segments SET color = ? WHERE color = ?')
+  for (const [oldColor, newColor] of SEGMENT_COLOR_REMAP) upd.run(newColor, oldColor)
 }
 
 /** ルート変更時に呼ぶ。次回アクセスで開き直す。 */

@@ -9,6 +9,12 @@ export function fmtTime(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
 }
 
+/** 秒 → 短い秒数表示（例: 12.3s）。区間バーなど幅の限られる場所用。 */
+export function fmtSec(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) sec = 0
+  return `${sec.toFixed(1)}s`
+}
+
 /** バイト数 → 人間可読 */
 export function fmtSize(bytes: number | null): string {
   if (bytes == null) return '-'
@@ -87,7 +93,9 @@ export function nodeOrderFromEdges(
   return best
 }
 
-const SEGMENT_COLORS = ['#4f9dff', '#ffb454', '#54d19a', '#ff6b81', '#b98bff', '#f2d24b']
+// 区間バーの配色: 青〜紫の色相に限定（カラフルにしない）。
+// ラベルが濃色文字（#0d0f12）のため明るめを保ち、隣接区間は青系/紫系の交互 + 明度差で区別する。
+const SEGMENT_COLORS = ['#4f9dff', '#a98bfa', '#86b6ff', '#8f7ff5', '#c9b1ff', '#6d8df7']
 
 export function colorForIndex(i: number): string {
   return SEGMENT_COLORS[i % SEGMENT_COLORS.length]

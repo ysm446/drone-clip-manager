@@ -997,6 +997,13 @@ body.resizing {
   overflow: hidden;
   display: flex;
   align-items: center;
+  container-type: inline-size; /* 長さ表示の出し分け（狭いバーでは非表示）に使う */
+}
+/* 長さ表示が入らない狭さでは見切れさせず消す（ホバーの title で確認できる） */
+@container (max-width: 64px) {
+  .tl-seg-dur {
+    display: none;
+  }
 }
 .tl-seg.selected {
   opacity: 1;
@@ -1017,6 +1024,16 @@ body.resizing {
   text-overflow: ellipsis;
   font-weight: 600;
   pointer-events: none; /* ラベルは本体ドラッグ（移動）に委ねる */
+}
+/* 区間の長さ表示（バーが狭ければ見切れてよい） */
+.tl-seg-dur {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: rgba(13, 15, 18, 0.72);
+  padding-right: 8px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 /* 左右のリサイズハンドル: 端に薄い掴みしろ、hover で明示 */
 .tl-seg-handle {
