@@ -926,17 +926,42 @@ body.resizing {
   background: var(--selected);
   color: var(--accent);
 }
+.tl-mode:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: none;
+  color: var(--muted);
+}
 .tl-mode-label {
   margin-left: 6px;
   color: var(--faint);
   font-size: var(--fs-xs);
 }
-/* ルーラー + トラックを 1 つの枠にまとめる（再生ヘッドはこの中を貫く） */
+/* ズームコントロール（モードボタンの右） */
+.tl-zoom-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 6px;
+}
+.tl-zoom-label {
+  margin-left: 2px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+/* ルーラー + トラックを 1 つの枠にまとめる（再生ヘッドはこの中を貫く）。
+   ズーム中（tl-canvas の幅 > 100%）は横スクロールバーが出る */
 .tl-body {
   position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.tl-canvas {
+  position: relative;
+  min-width: 100%;
 }
 /* 枠内の上部を動画シーク専用ルーラーにする（区間バーとは重ならない・仕切りは下線 1px） */
 .tl-ruler {

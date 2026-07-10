@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
 
@@ -13,11 +13,11 @@ function fmtTick(sec: number): string {
   return h > 0 ? `${h}:${mm}:${s2}` : `${mm}:${s2}`
 }
 
-/** duration を 8〜16 本程度の「キリのよい」目盛り時刻に割る */
-const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
-function makeTicks(duration: number): number[] {
+/** duration を「キリのよい」目盛り時刻に割る（ズーム中は画面内が 10 本程度になるよう細かく） */
+const TICK_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+function makeTicks(duration: number, zoom: number): number[] {
   if (duration <= 0) return []
-  const raw = duration / 10
+  const raw = duration / (10 * zoom)
   const step = TICK_STEPS.find((s) => s >= raw) ?? Math.ceil(raw / 3600) * 3600
   const arr: number[] = []
   for (let t = 0; t <= duration + 1e-6; t += step) arr.push(t)
@@ -53,6 +53,9 @@ type TrackMode = 'seek' | 'segment'
 const LS_TL_MODE = 'dcm.timelineMode'
 const DRAG_THRESHOLD_PX = 4
 const MIN_LEN = 0.05
+/** ズーム倍率の範囲とボタン 1 押しの倍率 */
+const MAX_ZOOM = 50
+const ZOOM_STEP = 1.5
 /** スクラブ中のシーク発行間隔（mpv への seek 連打を抑える） */
 const SCRUB_INTERVAL_MS = 80
 
@@ -73,6 +76,11 @@ export function Timeline({
   const trackRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const startXRef = useRef(0)
+  // --- ズーム（1=全体フィット。1 超で横スクロールバーが出る） ---
+  const [zoom, setZoom] = useState(1)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  /** ズーム変更後に適用する scrollLeft（アンカー時刻を画面内の同じ位置に保つ） */
+  const pendingScrollRef = useRef<number | null>(null)
   const [mode, setMode] = useState<TrackMode>(() =>
     localStorage.getItem(LS_TL_MODE) === 'segment' ? 'segment' : 'seek'
   )
@@ -86,6 +94,56 @@ export function Timeline({
 
   // 区間の編集（リサイズ / 移動）中のプレビュー
   const [preview, setPreview] = useState<{ id: number; lo: number; hi: number } | null>(null)
+
+  /**
+   * ズーム倍率を変更する。anchor（時刻とビューポート内 x）を渡すとその点を固定、
+   * 省略時は再生ヘッド（画面外ならビュー中央）を固定してスクロール位置を合わせる。
+   */
+  const zoomTo = useCallback(
+    (zRaw: number, anchor?: { t: number; vx: number }) => {
+      const z2 = clamp(zRaw, 1, MAX_ZOOM)
+      const sc = scrollRef.current
+      if (sc && duration > 0 && z2 !== zoom) {
+        const viewW = sc.clientWidth
+        let a = anchor
+        if (!a) {
+          const headVx = (currentTime / duration) * viewW * zoom - sc.scrollLeft
+          a =
+            headVx >= 0 && headVx <= viewW
+              ? { t: currentTime, vx: headVx }
+              : { t: ((sc.scrollLeft + viewW / 2) / (viewW * zoom)) * duration, vx: viewW / 2 }
+        }
+        const x2 = (a.t / duration) * viewW * z2
+        pendingScrollRef.current = clamp(x2 - a.vx, 0, Math.max(0, viewW * z2 - viewW))
+      }
+      setZoom(z2)
+    },
+    [zoom, duration, currentTime]
+  )
+
+  // ズーム反映後（内容幅が変わった後）にスクロール位置を適用する
+  useLayoutEffect(() => {
+    if (pendingScrollRef.current != null && scrollRef.current) {
+      scrollRef.current.scrollLeft = pendingScrollRef.current
+      pendingScrollRef.current = null
+    }
+  }, [zoom])
+
+  // Ctrl+ホイールでポインタ位置基準ズーム（wheel は passive 既定のため native で登録）
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      if (duration <= 0) return
+      const vx = e.clientX - el.getBoundingClientRect().left
+      const t = ((el.scrollLeft + vx) / (el.clientWidth * zoom)) * duration
+      zoomTo(e.deltaY < 0 ? zoom * 1.25 : zoom / 1.25, { t, vx })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [zoom, duration, zoomTo])
 
   const pct = (t: number) => (duration > 0 ? Math.min(100, Math.max(0, (t / duration) * 100)) : 0)
 
@@ -212,7 +270,7 @@ export function Timeline({
     setRulerDrag(false)
   }
 
-  const ticks = useMemo(() => makeTicks(duration), [duration])
+  const ticks = useMemo(() => makeTicks(duration, zoom), [duration, zoom])
 
   const pending =
     mode === 'segment' && drag && drag.moved
@@ -252,8 +310,34 @@ export function Timeline({
           </svg>
         </button>
         <span className="tl-mode-label">{mode === 'seek' ? 'シーク' : '区間作成'}</span>
+        <span className="tl-zoom-sep" />
+        <button
+          className="tl-mode"
+          title="縮小"
+          onClick={() => zoomTo(zoom / ZOOM_STEP)}
+          disabled={zoom <= 1}
+        >
+          −
+        </button>
+        <button
+          className="tl-mode"
+          title="拡大（Ctrl+ホイールでも可）"
+          onClick={() => zoomTo(zoom * ZOOM_STEP)}
+          disabled={zoom >= MAX_ZOOM}
+        >
+          ＋
+        </button>
+        {zoom > 1 && (
+          <>
+            <button className="tl-mode" title="全体表示に戻す" onClick={() => zoomTo(1)}>
+              全体
+            </button>
+            <span className="tl-zoom-label">×{zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}</span>
+          </>
+        )}
       </div>
-      <div className="tl-body">
+      <div className="tl-body" ref={scrollRef}>
+        <div className="tl-canvas" style={{ width: `${zoom * 100}%` }}>
         {/* 動画シーク専用ルーラー（区間バーと重ならない上部エリア） */}
         <div
           className="tl-ruler"
@@ -320,10 +404,11 @@ export function Timeline({
           )}
         </div>
 
-        {/* ルーラー + トラックを貫く再生ヘッド（頭部マーカー + 縦棒） */}
-        <div className="tl-playhead" style={{ left: `${pct(currentTime)}%` }}>
-          <div className="tl-playhead-head" />
-          <span className="tl-playhead-time">{fmtTime(currentTime)}</span>
+          {/* ルーラー + トラックを貫く再生ヘッド（頭部マーカー + 縦棒） */}
+          <div className="tl-playhead" style={{ left: `${pct(currentTime)}%` }}>
+            <div className="tl-playhead-head" />
+            <span className="tl-playhead-time">{fmtTime(currentTime)}</span>
+          </div>
         </div>
       </div>
 
