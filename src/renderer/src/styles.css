@@ -758,6 +758,17 @@ body.resizing {
   font-size: var(--fs-sm);
   margin-right: auto;
 }
+/* ツールバー内の動画タグ（この動画に作る区間へ引き継がれる） */
+.video-tags-label {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.editor-toolbar .clip-tags {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
 .editor-empty {
   flex: 1;
   display: flex;

@@ -218,6 +218,13 @@ export interface DcmApi {
   addSegmentTag: (segmentId: number, tag: string) => Promise<string[]>
   /** 区間からタグを外す。更新後のその区間のタグ一覧を返す。 */
   removeSegmentTag: (segmentId: number, tag: string) => Promise<string[]>
+  // --- 動画タグ（元素材へのタグ。区間作成時に segment_tags へ引き継ぐ） ---
+  /** 動画のタグ一覧を取得 */
+  getVideoTags: (videoRelPath: string) => Promise<string[]>
+  /** 動画にタグを付与。更新後のその動画のタグ一覧を返す。 */
+  addVideoTag: (videoRelPath: string, tag: string) => Promise<string[]>
+  /** 動画からタグを外す。更新後のその動画のタグ一覧を返す。 */
+  removeVideoTag: (videoRelPath: string, tag: string) => Promise<string[]>
   // --- シーケンス（Phase 2.6） ---
   listSequences: () => Promise<Sequence[]>
   createSequence: (name: string) => Promise<Sequence>

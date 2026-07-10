@@ -1,7 +1,7 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-09 10:30
+更新日時: 2026-07-10 15:21
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -83,7 +83,12 @@
 - [x] 永続化: 新テーブル `segment_tags(segment_id, tag)`。`listAllClips` がタグを結合。区間削除でタグも削除。
   実装: IPC `tags:all` / `tags:add` / `tags:remove`、`ClipItem.tags`、`ClipsView` の `TagEditor` と絞り込み。
   `npm run build` / `typecheck` 成功、dev 起動でレンダラ正常ロードを確認（タグ付与/絞り込みの UI 実操作は手動確認）。
-- 残（今回スコープ外）: 動画（フライト単位）へのタグ、カテゴリ（名前空間）、時間帯の `recorded_at` 自動サジェスト。
+- [x] **動画（元素材）へのタグ + 区間作成時の引き継ぎ**（2026-07-10）: 新テーブル `video_tags(video_rel_path, tag)`。
+  `addSegment` がトランザクション内で親動画のタグを `segment_tags` へコピー（作成時点のスナップショット。
+  動画タグの後からの変更は既存区間に遡及しない）。`getAllTags` は区間 + 動画の合算に変更（補完・絞り込み共通）。
+  IPC `videoTags:get/add/remove`。UI はライブラリ画面のツールバー（「N 区間」の横）に `TagEditor` を設置。
+  `npm run build` / `typecheck` 成功。引き継ぎ SQL は better-sqlite3（in-memory）で単体確認（UI 実操作は手動確認）。
+- 残（今回スコープ外）: カテゴリ（名前空間）、時間帯の `recorded_at` 自動サジェスト。
 - 詳細・論点は [plan.md](plan.md) の「Phase 2.8」を参照
 
 ### Phase 1 — ライブラリ基盤（おおむね完了、残あり）

@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS segment_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_segment_tags_tag ON segment_tags(tag);
 
+-- 動画（元素材）へのユーザー定義タグ（地名など / Phase 2.8 拡張）。
+-- 区間作成時に segment_tags へコピーして引き継ぐ（作成後の変更は遡及しない）。
+CREATE TABLE IF NOT EXISTS video_tags (
+  video_rel_path TEXT NOT NULL,
+  tag            TEXT NOT NULL,
+  PRIMARY KEY (video_rel_path, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_video_tags_tag ON video_tags(tag);
+
 -- シーケンス（クリップをつないだ順路 / Phase 2.6）
 CREATE TABLE IF NOT EXISTS sequences (
   id         INTEGER PRIMARY KEY,
@@ -146,22 +155,32 @@ export function listSegments(videoRelPath: string): Segment[] {
 }
 
 export function addSegment(input: SegmentInput): Segment {
-  const info = getDb()
-    .prepare(
-      `INSERT INTO segments (video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color)
-       VALUES (@videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color)`
-    )
-    .run({
-      videoRelPath: input.videoRelPath,
-      inTime: input.inTime,
-      outTime: input.outTime,
-      inSnapped: input.inSnapped,
-      outSnapped: input.outSnapped,
-      label: input.label ?? null,
-      note: input.note ?? null,
-      color: input.color ?? null
-    })
-  return getSegment(Number(info.lastInsertRowid))
+  const d = getDb()
+  const tx = d.transaction(() => {
+    const info = d
+      .prepare(
+        `INSERT INTO segments (video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color)
+         VALUES (@videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color)`
+      )
+      .run({
+        videoRelPath: input.videoRelPath,
+        inTime: input.inTime,
+        outTime: input.outTime,
+        inSnapped: input.inSnapped,
+        outSnapped: input.outSnapped,
+        label: input.label ?? null,
+        note: input.note ?? null,
+        color: input.color ?? null
+      })
+    const id = Number(info.lastInsertRowid)
+    // 親動画のタグを引き継ぐ（地名など。作成時点のスナップショットをコピー）
+    d.prepare(
+      `INSERT OR IGNORE INTO segment_tags (segment_id, tag)
+       SELECT ?, tag FROM video_tags WHERE video_rel_path = ?`
+    ).run(id, input.videoRelPath)
+    return id
+  })
+  return getSegment(tx())
 }
 
 export function getSegment(id: number): Segment {
@@ -208,10 +227,14 @@ export function getSegmentTags(segmentId: number): string[] {
   return rows.map((r) => r.tag)
 }
 
-/** 使用中の全タグと使用件数（補完・絞り込み用。多い順→名前順） */
+/** 使用中の全タグと使用件数（区間 + 動画の合算。補完・絞り込み用。多い順→名前順） */
 export function getAllTags(): { tag: string; count: number }[] {
   const rows = getDb()
-    .prepare('SELECT tag, COUNT(*) AS c FROM segment_tags GROUP BY tag ORDER BY c DESC, tag ASC')
+    .prepare(
+      `SELECT tag, COUNT(*) AS c FROM (
+         SELECT tag FROM segment_tags UNION ALL SELECT tag FROM video_tags
+       ) GROUP BY tag ORDER BY c DESC, tag ASC`
+    )
     .all() as { tag: string; c: number }[]
   return rows.map((r) => ({ tag: r.tag, count: r.c }))
 }
@@ -227,6 +250,31 @@ export function addSegmentTag(segmentId: number, tag: string): string[] {
 export function removeSegmentTag(segmentId: number, tag: string): string[] {
   getDb().prepare('DELETE FROM segment_tags WHERE segment_id = ? AND tag = ?').run(segmentId, tag)
   return getSegmentTags(segmentId)
+}
+
+// --- 動画タグ（元素材への自由記述タグ。区間作成時に引き継ぐ） ---
+
+export function getVideoTags(videoRelPath: string): string[] {
+  const rows = getDb()
+    .prepare('SELECT tag FROM video_tags WHERE video_rel_path = ? ORDER BY tag ASC')
+    .all(videoRelPath) as { tag: string }[]
+  return rows.map((r) => r.tag)
+}
+
+/** 動画にタグを付与し、その動画の最新タグ一覧を返す。既存の区間には遡及しない。 */
+export function addVideoTag(videoRelPath: string, tag: string): string[] {
+  const t = tag.trim()
+  if (t)
+    getDb()
+      .prepare('INSERT OR IGNORE INTO video_tags (video_rel_path, tag) VALUES (?, ?)')
+      .run(videoRelPath, t)
+  return getVideoTags(videoRelPath)
+}
+
+/** 動画からタグを外し、その動画の最新タグ一覧を返す。引き継ぎ済みの区間タグはそのまま。 */
+export function removeVideoTag(videoRelPath: string, tag: string): string[] {
+  getDb().prepare('DELETE FROM video_tags WHERE video_rel_path = ? AND tag = ?').run(videoRelPath, tag)
+  return getVideoTags(videoRelPath)
 }
 
 /** ffprobe 済みメタを videos に永続化（rel_path 単位で upsert）。クリップ一覧の結合に使う。 */

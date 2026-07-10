@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, RootInfo, Segment, VideoMeta } from '../../shared/types'
+import type { ClipItem, RootInfo, Segment, TagCount, VideoMeta } from '../../shared/types'
 import { FolderTree } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
@@ -10,6 +10,7 @@ import { ClipsView } from './components/ClipsView'
 import { SequenceView, type SeqPlayItem } from './components/SequenceView'
 import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
+import { TagEditor } from './components/TagEditor'
 import { IconPause, IconPlay } from './components/icons'
 import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -21,6 +22,10 @@ export function App() {
   const [meta, setMeta] = useState<VideoMeta | null>(null)
   const [keyframes, setKeyframes] = useState<number[]>([])
   const [segments, setSegments] = useState<Segment[]>([])
+  /** 選択中動画のタグ（区間作成時に引き継がれる） */
+  const [videoTags, setVideoTags] = useState<string[]>([])
+  /** タグ補完候補（区間 + 動画の合算。動画タグ入力の datalist に使う） */
+  const [allTags, setAllTags] = useState<TagCount[]>([])
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -97,6 +102,7 @@ export function App() {
 
   useEffect(() => {
     api.getRoot().then(setRoot)
+    api.getAllTags().then(setAllTags)
     api.mpvAvailable().then((ok) => {
       mpvModeRef.current = ok
       setMpvMode(ok)
@@ -248,8 +254,10 @@ export function App() {
     currentRelRef.current = null
     setMeta(null)
     setSegments([])
+    setVideoTags([])
     setKeyframes([])
     resetPlayback()
+    api.getAllTags().then(setAllTags) // ルートが変わると DB も変わる
   }
 
   const selectVideo = useCallback(async (relPath: string) => {
@@ -264,6 +272,7 @@ export function App() {
     setMeta(null)
     setKeyframes([])
     setSegments([])
+    setVideoTags([])
     resetPlayback()
     if (mpvModeRef.current) {
       // mpv 埋め込み再生（原本を HW デコード）。読み込み後は一時停止で表示。
@@ -295,10 +304,15 @@ export function App() {
     }
     setBusy(true)
     try {
-      const [m, segs] = await Promise.all([api.probeVideo(relPath), api.listSegments(relPath)])
+      const [m, segs, vtags] = await Promise.all([
+        api.probeVideo(relPath),
+        api.listSegments(relPath),
+        api.getVideoTags(relPath)
+      ])
       if (currentRelRef.current !== relPath) return // 途中で別の動画に切り替わった
       setMeta(m)
       setSegments(segs)
+      setVideoTags(vtags)
       // キーフレーム抽出はやや時間がかかるので後追いで反映
       api.getKeyframes(relPath).then((kf) => {
         if (currentRelRef.current === relPath) setKeyframes(kf)
@@ -513,6 +527,24 @@ export function App() {
   // 区間リストからのタグ変更を segments state に反映（永続化は SegmentList 側で実施済み）
   const onSegmentTagsChanged = useCallback((id: number, tags: string[]) => {
     setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, tags } : s)))
+  }, [])
+
+  // 動画タグの付与/削除（以後に作成する区間へ引き継がれる。既存区間は変更しない）
+  const addVideoTag = useCallback((tag: string) => {
+    const rel = currentRelRef.current
+    if (!rel) return
+    api.addVideoTag(rel, tag).then((tags) => {
+      if (currentRelRef.current === rel) setVideoTags(tags)
+      api.getAllTags().then(setAllTags)
+    })
+  }, [])
+  const removeVideoTag = useCallback((tag: string) => {
+    const rel = currentRelRef.current
+    if (!rel) return
+    api.removeVideoTag(rel, tag).then((tags) => {
+      if (currentRelRef.current === rel) setVideoTags(tags)
+      api.getAllTags().then(setAllTags)
+    })
   }, [])
 
   // クリップ一覧から: 元動画を上部プレイヤーで開いて in 点へシーク（Phase 2.5）
@@ -875,6 +907,20 @@ export function App() {
                 <>
                   <div className="editor-toolbar">
                     <span className="editor-count">{segments.length} 区間</span>
+                    <span className="video-tags-label" title="この動画のタグ。以後に作成する区間へ引き継がれます">
+                      動画タグ
+                    </span>
+                    <TagEditor
+                      tags={videoTags}
+                      onAdd={addVideoTag}
+                      onRemove={removeVideoTag}
+                      listId="dcm-video-tag-suggest"
+                    />
+                    <datalist id="dcm-video-tag-suggest">
+                      {allTags.map((t) => (
+                        <option key={t.tag} value={t.tag} />
+                      ))}
+                    </datalist>
                     <button
                       className="btn primary"
                       disabled={segments.length === 0}

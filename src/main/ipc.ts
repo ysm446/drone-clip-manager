@@ -12,6 +12,9 @@ import {
   getAllTags,
   addSegmentTag,
   removeSegmentTag,
+  getVideoTags,
+  addVideoTag,
+  removeVideoTag,
   listSequences,
   createSequence,
   renameSequence,
@@ -138,6 +141,13 @@ export function registerIpc(): void {
   ipcMain.handle('tags:add', (_e, segmentId: number, tag: string) => addSegmentTag(segmentId, tag))
   ipcMain.handle('tags:remove', (_e, segmentId: number, tag: string) =>
     removeSegmentTag(segmentId, tag)
+  )
+
+  // 動画タグ（元素材へのタグ。区間作成時に引き継ぐ）
+  ipcMain.handle('videoTags:get', (_e, relPath: string) => getVideoTags(relPath))
+  ipcMain.handle('videoTags:add', (_e, relPath: string, tag: string) => addVideoTag(relPath, tag))
+  ipcMain.handle('videoTags:remove', (_e, relPath: string, tag: string) =>
+    removeVideoTag(relPath, tag)
   )
 
   ipcMain.handle(
