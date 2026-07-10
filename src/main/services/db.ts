@@ -271,6 +271,18 @@ export function addVideoTag(videoRelPath: string, tag: string): string[] {
   return getVideoTags(videoRelPath)
 }
 
+/** 複数の動画に同じタグを一括付与する（ツリーの複数選択から） */
+export function addVideoTagMany(videoRelPaths: string[], tag: string): void {
+  const t = tag.trim()
+  if (!t || videoRelPaths.length === 0) return
+  const d = getDb()
+  const ins = d.prepare('INSERT OR IGNORE INTO video_tags (video_rel_path, tag) VALUES (?, ?)')
+  const tx = d.transaction((paths: string[]) => {
+    for (const p of paths) ins.run(p, t)
+  })
+  tx(videoRelPaths)
+}
+
 /** 動画からタグを外し、その動画の最新タグ一覧を返す。引き継ぎ済みの区間タグはそのまま。 */
 export function removeVideoTag(videoRelPath: string, tag: string): string[] {
   getDb().prepare('DELETE FROM video_tags WHERE video_rel_path = ? AND tag = ?').run(videoRelPath, tag)

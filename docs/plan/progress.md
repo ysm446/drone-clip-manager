@@ -1,7 +1,7 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-10 15:21
+更新日時: 2026-07-10 15:46
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -88,6 +88,10 @@
   動画タグの後からの変更は既存区間に遡及しない）。`getAllTags` は区間 + 動画の合算に変更（補完・絞り込み共通）。
   IPC `videoTags:get/add/remove`。UI はライブラリ画面のツールバー（「N 区間」の横）に `TagEditor` を設置。
   `npm run build` / `typecheck` 成功。引き継ぎ SQL は better-sqlite3（in-memory）で単体確認（UI 実操作は手動確認）。
+- [x] **ツリーの複数選択 → 動画タグの一括付与**（2026-07-10）: Ctrl+クリック（トグル）/ Shift+クリック（範囲。
+  ツリー表示順のフラット列で起点から選択）。複数選択はプレイヤーで開かず、通常クリックで解除して単一選択に戻る。
+  複数選択中はサイドバー下部に一括タグバー（`BulkTagBar`）を表示。DB は `addVideoTagMany`（トランザクションで
+  INSERT OR IGNORE）、IPC `videoTags:addMany`。`npm run build` / `typecheck` 成功（UI 実操作は手動確認）。
 - 残（今回スコープ外）: カテゴリ（名前空間）、時間帯の `recorded_at` 自動サジェスト。
 - 詳細・論点は [plan.md](plan.md) の「Phase 2.8」を参照
 

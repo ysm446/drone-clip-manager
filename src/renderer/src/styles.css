@@ -342,6 +342,7 @@ body.resizing {
   overflow: auto;
   flex: 1;
   padding: 2px 8px 8px;
+  user-select: none; /* Shift+クリック範囲選択でラベルが文字選択されないように */
 }
 .tree-empty {
   padding: 16px 14px;
@@ -366,6 +367,34 @@ body.resizing {
 .tree-row.selected {
   background: var(--selected);
   font-weight: 600;
+}
+/* 一括タグ付け用の複数選択（Ctrl/Shift+クリック）。再生中の選択とは別に左のアクセントバーで示す */
+.tree-row.video.multi {
+  background: var(--selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* サイドバー下部の一括タグ付けバー（複数選択中のみ表示） */
+.tree-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.tree-bulk-count {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.tree-bulkbar .tag-add {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+.tree-bulkbar .tree-bulk-clear {
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
 }
 .tree-caret {
   width: 10px;

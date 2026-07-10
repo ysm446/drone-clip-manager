@@ -14,6 +14,7 @@ import {
   removeSegmentTag,
   getVideoTags,
   addVideoTag,
+  addVideoTagMany,
   removeVideoTag,
   listSequences,
   createSequence,
@@ -146,6 +147,9 @@ export function registerIpc(): void {
   // 動画タグ（元素材へのタグ。区間作成時に引き継ぐ）
   ipcMain.handle('videoTags:get', (_e, relPath: string) => getVideoTags(relPath))
   ipcMain.handle('videoTags:add', (_e, relPath: string, tag: string) => addVideoTag(relPath, tag))
+  ipcMain.handle('videoTags:addMany', (_e, relPaths: string[], tag: string) =>
+    addVideoTagMany(relPaths, tag)
+  )
   ipcMain.handle('videoTags:remove', (_e, relPath: string, tag: string) =>
     removeVideoTag(relPath, tag)
   )

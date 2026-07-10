@@ -223,6 +223,8 @@ export interface DcmApi {
   getVideoTags: (videoRelPath: string) => Promise<string[]>
   /** 動画にタグを付与。更新後のその動画のタグ一覧を返す。 */
   addVideoTag: (videoRelPath: string, tag: string) => Promise<string[]>
+  /** 複数の動画に同じタグを一括付与（ツリーの複数選択から） */
+  addVideoTagMany: (videoRelPaths: string[], tag: string) => Promise<void>
   /** 動画からタグを外す。更新後のその動画のタグ一覧を返す。 */
   removeVideoTag: (videoRelPath: string, tag: string) => Promise<string[]>
   // --- シーケンス（Phase 2.6） ---

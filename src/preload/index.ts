@@ -33,6 +33,8 @@ const api: DcmApi = {
   removeSegmentTag: (segmentId, tag) => ipcRenderer.invoke('tags:remove', segmentId, tag),
   getVideoTags: (videoRelPath) => ipcRenderer.invoke('videoTags:get', videoRelPath),
   addVideoTag: (videoRelPath, tag) => ipcRenderer.invoke('videoTags:add', videoRelPath, tag),
+  addVideoTagMany: (videoRelPaths, tag) =>
+    ipcRenderer.invoke('videoTags:addMany', videoRelPaths, tag),
   removeVideoTag: (videoRelPath, tag) => ipcRenderer.invoke('videoTags:remove', videoRelPath, tag),
   listSequences: () => ipcRenderer.invoke('seq:list'),
   createSequence: (name) => ipcRenderer.invoke('seq:create', name),

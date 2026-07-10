@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, RootInfo, Segment, TagCount, VideoMeta } from '../../shared/types'
-import { FolderTree } from './components/FolderTree'
+import type { ClipItem, RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
+import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
@@ -16,6 +16,45 @@ import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from '
 
 const api = window.dcm
 
+/** ツリーで複数選択した動画への一括タグ付けバー（サイドバー下部） */
+function BulkTagBar({
+  count,
+  onAdd,
+  onClear
+}: {
+  count: number
+  onAdd: (tag: string) => void
+  onClear: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  const commit = () => {
+    const t = draft.trim()
+    if (t) onAdd(t)
+    setDraft('')
+  }
+  return (
+    <div className="tree-bulkbar">
+      <span className="tree-bulk-count">{count} 本選択中</span>
+      <input
+        className="tag-add"
+        list="dcm-video-tag-suggest"
+        placeholder="＋タグを一括追加"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+          }
+        }}
+      />
+      <button className="btn tree-bulk-clear" onClick={onClear}>
+        解除
+      </button>
+    </div>
+  )
+}
+
 export function App() {
   const [root, setRoot] = useState<RootInfo>({ root: null, tree: null })
   const [selected, setSelected] = useState<string | null>(null)
@@ -26,6 +65,10 @@ export function App() {
   const [videoTags, setVideoTags] = useState<string[]>([])
   /** タグ補完候補（区間 + 動画の合算。動画タグ入力の datalist に使う） */
   const [allTags, setAllTags] = useState<TagCount[]>([])
+  /** ツリーで複数選択した動画（Ctrl/Shift+クリック。一括タグ付け用） */
+  const [multiSel, setMultiSel] = useState<Set<string>>(new Set())
+  /** Shift+クリックの範囲選択の起点 */
+  const multiAnchorRef = useRef<string | null>(null)
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -255,6 +298,8 @@ export function App() {
     setMeta(null)
     setSegments([])
     setVideoTags([])
+    setMultiSel(new Set())
+    multiAnchorRef.current = null
     setKeyframes([])
     resetPlayback()
     api.getAllTags().then(setAllTags) // ルートが変わると DB も変わる
@@ -547,6 +592,57 @@ export function App() {
     })
   }, [])
 
+  // --- ツリーの複数選択 → 一括タグ付け ---
+
+  /** ツリー表示順にフラット化した全動画（Shift+クリックの範囲選択に使う） */
+  const flatVideos = useMemo(() => {
+    const out: string[] = []
+    const walk = (n: TreeNode) => {
+      if (n.type === 'video') out.push(n.relPath)
+      else n.children?.forEach(walk)
+    }
+    if (root.tree) walk(root.tree)
+    return out
+  }, [root.tree])
+
+  // 通常クリック: 単一選択（プレイヤーで開く。複数選択は解除）
+  // Ctrl+クリック: 複数選択をトグル / Shift+クリック: 起点から範囲選択（開かない）
+  const onTreeVideoClick = useCallback(
+    (relPath: string, mods: VideoClickMods) => {
+      if (mods.ctrl) {
+        setMultiSel((prev) => {
+          const next = new Set(prev)
+          if (next.has(relPath)) next.delete(relPath)
+          else next.add(relPath)
+          return next
+        })
+        multiAnchorRef.current = relPath
+      } else if (mods.shift) {
+        const anchor = multiAnchorRef.current ?? currentRelRef.current
+        const i = anchor ? flatVideos.indexOf(anchor) : -1
+        const j = flatVideos.indexOf(relPath)
+        if (i < 0 || j < 0) {
+          // 起点なし: トグル扱い
+          setMultiSel((prev) => new Set(prev).add(relPath))
+          multiAnchorRef.current = relPath
+          return
+        }
+        const [lo, hi] = i < j ? [i, j] : [j, i]
+        setMultiSel((prev) => {
+          const next = new Set(prev)
+          for (let k = lo; k <= hi; k++) next.add(flatVideos[k])
+          return next
+        })
+      } else {
+        setMultiSel(new Set())
+        multiAnchorRef.current = relPath
+        selectVideo(relPath)
+      }
+    },
+    [flatVideos, selectVideo]
+  )
+
+
   // クリップ一覧から: 元動画を上部プレイヤーで開いて in 点へシーク（Phase 2.5）
   // ビューは切り替えず、クリップビューに留まったまま同じプレイヤーで再生できるようにする。
   // 再生中に別ソースのクリップへ切り替えた場合は、再生状態を引き継いで新しい in 点から再生を継続する。
@@ -579,6 +675,26 @@ export function App() {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3500)
   }, [])
+
+  // 複数選択中の全動画へタグを一括付与（サイドバー下部のバーから）
+  const bulkAddVideoTag = useCallback(
+    (tag: string) => {
+      const targets = [...multiSel]
+      if (targets.length === 0) return
+      api.addVideoTagMany(targets, tag).then(() => {
+        api.getAllTags().then(setAllTags)
+        // 開いている動画も対象なら、ツールバーのタグ表示を更新する
+        const rel = currentRelRef.current
+        if (rel && multiSel.has(rel)) {
+          api.getVideoTags(rel).then((tags) => {
+            if (currentRelRef.current === rel) setVideoTags(tags)
+          })
+        }
+        showToast(`${targets.length} 本に「${tag}」を追加しました`)
+      })
+    },
+    [multiSel, showToast]
+  )
 
   // F9: 現在の動画フレームをスクリーンショット保存（ライブラリ直下 screenshots/）
   const captureVideoFrame = useCallback(async () => {
@@ -771,7 +887,19 @@ export function App() {
       <div className="body">
         <aside className="sidebar" style={{ width: sidebarW }}>
           <div className="sidebar-head">ライブラリ</div>
-          <FolderTree tree={root.tree} selected={selected} onSelect={selectVideo} />
+          <FolderTree
+            tree={root.tree}
+            selected={selected}
+            multiSelected={multiSel}
+            onVideoClick={onTreeVideoClick}
+          />
+          {multiSel.size > 0 && (
+            <BulkTagBar
+              count={multiSel.size}
+              onAdd={bulkAddVideoTag}
+              onClear={() => setMultiSel(new Set())}
+            />
+          )}
           <Splitter
             axis="y"
             onStart={() => (bgmBaseRef.current = bgmH)}
@@ -916,11 +1044,6 @@ export function App() {
                       onRemove={removeVideoTag}
                       listId="dcm-video-tag-suggest"
                     />
-                    <datalist id="dcm-video-tag-suggest">
-                      {allTags.map((t) => (
-                        <option key={t.tag} value={t.tag} />
-                      ))}
-                    </datalist>
                     <button
                       className="btn primary"
                       disabled={segments.length === 0}
@@ -959,6 +1082,13 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* 動画タグ入力の補完候補（ツールバー / 一括タグバー共通） */}
+      <datalist id="dcm-video-tag-suggest">
+        {allTags.map((t) => (
+          <option key={t.tag} value={t.tag} />
+        ))}
+      </datalist>
 
       {exportItems && exportItems.length > 0 && (
         <ExportModal items={exportItems} onClose={() => setExportItems(null)} />
