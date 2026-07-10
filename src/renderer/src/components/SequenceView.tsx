@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipItem, Sequence, SequenceEdge, SequenceNode } from '../../../shared/types'
 import { fmtTime, nodeOrderFromEdges } from '../util'
 import { IconFilm, IconPause, IconPlay } from './icons'
@@ -57,7 +57,12 @@ function NodeThumb({ clip }: { clip: ClipItem }) {
   )
 }
 
-export function SequenceView({ onPlaySequence, onStopSequence, playingNodeId }: Props) {
+// 再生ヘッドの時刻更新で App が再レンダリングされてもグラフを描き直さないよう memo 化
+export const SequenceView = memo(function SequenceView({
+  onPlaySequence,
+  onStopSequence,
+  playingNodeId
+}: Props) {
   const [sequences, setSequences] = useState<Sequence[]>([])
   const [activeId, setActiveId] = useState<number | null>(null)
   const [nodes, setNodes] = useState<SequenceNode[]>([])
@@ -469,4 +474,4 @@ export function SequenceView({ onPlaySequence, onStopSequence, playingNodeId }: 
       </div>
     </div>
   )
-}
+})

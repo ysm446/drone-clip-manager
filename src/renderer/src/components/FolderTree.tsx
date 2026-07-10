@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { TreeNode } from '../../../shared/types'
 import { IconFilm, IconFolder } from './icons'
 
@@ -101,7 +101,14 @@ function NodeRow({
   )
 }
 
-export function FolderTree({ tree, selected, multiSelected, onVideoClick, rootKey }: Props) {
+// 再生ヘッドの時刻更新で App が再レンダリングされてもツリーを描き直さないよう memo 化
+export const FolderTree = memo(function FolderTree({
+  tree,
+  selected,
+  multiSelected,
+  onVideoClick,
+  rootKey
+}: Props) {
   const [overrides, setOverrides] = useState<OpenOverrides>(() => loadOverrides(rootKey))
 
   // ルートが切り替わったら、そのルートの保存済み開閉状態を読み直す
@@ -140,4 +147,4 @@ export function FolderTree({ tree, selected, multiSelected, onVideoClick, rootKe
       ))}
     </div>
   )
-}
+})

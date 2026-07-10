@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtTime } from '../util'
@@ -65,7 +65,8 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
   )
 }
 
-export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
+// 再生ヘッドの時刻更新で App が再レンダリングされてもカード一覧を描き直さないよう memo 化
+export const ClipsView = memo(function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -368,4 +369,4 @@ export function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
       </div>
     </div>
   )
-}
+})

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { BgmInfo } from '../../../shared/types'
 import { IconFolder, IconLoop, IconNext, IconPause, IconPlay, IconPrev } from './icons'
 
@@ -12,7 +12,8 @@ function fmtClock(s: number): string {
   return `${m}:${String(ss).padStart(2, '0')}`
 }
 
-export function BgmPlayer({ height }: { height?: number }) {
+// 再生ヘッドの時刻更新で App が再レンダリングされても描き直さないよう memo 化
+export const BgmPlayer = memo(function BgmPlayer({ height }: { height?: number }) {
   const [info, setInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
   const [index, setIndex] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -194,4 +195,4 @@ export function BgmPlayer({ height }: { height?: number }) {
       )}
     </div>
   )
-}
+})

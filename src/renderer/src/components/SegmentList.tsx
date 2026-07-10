@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { Segment, TagCount } from '../../../shared/types'
 import { colorForIndex, fmtTime } from '../util'
 import { TagEditor } from './TagEditor'
@@ -16,7 +16,8 @@ interface Props {
   onTagsChanged: (id: number, tags: string[]) => void
 }
 
-export function SegmentList({
+// 再生ヘッドの時刻更新で App が再レンダリングされても一覧を描き直さないよう memo 化
+export const SegmentList = memo(function SegmentList({
   segments,
   selectedId,
   onSelect,
@@ -99,4 +100,4 @@ export function SegmentList({
       })}
     </div>
   )
-}
+})

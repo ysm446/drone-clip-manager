@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
+import { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import type { Segment } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
 
@@ -60,6 +60,27 @@ const ZOOM_STEP = 1.5
 const SCRUB_INTERVAL_MS = 80
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+/**
+ * キーフレーム目盛り層。動画によっては数百〜数千個の DOM になるため、
+ * 再生ヘッドの時刻更新（毎秒十数回）で再レンダリングしないよう memo で切り離す。
+ */
+const KeyframeLayer = memo(function KeyframeLayer({
+  keyframes,
+  duration
+}: {
+  keyframes: number[]
+  duration: number
+}) {
+  const pct = (t: number) => (duration > 0 ? Math.min(100, Math.max(0, (t / duration) * 100)) : 0)
+  return (
+    <div className="tl-keyframes">
+      {keyframes.map((k, i) => (
+        <div key={i} className="tl-kf" style={{ left: `${pct(k)}%` }} />
+      ))}
+    </div>
+  )
+})
 
 export function Timeline({
   duration,
@@ -360,11 +381,7 @@ export function Timeline({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
         >
-          <div className="tl-keyframes">
-            {keyframes.map((k, i) => (
-              <div key={i} className="tl-kf" style={{ left: `${pct(k)}%` }} />
-            ))}
-          </div>
+          <KeyframeLayer keyframes={keyframes} duration={duration} />
 
           {segments.map((s, i) => {
             const editing = preview?.id === s.id

@@ -141,8 +141,11 @@ export function App() {
   /** クリップ再生中の in–out（クリップ画面でクリップを開くと設定。in→out をループ）。null で通常再生。 */
   const [clipPlay, setClipPlay] = useState<{ in: number; out: number } | null>(null)
   const clipPlayRef = useRef<{ in: number; out: number } | null>(null)
+  /** クリップのループ再生で in へ戻るシークを発行済み（完了待ち）かどうか */
+  const loopSeekingRef = useRef(false)
   const setClipPlayRange = useCallback((r: { in: number; out: number } | null) => {
     clipPlayRef.current = r
+    loopSeekingRef.current = false // 範囲が変わったらループ戻りの完了待ちを解除
     setClipPlay(r)
   }, [])
 
@@ -166,24 +169,49 @@ export function App() {
     localStorage.setItem('dcm.bgmH', String(bgmH))
   }, [bgmH])
 
+  // 時刻更新の setState を間引く。mpv はほぼフレーム毎に time イベントを送るため、
+  // 毎回 setState すると App 全体（キーフレーム目盛りやクリップ一覧など）の再描画が
+  // 毎秒数十回走り、GC 停止で UI が周期的に固まる。currentTimeRef は常に正確に保つ。
+  const timePushRef = useRef(0)
+  const pushTime = useCallback((t: number, force = false) => {
+    currentTimeRef.current = t
+    const now = performance.now()
+    if (!force && now - timePushRef.current < 66) return
+    timePushRef.current = now
+    setCurrentTime(t)
+  }, [])
+
   // mpv からの時間/長さ/再生状態イベント
   useEffect(() => {
     return api.onMpvEvent((e) => {
       if (e.type === 'time') {
-        currentTimeRef.current = e.value
-        setCurrentTime(e.value)
-        if (seqActiveRef.current) advanceRef.current(e.value)
-        else if (clipPlayRef.current && e.value >= clipPlayRef.current.out - 0.02) {
+        const clip = clipPlayRef.current
+        if (loopSeekingRef.current) {
+          // ループ戻りシークの完了待ち: 完了前に届く out 付近の時刻は無視する
+          // （時刻イベント毎に exact シークを再発行すると mpv が詰まり、
+          //   ループの継ぎ目ごとに再生が止まって見えるため 1 回だけにする）。
+          // 万一シークが効かず out を大きく越えた場合は解除して通常処理に任せる。
+          if (clip && e.value > clip.in + 0.1 && e.value >= clip.out - 0.5 && e.value < clip.out + 1.5)
+            return
+          loopSeekingRef.current = false
+        }
+        if (seqActiveRef.current) {
+          pushTime(e.value)
+          advanceRef.current(e.value)
+        } else if (clip && e.value >= clip.out - 0.02) {
           // クリップのループ再生: out に達したら in へ戻る
-          api.mpvSeek(clipPlayRef.current.in)
-          currentTimeRef.current = clipPlayRef.current.in
-          setCurrentTime(clipPlayRef.current.in)
+          loopSeekingRef.current = true
+          api.mpvSeek(clip.in)
+          pushTime(clip.in, true)
+        } else {
+          pushTime(e.value)
         }
       } else if (e.type === 'duration') {
         if (e.value > 0) setDuration(e.value)
       } else if (e.type === 'pause') {
         mpvPausedRef.current = e.value
         setMpvPaused(e.value)
+        setCurrentTime(currentTimeRef.current) // 間引きで残った最新時刻を反映
       } else if (e.type === 'eof' && e.value) {
         mpvPausedRef.current = true
         setMpvPaused(true)
@@ -432,6 +460,7 @@ export function App() {
   )
 
   const seek = useCallback((t: number) => {
+    loopSeekingRef.current = false // 手動シークはループ戻りの完了待ちを解除
     if (mpvModeRef.current) {
       api.mpvSeek(t)
     } else {
@@ -537,17 +566,18 @@ export function App() {
   // <video> の時刻更新（シーケンス自動送り / クリップのループを兼ねる）
   const onVideoTime = useCallback(
     (t: number) => {
-      currentTimeRef.current = t
-      setCurrentTime(t)
-      if (seqActiveRef.current) advanceRef.current(t)
-      else if (clipPlayRef.current && t >= clipPlayRef.current.out - 0.02) {
+      if (seqActiveRef.current) {
+        pushTime(t)
+        advanceRef.current(t)
+      } else if (clipPlayRef.current && t >= clipPlayRef.current.out - 0.02) {
         const v = videoRef.current
         if (v) v.currentTime = clipPlayRef.current.in
-        currentTimeRef.current = clipPlayRef.current.in
-        setCurrentTime(clipPlayRef.current.in)
+        pushTime(clipPlayRef.current.in, true)
+      } else {
+        pushTime(t)
       }
     },
-    []
+    [pushTime]
   )
 
   const createSegment = useCallback(
