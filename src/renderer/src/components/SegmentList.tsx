@@ -77,6 +77,11 @@ export function SegmentList({
               <span className="seg-time" onClick={() => onJump(lo)} title="先頭へジャンプ">
                 {fmtTime(lo)} – {fmtTime(hi)}
               </span>
+              <TagEditor
+                tags={s.tags ?? []}
+                onAdd={(t) => addTag(s.id, t)}
+                onRemove={(t) => removeTag(s.id, t)}
+              />
               <span className="seg-dur">{fmtTime(hi - lo)}</span>
               <button
                 className="seg-del"
@@ -89,11 +94,6 @@ export function SegmentList({
                 ✕
               </button>
             </div>
-            <TagEditor
-              tags={s.tags ?? []}
-              onAdd={(t) => addTag(s.id, t)}
-              onRemove={(t) => removeTag(s.id, t)}
-            />
           </div>
         )
       })}

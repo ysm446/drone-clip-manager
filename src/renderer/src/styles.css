@@ -1135,9 +1135,11 @@ body.resizing {
   align-items: center;
   gap: 8px;
 }
-/* 区間リスト内のタグはラベル入力に合わせて少しインデント */
-.seg-item .clip-tags {
-  padding-left: 20px;
+/* 区間リスト内のタグは同一行に続けて表示（時刻と長さの間の余白を使う） */
+.seg-item-main .clip-tags {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
 }
 .seg-item:hover {
   background: var(--hover);
