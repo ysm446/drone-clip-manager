@@ -620,12 +620,17 @@ export function App() {
       const startSec = atSec ?? item.clip.inSnapped ?? item.clip.inTime
       const rel = item.clip.videoRelPath
       if (currentRelRef.current === rel) {
+        // 再生中のクリップを in/out ナッジの対象にする
+        setSelectedSeg(item.clip.id)
         seek(startSec)
         resumePlay()
       } else {
         autoPlayNextRef.current = true
         pendingSeekRef.current = startSec
-        selectVideo(rel)
+        // selectVideo が selectedSeg を解除するので、ロード後に再設定する
+        selectVideo(rel).then(() => {
+          if (currentRelRef.current === rel) setSelectedSeg(item.clip.id)
+        })
       }
     },
     [seek, resumePlay, selectVideo, stopSequence]
@@ -849,6 +854,17 @@ export function App() {
       // クリップ画面とシーケンス画面（パレットのプレビュー再生）の両方が対象。
       if ((view === 'clips' || view === 'sequence') && clipPlayRef.current) {
         setClipPlayRange({ in: snapped.inSnapped, out: snapped.outSnapped })
+      }
+      // シーケンス再生キューにも反映（自動送りの out 判定・バーの長さを追従させる）。
+      // 同じクリップが複数ノードに置かれている場合もまとめて更新する。
+      if (seqQueueRef.current.some((it) => it.clip.id === selectedSeg)) {
+        const patched = seqQueueRef.current.map((it) =>
+          it.clip.id === selectedSeg
+            ? { ...it, clip: { ...it.clip, inTime: inT, outTime: outT, ...snapped } }
+            : it
+        )
+        seqQueueRef.current = patched
+        setSeqQueue((cur) => (cur ? patched : cur))
       }
     },
     [selectedSeg, segments, keyframes, duration, meta, updateSegmentTimes, setClipPlayRange, view]
