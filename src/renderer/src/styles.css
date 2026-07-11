@@ -2012,6 +2012,19 @@ body.resizing {
   align-items: center;
   justify-content: center;
   color: var(--faint);
+  position: relative; /* 長さバッジの基準 */
+}
+/* サムネイル右下の長さバッジ（クリップカードと同じ見た目） */
+.seq-thumb-dur {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #eee;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-s);
+  padding: 0 4px;
 }
 .seq-node-thumb img {
   width: 100%;
@@ -2032,6 +2045,11 @@ body.resizing {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.seq-node-dur {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .seq-node-missing {
   padding: 8px;

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipItem, Sequence, SequenceEdge, SequenceNode } from '../../../shared/types'
-import { fmtTime, nodeOrderFromEdges } from '../util'
+import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { IconFilm, IconPause, IconPlay } from './icons'
 
 const api = window.dcm
@@ -53,6 +53,7 @@ function NodeThumb({ clip }: { clip: ClipItem }) {
       ) : (
         <span className="seq-node-ph">{failed ? '×' : <IconFilm size={20} />}</span>
       )}
+      <span className="seq-thumb-dur">{fmtSec(clipDuration(clip))}</span>
     </div>
   )
 }
@@ -459,7 +460,8 @@ export const SequenceView = memo(function SequenceView({
                           {n.clip.label ?? `区間 #${n.clip.id}`}
                         </div>
                         <div className="seq-node-meta">
-                          {fmtTime(clipDuration(n.clip))} · {n.clip.videoFilename}
+                          <span className="seq-node-dur">{fmtSec(clipDuration(n.clip))}</span> ·{' '}
+                          {n.clip.videoFilename}
                         </div>
                       </>
                     ) : (
