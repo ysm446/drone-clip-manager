@@ -281,17 +281,44 @@ export const SequenceView = memo(function SequenceView({
     })
   }, [])
 
-  // 選択中ノードを Delete キーで一括削除（入力欄フォーカス中は無効）
+  /** 指定ノード群が収まるようにパン / ズームを合わせる（拡大は 100% まで） */
+  const fitToNodes = useCallback((targets: SequenceNode[]) => {
+    const el = canvasRef.current
+    if (!el || targets.length === 0) return
+    const r = el.getBoundingClientRect()
+    const PAD = 60
+    const x1 = Math.min(...targets.map((n) => n.x)) - PAD
+    const y1 = Math.min(...targets.map((n) => n.y)) - PAD
+    const x2 = Math.max(...targets.map((n) => n.x + NODE_W)) + PAD
+    const y2 = Math.max(...targets.map((n) => n.y + NODE_H)) + PAD
+    const scale = Math.min(1, r.width / (x2 - x1), r.height / (y2 - y1))
+    // 対象の中心がキャンバス中央に来る translate
+    setView({
+      x: (r.width - (x1 + x2) * scale) / 2,
+      y: (r.height - (y1 + y2) * scale) / 2,
+      scale
+    })
+  }, [])
+
+  // キーボード操作（入力欄フォーカス中は無効）:
+  //   Delete = 選択ノードを一括削除 / A = 全体表示 / F = 選択ノードへフォーカス
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' || selectedIds.size === 0) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       const t = document.activeElement as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      for (const id of selectedIds) removeNode(id)
+      const k = e.key.toLowerCase()
+      if (e.key === 'Delete') {
+        for (const id of selectedIds) removeNode(id)
+      } else if (k === 'a') {
+        fitToNodes(nodesRef.current)
+      } else if (k === 'f') {
+        fitToNodes(nodesRef.current.filter((n) => selectedIds.has(n.id)))
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedIds, removeNode])
+  }, [selectedIds, removeNode, fitToNodes])
 
   const removeEdge = async (edgeId: number) => {
     await api.removeSequenceEdge(edgeId)
@@ -678,7 +705,10 @@ export const SequenceView = memo(function SequenceView({
         <div className="seq-toolbar">
           <span className="seq-count">{playItems.length} ノード（順路）</span>
           <span className="seq-total">合計 {fmtTime(totalDur)}</span>
-          <span className="seq-zoom" title="ホイールでズーム / 中ボタンドラッグでパン">
+          <span
+            className="seq-zoom"
+            title="ホイールでズーム / 中ボタンドラッグでパン / A: 全体表示 / F: 選択ノードへフォーカス"
+          >
             {Math.round(view.scale * 100)}%
           </span>
           <span className="clips-spacer" />
