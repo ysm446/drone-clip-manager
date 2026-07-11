@@ -29,6 +29,8 @@ interface Props {
   onOpenClip: (clip: ClipItem) => void
   /** ノードのクリックで、順路（items）内のそのノードの開始位置へ頭出しする */
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
+  /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
+  onModalOpenChange: (open: boolean) => void
   /** 連続再生中のノード id（App から通知）。null で停止中。 */
   playingNodeId: number | null
   /** プレイヤー側での in/out 調整をパレット / ノード表示へその場で反映するためのパッチ */
@@ -107,6 +109,7 @@ export const SequenceView = memo(function SequenceView({
   onStopSequence,
   onOpenClip,
   onJumpToNode,
+  onModalOpenChange,
   playingNodeId,
   segmentPatch
 }: Props) {
@@ -124,6 +127,12 @@ export const SequenceView = memo(function SequenceView({
   const [exporting, setExporting] = useState<ConcatProgress | null>(null)
   /** 連結書き出しの結果（モーダルで表示、閉じるまで保持） */
   const [exportResult, setExportResult] = useState<ConcatResult | null>(null)
+
+  // 書き出しモーダルの表示中は mpv（ネイティブ最前面）に隠されないよう App へ通知して隠してもらう
+  useEffect(() => {
+    onModalOpenChange(exporting != null || exportResult != null)
+    return () => onModalOpenChange(false) // アンマウント（タブ切替）時は解除
+  }, [exporting, exportResult, onModalOpenChange])
   /** 各カラムの幅（境界のスプリッターでリサイズ） */
   const [seqsW, setSeqsW] = useState(180)
   // クリップ一覧はノードエリアと同程度の広さを既定にする（画面幅からシーケンス列を除いた約半分）
@@ -188,13 +197,39 @@ export const SequenceView = memo(function SequenceView({
     )
   }, [segmentPatch])
 
-  // 選択中シーケンスのグラフを読み込む
-  const reload = useCallback((id: number) => {
-    api.getSequenceGraph(id).then((g) => {
-      setNodes(g.nodes)
-      setEdges(g.edges)
+  /** 指定ノード群が収まるようにパン / ズームを合わせる（拡大は 100% まで） */
+  const fitToNodes = useCallback((targets: SequenceNode[]) => {
+    const el = canvasRef.current
+    if (!el || targets.length === 0) return
+    const r = el.getBoundingClientRect()
+    const PAD = 60
+    const x1 = Math.min(...targets.map((n) => n.x)) - PAD
+    const y1 = Math.min(...targets.map((n) => n.y)) - PAD
+    const x2 = Math.max(...targets.map((n) => n.x + NODE_W)) + PAD
+    const y2 = Math.max(...targets.map((n) => n.y + NODE_H)) + PAD
+    const scale = Math.min(1, r.width / (x2 - x1), r.height / (y2 - y1))
+    // 対象の中心がキャンバス中央に来る translate
+    setView({
+      x: (r.width - (x1 + x2) * scale) / 2,
+      y: (r.height - (y1 + y2) * scale) / 2,
+      scale
     })
   }, [])
+
+  // 選択中シーケンスのグラフを読み込む。fit=true でロード後に全体表示へ合わせる
+  const reload = useCallback(
+    (id: number, fit = false) => {
+      api.getSequenceGraph(id).then((g) => {
+        setNodes(g.nodes)
+        setEdges(g.edges)
+        if (fit) {
+          if (g.nodes.length > 0) fitToNodes(g.nodes)
+          else setView({ x: 0, y: 0, scale: 1 }) // 空のシーケンスは初期表示に戻す
+        }
+      })
+    },
+    [fitToNodes]
+  )
 
   useEffect(() => {
     setSelectedIds(new Set())
@@ -203,7 +238,7 @@ export const SequenceView = memo(function SequenceView({
       setEdges([])
       return
     }
-    reload(activeId)
+    reload(activeId, true) // シーケンス切替時は全体表示に合わせる
   }, [activeId, reload])
 
   // ホイールでカーソル位置を中心にズーム。
@@ -290,25 +325,6 @@ export const SequenceView = memo(function SequenceView({
       const next = new Set(cur)
       next.delete(nodeId)
       return next
-    })
-  }, [])
-
-  /** 指定ノード群が収まるようにパン / ズームを合わせる（拡大は 100% まで） */
-  const fitToNodes = useCallback((targets: SequenceNode[]) => {
-    const el = canvasRef.current
-    if (!el || targets.length === 0) return
-    const r = el.getBoundingClientRect()
-    const PAD = 60
-    const x1 = Math.min(...targets.map((n) => n.x)) - PAD
-    const y1 = Math.min(...targets.map((n) => n.y)) - PAD
-    const x2 = Math.max(...targets.map((n) => n.x + NODE_W)) + PAD
-    const y2 = Math.max(...targets.map((n) => n.y + NODE_H)) + PAD
-    const scale = Math.min(1, r.width / (x2 - x1), r.height / (y2 - y1))
-    // 対象の中心がキャンバス中央に来る translate
-    setView({
-      x: (r.width - (x1 + x2) * scale) / 2,
-      y: (r.height - (y1 + y2) * scale) / 2,
-      scale
     })
   }, [])
 

@@ -306,11 +306,14 @@ export function App() {
     }
   }, [mpvMode])
 
+  /** シーケンス画面のモーダル（連結書き出し等）表示中フラグ。mpv を隠すために受け取る */
+  const [seqModalOpen, setSeqModalOpen] = useState(false)
+
   // mpv ウィンドウの表示可否（動画選択中 かつ モーダル非表示なら、ライブラリ/クリップ両方で表示）
   useEffect(() => {
     if (!mpvMode) return
-    api.mpvSetVisible(!!selected && !exportItems)
-  }, [mpvMode, selected, exportItems])
+    api.mpvSetVisible(!!selected && !exportItems && !seqModalOpen)
+  }, [mpvMode, selected, exportItems, seqModalOpen])
 
   // クリップから開いた場合の遅延シーク: 動画のロード完了（duration 確定）後に in 点へ飛ぶ
   useEffect(() => {
@@ -1652,6 +1655,7 @@ export function App() {
               onStopSequence={stopSequence}
               onOpenClip={openClip}
               onJumpToNode={jumpToNode}
+              onModalOpenChange={setSeqModalOpen}
               playingNodeId={playingNodeId}
               segmentPatch={segPatch}
             />
