@@ -575,13 +575,15 @@ export function App() {
 
   /** シーケンス再生のキュー（シークバーをシーケンス全体表示にするため state でも持つ） */
   const [seqQueue, setSeqQueue] = useState<SeqPlayItem[] | null>(null)
+  /** 表示用の現在クリップ index（停止後もバーの位置を保つため ref とは別に持つ） */
+  const [seqIdx, setSeqIdx] = useState(0)
 
+  // 停止（再生をやめるだけ。シークバーのシーケンス表示は保持する）
   const stopSequence = useCallback(() => {
     seqActiveRef.current = false
     seqArmedRef.current = false
     autoPlayNextRef.current = false
     setPlayingNodeId(null)
-    setSeqQueue(null)
     if (mpvModeRef.current) {
       api.mpvPause()
       mpvPausedRef.current = true
@@ -589,6 +591,17 @@ export function App() {
     } else {
       videoRef.current?.pause()
     }
+  }, [])
+
+  /**
+   * シーケンス再生モードを完全に解除する（シークバーも通常表示へ戻す）。
+   * ツリーやクリップ一覧からユーザーが明示的に別の動画 / クリップを開いたときに呼ぶ。
+   */
+  const exitSequence = useCallback(() => {
+    seqActiveRef.current = false
+    seqArmedRef.current = false
+    setPlayingNodeId(null)
+    setSeqQueue(null)
   }, [])
 
   // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）。
@@ -603,6 +616,7 @@ export function App() {
       seqIndexRef.current = i
       seqArmedRef.current = false
       setPlayingNodeId(item.nodeId)
+      setSeqIdx(i)
       const startSec = atSec ?? item.clip.inSnapped ?? item.clip.inTime
       const rel = item.clip.videoRelPath
       if (currentRelRef.current === rel) {
@@ -651,6 +665,9 @@ export function App() {
       if (items.length === 0) return
       seqQueueRef.current = items
       seqActiveRef.current = true
+      // パレットのプレビュー再生（クリップのループ範囲）が残っていたら解除
+      clipPlayRef.current = null
+      setClipPlay(null)
       setSeqQueue(items)
       loadSeqIndex(0)
     },
@@ -681,8 +698,11 @@ export function App() {
     (ts: number) => {
       const loc = seqLocate(ts)
       if (!loc) return
+      // 再生終了（停止）後にバーから触った場合も連続再生の追従へ復帰させる
+      seqActiveRef.current = true
       if (loc.idx === seqIndexRef.current) {
         seqArmedRef.current = false // out 付近から戻った場合に備えて再アーム
+        setPlayingNodeId(seqQueueRef.current[loc.idx]?.nodeId ?? null)
         seek(loc.sec)
       } else {
         loadSeqIndex(loc.idx, loc.sec)
@@ -915,10 +935,11 @@ export function App() {
       } else {
         setMultiSel(new Set())
         multiAnchorRef.current = relPath
+        exitSequence() // 明示的な動画選択ではシーケンス再生（バー表示含む）を解除
         selectVideo(relPath)
       }
     },
-    [flatVideos, selectVideo]
+    [flatVideos, selectVideo, exitSequence]
   )
 
 
@@ -927,6 +948,7 @@ export function App() {
   // 再生中に別ソースのクリップへ切り替えた場合は、再生状態を引き継いで新しい in 点から再生を継続する。
   const openClip = useCallback(
     (clip: ClipItem) => {
+      exitSequence() // クリップ単体の再生に切り替えるのでシーケンス表示を解除
       const t = clip.inSnapped ?? clip.inTime
       const range = { in: t, out: clip.outSnapped ?? clip.outTime }
       if (currentRelRef.current === clip.videoRelPath) {
@@ -946,7 +968,7 @@ export function App() {
         setClipPlayRange(range)
       }
     },
-    [seek, selectVideo, setClipPlayRange]
+    [seek, selectVideo, setClipPlayRange, exitSequence]
   )
 
 
@@ -1262,13 +1284,14 @@ export function App() {
     return { in: s.inSnapped ?? s.inTime, out: s.outSnapped ?? s.outTime }
   }, [selectedSeg, segments])
 
-  // クリップ画面でクリップを開いている間は、シークバーをクリップ範囲 [in,out] 表示にする
-  const clipMode = view === 'clips' && clipPlay != null
+  // クリップ画面 / シーケンス画面でクリップを開いている間は、シークバーをクリップ範囲 [in,out] 表示にする
+  const clipMode = (view === 'clips' || view === 'sequence') && clipPlay != null
   const fullDur = duration || meta?.durationSec || 0
 
-  // シーケンス再生中は、シークバーを「クリップを連結した仮想タイムライン（0..合計）」にする
+  // シーケンス再生中（および停止後もキューを保持している間）は、
+  // シークバーを「クリップを連結した仮想タイムライン（0..合計）」にする
   const seqPlayback = useMemo(() => {
-    if (playingNodeId == null || !seqQueue || seqQueue.length === 0) return null
+    if (!seqQueue || seqQueue.length === 0) return null
     const durs = seqQueue.map((it) =>
       Math.max(
         0,
@@ -1281,10 +1304,9 @@ export function App() {
       offsets.push(total)
       total += d
     }
-    const idx = seqQueue.findIndex((it) => it.nodeId === playingNodeId)
-    if (idx < 0) return null
+    const idx = Math.min(seqIdx, seqQueue.length - 1)
     return { durs, offsets, total, idx }
-  }, [seqQueue, playingNodeId])
+  }, [seqQueue, seqIdx])
   const seqMode = seqPlayback != null
   // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置
   let seqTime = 0
@@ -1587,6 +1609,7 @@ export function App() {
               key={libVersion}
               onPlaySequence={playSequence}
               onStopSequence={stopSequence}
+              onOpenClip={openClip}
               playingNodeId={playingNodeId}
             />
           ) : (

@@ -17,6 +17,8 @@ export interface SeqPlayItem {
 interface Props {
   onPlaySequence: (items: SeqPlayItem[]) => void
   onStopSequence: () => void
+  /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
+  onOpenClip: (clip: ClipItem) => void
   /** 連続再生中のノード id（App から通知）。null で停止中。 */
   playingNodeId: number | null
 }
@@ -85,6 +87,7 @@ function NodeProgress({ nodeId }: { nodeId: number }) {
 export const SequenceView = memo(function SequenceView({
   onPlaySequence,
   onStopSequence,
+  onOpenClip,
   playingNodeId
 }: Props) {
   const [sequences, setSequences] = useState<Sequence[]>([])
@@ -111,19 +114,23 @@ export const SequenceView = memo(function SequenceView({
   )
   /** キャンバスのパン / ズーム。内容座標 → 画面座標は translate(x,y) scale(scale)。 */
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 })
-  /** 選択中ノード（クリックで選択、Delete で削除） */
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  /** 選択中ノード（クリック / 右ドラッグの矩形で選択、Delete で削除） */
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  /** 右ドラッグ中の選択矩形（キャンバス内容座標） */
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
+    null
+  )
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const nodesRef = useRef<SequenceNode[]>([])
   const viewRef = useRef(view)
   const dragRef = useRef<{
-    nodeId: number
+    nodeIds: number[]
     startX: number
     startY: number
-    origX: number
-    origY: number
+    orig: Map<number, { x: number; y: number }>
   } | null>(null)
+  const marqueeStartRef = useRef<{ x1: number; y1: number } | null>(null)
   const panRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
     null
   )
@@ -151,7 +158,7 @@ export const SequenceView = memo(function SequenceView({
   }, [])
 
   useEffect(() => {
-    setSelectedId(null)
+    setSelectedIds(new Set())
     if (activeId == null) {
       setNodes([])
       setEdges([])
@@ -238,35 +245,45 @@ export const SequenceView = memo(function SequenceView({
     await api.removeSequenceNode(nodeId)
     setNodes((prev) => prev.filter((n) => n.id !== nodeId))
     setEdges((prev) => prev.filter((e) => e.srcNodeId !== nodeId && e.dstNodeId !== nodeId))
-    setSelectedId((cur) => (cur === nodeId ? null : cur))
+    setSelectedIds((cur) => {
+      if (!cur.has(nodeId)) return cur
+      const next = new Set(cur)
+      next.delete(nodeId)
+      return next
+    })
   }, [])
 
-  // 選択中ノードを Delete キーで削除（入力欄フォーカス中は無効）
+  // 選択中ノードを Delete キーで一括削除（入力欄フォーカス中は無効）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' || selectedId == null) return
+      if (e.key !== 'Delete' || selectedIds.size === 0) return
       const t = document.activeElement as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      removeNode(selectedId)
+      for (const id of selectedIds) removeNode(id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, removeNode])
+  }, [selectedIds, removeNode])
 
   const removeEdge = async (edgeId: number) => {
     await api.removeSequenceEdge(edgeId)
     setEdges((prev) => prev.filter((e) => e.id !== edgeId))
   }
 
-  // --- ノードのドラッグ移動 ---
+  // --- ノードのドラッグ移動（選択中の複数ノードはまとめて動かす） ---
   const onDragMove = useCallback((e: MouseEvent) => {
     const d = dragRef.current
     if (!d) return
     // 画面上の移動量をズーム倍率で内容座標に換算
     const s = viewRef.current.scale
-    const nx = d.origX + (e.clientX - d.startX) / s
-    const ny = d.origY + (e.clientY - d.startY) / s
-    setNodes((prev) => prev.map((n) => (n.id === d.nodeId ? { ...n, x: nx, y: ny } : n)))
+    const dx = (e.clientX - d.startX) / s
+    const dy = (e.clientY - d.startY) / s
+    setNodes((prev) =>
+      prev.map((n) => {
+        const o = d.orig.get(n.id)
+        return o ? { ...n, x: o.x + dx, y: o.y + dy } : n
+      })
+    )
   }, [])
 
   const onDragUp = useCallback(() => {
@@ -275,25 +292,30 @@ export const SequenceView = memo(function SequenceView({
     window.removeEventListener('mousemove', onDragMove)
     window.removeEventListener('mouseup', onDragUp)
     if (d) {
-      const n = nodesRef.current.find((x) => x.id === d.nodeId)
-      if (n) api.moveSequenceNode(d.nodeId, n.x, n.y).catch(() => void 0)
+      for (const id of d.nodeIds) {
+        const n = nodesRef.current.find((x) => x.id === id)
+        if (n) api.moveSequenceNode(id, n.x, n.y).catch(() => void 0)
+      }
     }
   }, [onDragMove])
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
-    // 中ボタンなどはキャンバスのパンに任せる
+    // 中 / 右ボタンはキャンバス側（パン / 矩形選択）に任せる
     if (e.button !== 0) return
     // ポート / ボタンからの発火は無視（それぞれ専用ハンドラで処理）
     if ((e.target as HTMLElement).closest('.seq-port, .seq-node-remove')) return
     e.preventDefault()
     e.stopPropagation()
-    setSelectedId(node.id)
+    // 選択済みノードをつかんだ場合は選択を保ってグループごと移動、未選択なら単独選択
+    const ids = selectedIds.has(node.id) ? [...selectedIds] : [node.id]
+    setSelectedIds(new Set(ids))
     dragRef.current = {
-      nodeId: node.id,
+      nodeIds: ids,
       startX: e.clientX,
       startY: e.clientY,
-      origX: node.x,
-      origY: node.y
+      orig: new Map(
+        nodesRef.current.filter((n) => ids.includes(n.id)).map((n) => [n.id, { x: n.x, y: n.y }])
+      )
     }
     window.addEventListener('mousemove', onDragMove)
     window.addEventListener('mouseup', onDragUp)
@@ -316,10 +338,62 @@ export const SequenceView = memo(function SequenceView({
     window.removeEventListener('mouseup', onPanUp)
   }, [onPanMove])
 
+  /** 画面座標 → キャンバス内容座標（パン / ズームを考慮） */
+  const toContent = useCallback((clientX: number, clientY: number) => {
+    const el = canvasRef.current
+    const r = el?.getBoundingClientRect()
+    const v = viewRef.current
+    return {
+      x: (clientX - (r?.left ?? 0) - v.x) / v.scale,
+      y: (clientY - (r?.top ?? 0) - v.y) / v.scale
+    }
+  }, [])
+
+  // --- 右ドラッグの矩形選択（ラバーバンド）。矩形に重なるノードを選択する ---
+  const onMarqueeMove = useCallback(
+    (e: MouseEvent) => {
+      const m = marqueeStartRef.current
+      if (!m) return
+      const p = toContent(e.clientX, e.clientY)
+      setMarquee({ x1: m.x1, y1: m.y1, x2: p.x, y2: p.y })
+      const lox = Math.min(m.x1, p.x)
+      const hix = Math.max(m.x1, p.x)
+      const loy = Math.min(m.y1, p.y)
+      const hiy = Math.max(m.y1, p.y)
+      const ids = new Set<number>()
+      for (const n of nodesRef.current) {
+        if (n.x < hix && n.x + NODE_W > lox && n.y < hiy && n.y + NODE_H > loy) ids.add(n.id)
+      }
+      setSelectedIds(ids)
+    },
+    [toContent]
+  )
+
+  const onMarqueeUp = useCallback(
+    (e: MouseEvent) => {
+      if (e.button !== 2) return
+      marqueeStartRef.current = null
+      setMarquee(null)
+      window.removeEventListener('mousemove', onMarqueeMove)
+      window.removeEventListener('mouseup', onMarqueeUp)
+    },
+    [onMarqueeMove]
+  )
+
   const onCanvasMouseDown = (e: React.MouseEvent) => {
     const onBackground = e.target === canvasRef.current
+    if (e.button === 2) {
+      // 右ドラッグ: 矩形選択を開始（コンテキストメニューは onContextMenu で抑止）
+      e.preventDefault()
+      const p = toContent(e.clientX, e.clientY)
+      marqueeStartRef.current = { x1: p.x, y1: p.y }
+      setMarquee({ x1: p.x, y1: p.y, x2: p.x, y2: p.y })
+      window.addEventListener('mousemove', onMarqueeMove)
+      window.addEventListener('mouseup', onMarqueeUp)
+      return
+    }
     if (e.button === 1 || (e.button === 0 && onBackground)) {
-      if (e.button === 0) setSelectedId(null)
+      if (e.button === 0) setSelectedIds(new Set())
       e.preventDefault() // 中ボタンのオートスクロールを抑止
       panRef.current = {
         startX: e.clientX,
@@ -354,21 +428,10 @@ export const SequenceView = memo(function SequenceView({
       Math.round(p.y - NODE_H / 2)
     )
     setNodes((prev) => [...prev, node])
-    setSelectedId(node.id)
+    setSelectedIds(new Set([node.id]))
   }
 
   // --- エッジの接続（出力ポート → 入力ポート） ---
-  /** 画面座標 → キャンバス内容座標（パン / ズームを考慮） */
-  const toContent = useCallback((clientX: number, clientY: number) => {
-    const el = canvasRef.current
-    const r = el?.getBoundingClientRect()
-    const v = viewRef.current
-    return {
-      x: (clientX - (r?.left ?? 0) - v.x) / v.scale,
-      y: (clientY - (r?.top ?? 0) - v.y) / v.scale
-    }
-  }, [])
-
   const onConnectMove = useCallback(
     (e: MouseEvent) => {
       setConnecting((c) => (c ? { ...c, ...toContent(e.clientX, e.clientY) } : c))
@@ -546,7 +609,8 @@ export const SequenceView = memo(function SequenceView({
                 e.dataTransfer.setData('application/x-dcm-clip', String(c.id))
                 e.dataTransfer.effectAllowed = 'copy'
               }}
-              title={`${c.videoFilename}\nキャンバスへドラッグして配置`}
+              onClick={() => onOpenClip(c)}
+              title={`${c.videoFilename}\nクリック: 上部プレイヤーで再生 / ドラッグ: キャンバスへ配置`}
             >
               <NodeThumb clip={c} />
               <span className="seq-palette-label">{c.label ?? `区間 #${c.id}`}</span>
@@ -585,6 +649,7 @@ export const SequenceView = memo(function SequenceView({
           className="seq-canvas"
           ref={canvasRef}
           onMouseDown={onCanvasMouseDown}
+          onContextMenu={(e) => e.preventDefault()}
           onDragOver={onCanvasDragOver}
           onDrop={onCanvasDrop}
           style={{
@@ -634,7 +699,7 @@ export const SequenceView = memo(function SequenceView({
 
               {nodes.map((n) => {
                 const ord = orderIndex.get(n.id)
-                const cls = `seq-node${n.id === selectedId ? ' selected' : ''}${
+                const cls = `seq-node${selectedIds.has(n.id) ? ' selected' : ''}${
                   playingNodeId === n.id ? ' playing' : ''
                 }`
                 return (
@@ -681,6 +746,18 @@ export const SequenceView = memo(function SequenceView({
                   </div>
                 )
               })}
+
+              {marquee && (
+                <div
+                  className="seq-marquee"
+                  style={{
+                    left: Math.min(marquee.x1, marquee.x2),
+                    top: Math.min(marquee.y1, marquee.y2),
+                    width: Math.abs(marquee.x2 - marquee.x1),
+                    height: Math.abs(marquee.y2 - marquee.y1)
+                  }}
+                />
+              )}
             </div>
           )}
         </div>
