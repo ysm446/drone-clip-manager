@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, Sequence, SequenceEdge, SequenceNode } from '../../../shared/types'
+import type { ClipItem, Sequence, SequenceEdge, SequenceNode, TagCount } from '../../../shared/types'
 import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { IconFilm, IconPause, IconPlay } from './icons'
+import { Splitter } from './Splitter'
 
 const api = window.dcm
 
@@ -92,7 +93,18 @@ export const SequenceView = memo(function SequenceView({
   const [edges, setEdges] = useState<SequenceEdge[]>([])
   const [clips, setClips] = useState<ClipItem[]>([])
   const [paletteQuery, setPaletteQuery] = useState('')
+  const [allTags, setAllTags] = useState<TagCount[]>([])
+  /** パレットのタグ絞り込み（選んだタグを全て含むクリップだけ表示 = AND） */
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
   const [renaming, setRenaming] = useState<number | null>(null)
+  /** 各カラムの幅（境界のスプリッターでリサイズ） */
+  const [seqsW, setSeqsW] = useState(180)
+  // クリップ一覧はノードエリアと同程度の広さを既定にする（画面幅からシーケンス列を除いた約半分）
+  const [clipsW, setClipsW] = useState(() =>
+    Math.max(420, Math.round((window.innerWidth - 180) * 0.45))
+  )
+  const seqsBaseRef = useRef(0)
+  const clipsBaseRef = useRef(0)
   /** 接続中のドラッグ（出力ポート → 入力ポート）。座標はキャンバス内容座標。 */
   const [connecting, setConnecting] = useState<{ srcNodeId: number; x: number; y: number } | null>(
     null
@@ -127,6 +139,7 @@ export const SequenceView = memo(function SequenceView({
       setActiveId((cur) => cur ?? list[0]?.id ?? null)
     })
     api.listAllClips().then(setClips)
+    api.getAllTags().then(setAllTags)
   }, [])
 
   // 選択中シーケンスのグラフを読み込む
@@ -407,17 +420,37 @@ export const SequenceView = memo(function SequenceView({
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const isPlaying = playingNodeId != null
 
+  const toggleTagFilter = (tag: string) =>
+    setTagFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
+      return next
+    })
+
   const shownClips = useMemo(() => {
+    let list = clips
+    if (tagFilter.size > 0) {
+      list = list.filter((c) => {
+        const set = new Set(c.tags)
+        for (const t of tagFilter) if (!set.has(t)) return false
+        return true
+      })
+    }
     const q = paletteQuery.trim().toLowerCase()
-    if (!q) return clips
-    return clips.filter(
-      (c) => (c.label ?? '').toLowerCase().includes(q) || c.videoFilename.toLowerCase().includes(q)
+    if (!q) return list
+    return list.filter(
+      (c) =>
+        (c.label ?? '').toLowerCase().includes(q) ||
+        c.videoFilename.toLowerCase().includes(q) ||
+        c.tags.some((t) => t.toLowerCase().includes(q))
     )
-  }, [clips, paletteQuery])
+  }, [clips, paletteQuery, tagFilter])
 
   return (
     <div className="sequence-view">
-      <div className="seq-sidebar">
+      {/* 1 列目: シーケンス一覧 */}
+      <div className="seq-col seq-col-seqs" style={{ width: seqsW }}>
         <div className="seq-side-head">
           シーケンス
           <button className="btn small" onClick={createSeq}>
@@ -467,7 +500,16 @@ export const SequenceView = memo(function SequenceView({
             </div>
           ))}
         </div>
+      </div>
 
+      <Splitter
+        axis="x"
+        onStart={() => (seqsBaseRef.current = seqsW)}
+        onDelta={(dx) => setSeqsW(Math.max(120, Math.min(400, seqsBaseRef.current + dx)))}
+      />
+
+      {/* 2 列目: クリップパレット */}
+      <div className="seq-col seq-col-clips" style={{ width: clipsW }}>
         <div className="seq-side-head">クリップ</div>
         <input
           className="clips-search"
@@ -475,6 +517,25 @@ export const SequenceView = memo(function SequenceView({
           value={paletteQuery}
           onChange={(e) => setPaletteQuery(e.target.value)}
         />
+        {allTags.length > 0 && (
+          <div className="clips-tagfilter">
+            {allTags.map((t) => (
+              <button
+                key={t.tag}
+                className={`tag-chip filter${tagFilter.has(t.tag) ? ' active' : ''}`}
+                onClick={() => toggleTagFilter(t.tag)}
+              >
+                {t.tag}
+                <span className="tag-chip-count">{t.count}</span>
+              </button>
+            ))}
+            {tagFilter.size > 0 && (
+              <button className="btn small" onClick={() => setTagFilter(new Set())}>
+                クリア
+              </button>
+            )}
+          </div>
+        )}
         <div className="seq-palette">
           {shownClips.map((c) => (
             <div
@@ -494,6 +555,13 @@ export const SequenceView = memo(function SequenceView({
         </div>
       </div>
 
+      <Splitter
+        axis="x"
+        onStart={() => (clipsBaseRef.current = clipsW)}
+        onDelta={(dx) => setClipsW(Math.max(200, Math.min(1200, clipsBaseRef.current + dx)))}
+      />
+
+      {/* 3 列目: ノードネットワーク */}
       <div className="seq-main">
         <div className="seq-toolbar">
           <span className="seq-count">{playItems.length} ノード（順路）</span>

@@ -1795,15 +1795,22 @@ body.resizing {
   font-size: var(--fs-xs);
 }
 
-/* 左ペイン: シーケンス一覧 + クリップパレット */
-.seq-sidebar {
-  width: 240px;
+/* 左の 2 列: シーケンス一覧 / クリップパレット（幅は state 管理でスプリッターからリサイズ） */
+.seq-col {
   flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--border);
+  min-width: 0;
   background: var(--surface);
+}
+/* パレットのタグ絞り込み（クリップ画面の chips 行を狭いカラム向けに詰める）。
+   .clips-tagfilter 本体がファイル後方で定義されるため、詳細度を上げて上書きする */
+.seq-col .clips-tagfilter {
+  padding: 0 12px 6px;
+  max-height: 96px;
+  overflow: auto;
+  flex: none;
 }
 .seq-side-head {
   display: flex;
@@ -1815,7 +1822,7 @@ body.resizing {
   border-bottom: 1px solid var(--border);
 }
 .seq-list {
-  max-height: 30%;
+  flex: 1;
   overflow: auto;
   padding: 4px;
 }
@@ -1867,22 +1874,24 @@ body.resizing {
 .seq-list-item:hover .seq-del {
   color: var(--danger);
 }
-.seq-sidebar .clips-search {
+.seq-col .clips-search {
   margin: 6px 12px;
   width: auto;
 }
+/* クリップパレット: サムネイルカードを行列（グリッド）で並べる */
 .seq-palette {
   flex: 1;
   overflow: auto;
-  padding: 4px 8px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  align-content: start;
 }
 .seq-palette-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 4px;
   border: 1px solid transparent;
   border-radius: var(--radius-m);
@@ -1891,6 +1900,7 @@ body.resizing {
   cursor: grab;
   text-align: left;
   user-select: none;
+  min-width: 0;
 }
 .seq-palette-item:hover:not(.disabled) {
   background: var(--hover);
