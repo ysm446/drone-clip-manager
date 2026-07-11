@@ -699,8 +699,61 @@ export function App() {
           .sort((a, b) => a.inTime - b.inTime)
       )
       api.updateSegment(id, { inTime: inT, outTime: outT, inSnapped, outSnapped }).catch(() => void 0)
+      return { inSnapped, outSnapped }
     },
     [keyframes, duration]
+  )
+
+  /** クリップ一覧（ClipsView）へ区間の時刻変更をその場で反映するためのパッチ */
+  const [segPatch, setSegPatch] = useState<{
+    id: number
+    inTime: number
+    outTime: number
+    inSnapped: number | null
+    outSnapped: number | null
+  } | null>(null)
+
+  /**
+   * 選択中の区間の in / out を 1 キーフレームずらす（シークバー横のボタン）。
+   * 書き出しはキーフレーム境界のストリームコピーなので、実際に効く最小単位は
+   * キーフレーム 1 個分（秒数指定の微調整はキーフレームを跨がない限り結果に現れない）。
+   */
+  const nudgeSelectedSeg = useCallback(
+    (edge: 'in' | 'out', dir: -1 | 1) => {
+      if (selectedSeg == null || keyframes.length === 0) return
+      const s = segments.find((x) => x.id === selectedSeg)
+      if (!s) return
+      const dur = duration || meta?.durationSec || 0
+      const EPS = 0.001
+      let inT = s.inTime
+      let outT = s.outTime
+      if (edge === 'in') {
+        const cur = s.inSnapped ?? keyframeBefore(keyframes, s.inTime)
+        const target =
+          dir < 0
+            ? keyframeBefore(keyframes, cur - EPS)
+            : keyframeAfter(keyframes, cur + EPS, dur || cur)
+        if (Math.abs(target - cur) < EPS) return // 先頭 / 末尾でこれ以上動けない
+        if (target >= outT - 0.05) return // out を跨がない
+        inT = target
+      } else {
+        const cur = s.outSnapped ?? keyframeAfter(keyframes, s.outTime, dur || s.outTime)
+        const target =
+          dir < 0
+            ? keyframeBefore(keyframes, cur - EPS)
+            : keyframeAfter(keyframes, cur + EPS, dur || cur)
+        if (Math.abs(target - cur) < EPS) return
+        if (target <= inT + 0.05) return // in を跨がない
+        outT = dur > 0 ? Math.min(target, dur) : target
+      }
+      const snapped = updateSegmentTimes(selectedSeg, inT, outT)
+      setSegPatch({ id: selectedSeg, inTime: inT, outTime: outT, ...snapped })
+      // クリップ再生中はループ範囲も新しいスナップ値に追従させる（再生位置はそのまま）
+      if (view === 'clips' && clipPlayRef.current) {
+        setClipPlayRange({ in: snapped.inSnapped, out: snapped.outSnapped })
+      }
+    },
+    [selectedSeg, segments, keyframes, duration, meta, updateSegmentTimes, setClipPlayRange, view]
   )
 
   const deleteSeg = useCallback(
@@ -1240,6 +1293,27 @@ export function App() {
                   <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
                     {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
+                  {selectedSeg != null && (
+                    <span
+                      className="nudge-group"
+                      title="クリップの開始位置を 1 キーフレームずらす（書き出しの最小単位）"
+                    >
+                      <button
+                        className="nudge-btn"
+                        disabled={keyframes.length === 0}
+                        onClick={() => nudgeSelectedSeg('in', -1)}
+                      >
+                        ◀
+                      </button>
+                      <button
+                        className="nudge-btn"
+                        disabled={keyframes.length === 0}
+                        onClick={() => nudgeSelectedSeg('in', 1)}
+                      >
+                        ▶
+                      </button>
+                    </span>
+                  )}
                   <PlayerSeek
                     start={clipMode ? clipPlay!.in : 0}
                     end={clipMode ? clipPlay!.out : fullDur}
@@ -1250,6 +1324,27 @@ export function App() {
                     disabled={!selected}
                     getThumb={getSeekThumb}
                   />
+                  {selectedSeg != null && (
+                    <span
+                      className="nudge-group"
+                      title="クリップの終了位置を 1 キーフレームずらす（書き出しの最小単位）"
+                    >
+                      <button
+                        className="nudge-btn"
+                        disabled={keyframes.length === 0}
+                        onClick={() => nudgeSelectedSeg('out', -1)}
+                      >
+                        ◀
+                      </button>
+                      <button
+                        className="nudge-btn"
+                        disabled={keyframes.length === 0}
+                        onClick={() => nudgeSelectedSeg('out', 1)}
+                      >
+                        ▶
+                      </button>
+                    </span>
+                  )}
                   <span className="mpv-time">
                     {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}
                   </span>
@@ -1354,6 +1449,7 @@ export function App() {
               onOpenClip={openClip}
               onExport={setExportItems}
               selectedVideoRel={selected}
+              segmentPatch={segPatch}
             />
           ) : view === 'sequence' ? (
             <SequenceView

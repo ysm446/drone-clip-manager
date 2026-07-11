@@ -14,6 +14,14 @@ interface Props {
   onExport: (targets: ExportTarget[]) => void
   /** 現在プレイヤーで開いている動画の相対パス（再生中クリップの強調に使う） */
   selectedVideoRel: string | null
+  /** プレイヤー側での in/out 調整をカード表示へその場で反映するためのパッチ */
+  segmentPatch?: {
+    id: number
+    inTime: number
+    outTime: number
+    inSnapped: number | null
+    outSnapped: number | null
+  } | null
 }
 
 type SortKey = 'video' | 'newest' | 'duration' | 'label'
@@ -66,7 +74,12 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
 }
 
 // 再生ヘッドの時刻更新で App が再レンダリングされてもカード一覧を描き直さないよう memo 化
-export const ClipsView = memo(function ClipsView({ onOpenClip, onExport, selectedVideoRel }: Props) {
+export const ClipsView = memo(function ClipsView({
+  onOpenClip,
+  onExport,
+  selectedVideoRel,
+  segmentPatch
+}: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -92,6 +105,12 @@ export const ClipsView = memo(function ClipsView({ onOpenClip, onExport, selecte
       alive = false
     }
   }, [])
+
+  // プレイヤー側の in/out 調整（±1 キーフレームボタン等）をカードへその場で反映
+  useEffect(() => {
+    if (!segmentPatch) return
+    setClips((prev) => prev.map((c) => (c.id === segmentPatch.id ? { ...c, ...segmentPatch } : c)))
+  }, [segmentPatch])
 
   const refreshTags = () => api.getAllTags().then(setAllTags)
 

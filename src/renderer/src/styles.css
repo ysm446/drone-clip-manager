@@ -870,6 +870,27 @@ body.resizing {
   font-weight: 600;
   font-size: var(--fs-ui);
 }
+/* シークバー左右の in/out ナッジボタン（±0.5s。区間選択中のみ表示） */
+.nudge-group {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.nudge-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-s);
+  font-size: var(--fs-xs);
+  padding: 2px 5px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.nudge-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 /* メタバー右側の再生速度セレクタ */
 .speed-select {
   background: var(--surface);
