@@ -573,11 +573,15 @@ export function App() {
     }
   }, [])
 
+  /** シーケンス再生のキュー（シークバーをシーケンス全体表示にするため state でも持つ） */
+  const [seqQueue, setSeqQueue] = useState<SeqPlayItem[] | null>(null)
+
   const stopSequence = useCallback(() => {
     seqActiveRef.current = false
     seqArmedRef.current = false
     autoPlayNextRef.current = false
     setPlayingNodeId(null)
+    setSeqQueue(null)
     if (mpvModeRef.current) {
       api.mpvPause()
       mpvPausedRef.current = true
@@ -587,9 +591,10 @@ export function App() {
     }
   }, [])
 
-  // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）
+  // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）。
+  // atSec を渡すと in 点ではなくその位置から再生する（シーケンスバーからのシーク用）。
   const loadSeqIndex = useCallback(
-    (i: number) => {
+    (i: number, atSec?: number) => {
       const item = seqQueueRef.current[i]
       if (!item) {
         stopSequence()
@@ -598,14 +603,14 @@ export function App() {
       seqIndexRef.current = i
       seqArmedRef.current = false
       setPlayingNodeId(item.nodeId)
-      const inSec = item.clip.inSnapped ?? item.clip.inTime
+      const startSec = atSec ?? item.clip.inSnapped ?? item.clip.inTime
       const rel = item.clip.videoRelPath
       if (currentRelRef.current === rel) {
-        seek(inSec)
+        seek(startSec)
         resumePlay()
       } else {
         autoPlayNextRef.current = true
-        pendingSeekRef.current = inSec
+        pendingSeekRef.current = startSec
         selectVideo(rel)
       }
     },
@@ -618,6 +623,13 @@ export function App() {
       const item = seqQueueRef.current[seqIndexRef.current]
       if (!item) return
       const out = item.clip.outSnapped ?? item.clip.outTime
+      // 再生中ノードの進捗バーへ通知（SequenceView は memo 化しているため
+      // props ではなくイベントで流し、バーの DOM だけを更新する）
+      const inSec = item.clip.inSnapped ?? item.clip.inTime
+      const ratio = Math.min(1, Math.max(0, (t - inSec) / Math.max(0.001, out - inSec)))
+      window.dispatchEvent(
+        new CustomEvent('dcm:seq-progress', { detail: { nodeId: item.nodeId, ratio } })
+      )
       // ロード直後は旧位置の時刻が残ることがあるので、一度範囲内に入るまで送らない
       if (!seqArmedRef.current) {
         if (t < out - 0.05) seqArmedRef.current = true
@@ -639,9 +651,74 @@ export function App() {
       if (items.length === 0) return
       seqQueueRef.current = items
       seqActiveRef.current = true
+      setSeqQueue(items)
       loadSeqIndex(0)
     },
     [loadSeqIndex]
+  )
+
+  /**
+   * シーケンス先頭からの経過時間を「キューの index + その動画内の絶対時刻」へ変換する。
+   * out ぎりぎりへ飛ぶと自動送りが再アームできないため、末尾は 0.2 秒手前でクランプ。
+   */
+  const seqLocate = useCallback((ts: number) => {
+    const q = seqQueueRef.current
+    let acc = 0
+    for (let i = 0; i < q.length; i++) {
+      const c = q[i].clip
+      const inSec = c.inSnapped ?? c.inTime
+      const d = Math.max(0, (c.outSnapped ?? c.outTime) - inSec)
+      if (ts < acc + d || i === q.length - 1) {
+        return { idx: i, sec: inSec + Math.min(Math.max(0, ts - acc), Math.max(0, d - 0.2)) }
+      }
+      acc += d
+    }
+    return null
+  }, [])
+
+  // シーケンスバーからのシーク: 同一クリップ内はシーク、別クリップはそのクリップへジャンプ
+  const seekSequence = useCallback(
+    (ts: number) => {
+      const loc = seqLocate(ts)
+      if (!loc) return
+      if (loc.idx === seqIndexRef.current) {
+        seqArmedRef.current = false // out 付近から戻った場合に備えて再アーム
+        seek(loc.sec)
+      } else {
+        loadSeqIndex(loc.idx, loc.sec)
+      }
+    },
+    [seqLocate, seek, loadSeqIndex]
+  )
+
+  // シーケンスバーのホバーサムネイル: シーケンス時間 → 該当クリップの動画・時刻で生成
+  const getSeqThumb = useCallback(
+    async (ts: number): Promise<string | null> => {
+      const loc = seqLocate(ts)
+      if (!loc) return null
+      const q = seqQueueRef.current
+      const clip = q[loc.idx].clip
+      const total = q.reduce(
+        (s, it) =>
+          s +
+          Math.max(
+            0,
+            (it.clip.outSnapped ?? it.clip.outTime) - (it.clip.inSnapped ?? it.clip.inTime)
+          ),
+        0
+      )
+      // 通常バーと同じ方針でグリッドに量子化してキャッシュを効かせる
+      const step = Math.max(0.5, Math.min(10, total / 60))
+      const qt = Math.max(0, Math.round(loc.sec / step) * step)
+      const key = `${clip.videoRelPath}|${qt.toFixed(3)}`
+      const cached = seekThumbCacheRef.current.get(key)
+      if (cached) return cached
+      const name = await api.ensureThumb(clip.videoRelPath, qt)
+      const url = api.thumbUrl(name)
+      seekThumbCacheRef.current.set(key, url)
+      return url
+    },
+    [seqLocate]
   )
 
   // <video> の時刻更新（シーケンス自動送り / クリップのループを兼ねる）
@@ -1189,6 +1266,38 @@ export function App() {
   const clipMode = view === 'clips' && clipPlay != null
   const fullDur = duration || meta?.durationSec || 0
 
+  // シーケンス再生中は、シークバーを「クリップを連結した仮想タイムライン（0..合計）」にする
+  const seqPlayback = useMemo(() => {
+    if (playingNodeId == null || !seqQueue || seqQueue.length === 0) return null
+    const durs = seqQueue.map((it) =>
+      Math.max(
+        0,
+        (it.clip.outSnapped ?? it.clip.outTime) - (it.clip.inSnapped ?? it.clip.inTime)
+      )
+    )
+    const offsets: number[] = []
+    let total = 0
+    for (const d of durs) {
+      offsets.push(total)
+      total += d
+    }
+    const idx = seqQueue.findIndex((it) => it.nodeId === playingNodeId)
+    if (idx < 0) return null
+    return { durs, offsets, total, idx }
+  }, [seqQueue, playingNodeId])
+  const seqMode = seqPlayback != null
+  // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置
+  let seqTime = 0
+  if (seqPlayback && seqQueue) {
+    const c = seqQueue[seqPlayback.idx].clip
+    seqTime =
+      seqPlayback.offsets[seqPlayback.idx] +
+      Math.min(
+        seqPlayback.durs[seqPlayback.idx],
+        Math.max(0, currentTime - (c.inSnapped ?? c.inTime))
+      )
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -1315,14 +1424,28 @@ export function App() {
                     </span>
                   )}
                   <PlayerSeek
-                    start={clipMode ? clipPlay!.in : 0}
-                    end={clipMode ? clipPlay!.out : fullDur}
-                    currentTime={currentTime}
-                    clipIn={clipMode ? null : selClipRange?.in ?? null}
-                    clipOut={clipMode ? null : selClipRange?.out ?? null}
-                    onSeek={seek}
+                    start={seqMode || !clipMode ? 0 : clipPlay!.in}
+                    end={seqMode ? seqPlayback!.total : clipMode ? clipPlay!.out : fullDur}
+                    currentTime={seqMode ? seqTime : currentTime}
+                    clipIn={
+                      // シーケンス再生中は再生中クリップの範囲を帯で示す
+                      seqMode
+                        ? seqPlayback!.offsets[seqPlayback!.idx]
+                        : clipMode
+                          ? null
+                          : selClipRange?.in ?? null
+                    }
+                    clipOut={
+                      seqMode
+                        ? seqPlayback!.offsets[seqPlayback!.idx] +
+                          seqPlayback!.durs[seqPlayback!.idx]
+                        : clipMode
+                          ? null
+                          : selClipRange?.out ?? null
+                    }
+                    onSeek={seqMode ? seekSequence : seek}
                     disabled={!selected}
-                    getThumb={getSeekThumb}
+                    getThumb={seqMode ? getSeqThumb : getSeekThumb}
                   />
                   {selectedSeg != null && (
                     <span
@@ -1346,12 +1469,15 @@ export function App() {
                     </span>
                   )}
                   <span className="mpv-time">
-                    {clipMode
-                      ? // クリップ再生中はクリップ内の相対位置 / クリップの長さ（作業の主役は長さ）
-                        `${fmtSec(Math.max(0, currentTime - clipPlay!.in))} / ${fmtSec(
-                          clipPlay!.out - clipPlay!.in
-                        )}`
-                      : `${fmtTime(currentTime)} / ${fmtTime(duration || meta?.durationSec || 0)}`}
+                    {seqMode
+                      ? // シーケンス再生中はシーケンス先頭からの経過 / 合計
+                        `${fmtTime(seqTime)} / ${fmtTime(seqPlayback!.total)}`
+                      : clipMode
+                        ? // クリップ再生中はクリップ内の相対位置 / クリップの長さ（作業の主役は長さ）
+                          `${fmtSec(Math.max(0, currentTime - clipPlay!.in))} / ${fmtSec(
+                            clipPlay!.out - clipPlay!.in
+                          )}`
+                        : `${fmtTime(currentTime)} / ${fmtTime(duration || meta?.durationSec || 0)}`}
                   </span>
                 </div>
               </>

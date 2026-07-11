@@ -2050,6 +2050,22 @@ body.resizing {
   height: 100%;
   object-fit: contain;
 }
+/* 再生中ノードのシークバー（表示のみ）。サムネイル（高さ 94px）の下端に重ねる */
+.seq-node-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 91px;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2;
+  pointer-events: none;
+}
+.seq-node-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
 .seq-node-label {
   padding: 4px 8px 0;
   font-size: var(--fs-sm);

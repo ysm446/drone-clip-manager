@@ -58,6 +58,28 @@ function NodeThumb({ clip }: { clip: ClipItem }) {
   )
 }
 
+/**
+ * 再生中ノードのシークバー（表示のみ）。App が dispatch する 'dcm:seq-progress' を
+ * 購読し、React の再レンダリングを介さず幅だけを直接更新する（グラフの memo を保つため）。
+ */
+function NodeProgress({ nodeId }: { nodeId: number }) {
+  const fillRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail as { nodeId: number; ratio: number }
+      if (d.nodeId === nodeId && fillRef.current)
+        fillRef.current.style.width = `${(d.ratio * 100).toFixed(2)}%`
+    }
+    window.addEventListener('dcm:seq-progress', onProgress)
+    return () => window.removeEventListener('dcm:seq-progress', onProgress)
+  }, [nodeId])
+  return (
+    <div className="seq-node-progress">
+      <div className="seq-node-progress-fill" ref={fillRef} />
+    </div>
+  )
+}
+
 // 再生ヘッドの時刻更新で App が再レンダリングされてもグラフを描き直さないよう memo 化
 export const SequenceView = memo(function SequenceView({
   onPlaySequence,
@@ -576,6 +598,7 @@ export const SequenceView = memo(function SequenceView({
                     {n.clip ? (
                       <>
                         <NodeThumb clip={n.clip} />
+                        {playingNodeId === n.id && <NodeProgress nodeId={n.id} />}
                         <div className="seq-node-label">
                           {n.clip.label ?? `区間 #${n.clip.id}`}
                         </div>
