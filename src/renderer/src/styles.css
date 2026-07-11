@@ -2160,6 +2160,13 @@ body.resizing {
   z-index: 3;
   cursor: crosshair;
 }
+/* 見た目は 14px のまま、当たり判定だけ広げる（ドラッグの開始 / 接続先のドロップとも効く） */
+.seq-port::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+}
 .seq-port.in {
   left: -7px;
 }

@@ -606,8 +606,9 @@ export function App() {
 
   // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）。
   // atSec を渡すと in 点ではなくその位置から再生する（シーケンスバーからのシーク用）。
+  // autoplay=false で頭出しのみ（一時停止のまま位置だけ移動する）。
   const loadSeqIndex = useCallback(
-    (i: number, atSec?: number) => {
+    (i: number, atSec?: number, autoplay = true) => {
       const item = seqQueueRef.current[i]
       if (!item) {
         stopSequence()
@@ -623,9 +624,9 @@ export function App() {
         // 再生中のクリップを in/out ナッジの対象にする
         setSelectedSeg(item.clip.id)
         seek(startSec)
-        resumePlay()
+        if (autoplay) resumePlay()
       } else {
-        autoPlayNextRef.current = true
+        autoPlayNextRef.current = autoplay
         pendingSeekRef.current = startSec
         // selectVideo が selectedSeg を解除するので、ロード後に再設定する
         selectVideo(rel).then(() => {
@@ -675,6 +676,29 @@ export function App() {
       setClipPlay(null)
       setSeqQueue(items)
       loadSeqIndex(0)
+    },
+    [loadSeqIndex]
+  )
+
+  /**
+   * ノードのクリック（シーケンス画面）: そのノードの開始位置へ頭出しする。
+   * その時点のグラフから作った順路をキューとして採用し、
+   * 再生中ならそのまま続きを再生、停止中なら停止のまま位置だけ移動する。
+   */
+  const jumpToNode = useCallback(
+    (items: SeqPlayItem[], nodeId: number) => {
+      const idx = items.findIndex((it) => it.nodeId === nodeId)
+      if (idx < 0) return // 順路に入っていないノード（未接続）は何もしない
+      const wasPlaying = mpvModeRef.current
+        ? !mpvPausedRef.current
+        : !!videoRef.current && !videoRef.current.paused
+      seqQueueRef.current = items
+      seqActiveRef.current = true
+      // プレビュー再生のループ範囲が残っていたら解除
+      clipPlayRef.current = null
+      setClipPlay(null)
+      setSeqQueue(items)
+      loadSeqIndex(idx, undefined, wasPlaying)
     },
     [loadSeqIndex]
   )
@@ -1627,6 +1651,7 @@ export function App() {
               onPlaySequence={playSequence}
               onStopSequence={stopSequence}
               onOpenClip={openClip}
+              onJumpToNode={jumpToNode}
               playingNodeId={playingNodeId}
               segmentPatch={segPatch}
             />

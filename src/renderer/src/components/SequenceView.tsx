@@ -19,6 +19,8 @@ interface Props {
   onStopSequence: () => void
   /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
   onOpenClip: (clip: ClipItem) => void
+  /** ノードのクリックで、順路（items）内のそのノードの開始位置へ頭出しする */
+  onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** 連続再生中のノード id（App から通知）。null で停止中。 */
   playingNodeId: number | null
   /** プレイヤー側での in/out 調整をパレット / ノード表示へその場で反映するためのパッチ */
@@ -96,6 +98,7 @@ export const SequenceView = memo(function SequenceView({
   onPlaySequence,
   onStopSequence,
   onOpenClip,
+  onJumpToNode,
   playingNodeId,
   segmentPatch
 }: Props) {
@@ -135,10 +138,15 @@ export const SequenceView = memo(function SequenceView({
   const viewRef = useRef(view)
   const dragRef = useRef<{
     nodeIds: number[]
+    /** mousedown したノード（動かさずに離したときの頭出しジャンプ先） */
+    pressNodeId: number
+    /** しきい値を超えて動かしたか（false のまま離れたらクリック扱い） */
+    moved: boolean
     startX: number
     startY: number
     orig: Map<number, { x: number; y: number }>
   } | null>(null)
+  const playItemsRef = useRef<SeqPlayItem[]>([])
   const marqueeStartRef = useRef<{ x1: number; y1: number } | null>(null)
   const panRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
     null
@@ -233,6 +241,7 @@ export const SequenceView = memo(function SequenceView({
     }
     return items
   }, [nodes, edges])
+  playItemsRef.current = playItems
 
   const totalDur = useMemo(
     () => playItems.reduce((s, it) => s + clipDuration(it.clip), 0),
@@ -293,6 +302,11 @@ export const SequenceView = memo(function SequenceView({
   const onDragMove = useCallback((e: MouseEvent) => {
     const d = dragRef.current
     if (!d) return
+    // しきい値（4px）を超えるまでは動かさない（クリック判定を潰さないため）
+    if (!d.moved) {
+      if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) <= 4) return
+      d.moved = true
+    }
     // 画面上の移動量をズーム倍率で内容座標に換算
     const s = viewRef.current.scale
     const dx = (e.clientX - d.startX) / s
@@ -310,13 +324,18 @@ export const SequenceView = memo(function SequenceView({
     dragRef.current = null
     window.removeEventListener('mousemove', onDragMove)
     window.removeEventListener('mouseup', onDragUp)
-    if (d) {
+    if (!d) return
+    if (d.moved) {
       for (const id of d.nodeIds) {
         const n = nodesRef.current.find((x) => x.id === id)
         if (n) api.moveSequenceNode(id, n.x, n.y).catch(() => void 0)
       }
+    } else {
+      // 動かさずに離した = クリック: そのノードの開始位置へ頭出し
+      const n = nodesRef.current.find((x) => x.id === d.pressNodeId)
+      if (n?.clip) onJumpToNode(playItemsRef.current, n.id)
     }
-  }, [onDragMove])
+  }, [onDragMove, onJumpToNode])
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
     // 中 / 右ボタンはキャンバス側（パン / 矩形選択）に任せる
@@ -330,6 +349,8 @@ export const SequenceView = memo(function SequenceView({
     setSelectedIds(new Set(ids))
     dragRef.current = {
       nodeIds: ids,
+      pressNodeId: node.id,
+      moved: false,
       startX: e.clientX,
       startY: e.clientY,
       orig: new Map(
@@ -481,7 +502,8 @@ export const SequenceView = memo(function SequenceView({
     const c = connectingRef.current
     if (!c) return
     e.stopPropagation()
-    connectingRef.current = null
+    // stopPropagation で window の mouseup（onConnectUp）が届かないため、ここで明示的に後片付けする
+    onConnectUp()
     if (c.srcNodeId !== node.id && activeId != null) {
       try {
         await api.addSequenceEdge(activeId, c.srcNodeId, node.id)
@@ -490,7 +512,6 @@ export const SequenceView = memo(function SequenceView({
         // 閉路など: 無視
       }
     }
-    // 後片付けは onConnectUp（window mouseup）が行う
   }
 
   // --- 再生 ---
