@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
-import { fmtTime } from '../util'
+import { fmtSec, fmtTime } from '../util'
 import { IconFilm } from './icons'
 import { TagEditor } from './TagEditor'
 
@@ -68,7 +68,7 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
       ) : (
         <span className="clip-thumb-ph">{failed ? '×' : <IconFilm size={22} />}</span>
       )}
-      <span className="clip-thumb-dur">{fmtTime(clipDuration(clip))}</span>
+      <span className="clip-thumb-dur">{fmtSec(clipDuration(clip))}</span>
     </div>
   )
 }
@@ -332,6 +332,7 @@ export const ClipsView = memo(function ClipsView({
                   onChange={(e) => rename(c.id, e.target.value)}
                   onClick={(e) => e.stopPropagation()}
                 />
+                <div className="clip-dur-main">{fmtSec(hi - lo)}</div>
                 <div className="clip-video-name" title={c.videoRelPath}>
                   {c.videoFilename}
                 </div>

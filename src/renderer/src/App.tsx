@@ -13,7 +13,7 @@ import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
 import { Filmstrip } from './components/Filmstrip'
 import { IconPause, IconPlay } from './components/icons'
-import { colorForIndex, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
+import { colorForIndex, fmtSec, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
 
@@ -1346,7 +1346,12 @@ export function App() {
                     </span>
                   )}
                   <span className="mpv-time">
-                    {fmtTime(currentTime)} / {fmtTime(duration || meta?.durationSec || 0)}
+                    {clipMode
+                      ? // クリップ再生中はクリップ内の相対位置 / クリップの長さ（作業の主役は長さ）
+                        `${fmtSec(Math.max(0, currentTime - clipPlay!.in))} / ${fmtSec(
+                          clipPlay!.out - clipPlay!.in
+                        )}`
+                      : `${fmtTime(currentTime)} / ${fmtTime(duration || meta?.durationSec || 0)}`}
                   </span>
                 </div>
               </>

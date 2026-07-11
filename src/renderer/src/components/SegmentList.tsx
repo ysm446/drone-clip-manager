@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import type { Segment, TagCount } from '../../../shared/types'
-import { colorForIndex, fmtTime } from '../util'
+import { colorForIndex, fmtSec, fmtTime } from '../util'
 import { TagEditor } from './TagEditor'
 
 const api = window.dcm
@@ -68,16 +68,16 @@ export const SegmentList = memo(function SegmentList({
                 onChange={(e) => onRename(s.id, e.target.value)}
                 onClick={(e) => e.stopPropagation()}
               />
-              <span className="seg-time" onClick={() => onJump(lo)} title="先頭へジャンプ">
-                {fmtTime(lo)} – {fmtTime(hi)}
-              </span>
+              <span className="seg-dur">{fmtSec(hi - lo)}</span>
               <TagEditor
                 tags={s.tags ?? []}
                 onAdd={(t) => addTag(s.id, t)}
                 onRemove={(t) => removeTag(s.id, t)}
                 suggestions={allTags.map((t) => t.tag)}
               />
-              <span className="seg-dur">{fmtTime(hi - lo)}</span>
+              <span className="seg-time" onClick={() => onJump(lo)} title="先頭へジャンプ">
+                {fmtTime(lo)} – {fmtTime(hi)}
+              </span>
               <button
                 className="seg-del"
                 title="削除"

@@ -9,10 +9,13 @@ export function fmtTime(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
 }
 
-/** 秒 → 短い秒数表示（例: 12.3s）。区間バーなど幅の限られる場所用。 */
+/** 秒 → 短い長さ表示。60 秒未満は `12.3s`、以上は `1:23.4`。クリップの長さ表示用。 */
 export function fmtSec(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) sec = 0
-  return `${sec.toFixed(1)}s`
+  if (sec < 60) return `${sec.toFixed(1)}s`
+  const m = Math.floor(sec / 60)
+  const s = sec - m * 60
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`
 }
 
 /** バイト数 → 人間可読 */

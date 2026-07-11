@@ -1326,19 +1326,22 @@ body.resizing {
   outline: none;
 }
 .seg-time {
-  color: var(--muted);
+  margin-left: auto;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 .seg-time:hover {
   color: var(--accent);
 }
+/* 長さ（作業の主役なのでラベルの隣に太字で表示） */
 .seg-dur {
-  margin-left: auto;
-  color: var(--muted);
+  color: var(--text);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-sm);
+  flex: none;
 }
 .seg-del {
   background: transparent;
@@ -1522,9 +1525,16 @@ body.resizing {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* クリップの長さ（作業の主役なので太字で強調） */
+.clip-dur-main {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
 .clip-times {
-  color: var(--muted);
-  font-size: var(--fs-sm);
+  color: var(--faint);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 .clip-badges {
