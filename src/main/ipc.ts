@@ -38,12 +38,14 @@ import {
   addSequenceEdge,
   removeSequenceEdge
 } from './services/db'
-import { exportOne } from './services/export'
+import { exportConcat, exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BgmInfo,
+  ConcatItem,
+  ConcatResult,
   DeleteResult,
   MoveResult,
   ExportJob,
@@ -283,6 +285,21 @@ export function registerIpc(): void {
         }
       }
       return results
+    }
+  )
+
+  // シーケンスの無劣化連結書き出し（Phase 2.6）
+  ipcMain.handle(
+    'seq:export',
+    async (e, items: ConcatItem[], outDir: string, name: string): Promise<ConcatResult> => {
+      try {
+        const outPath = await exportConcat(items, outDir, name, (phase, index, percent) =>
+          e.sender.send('seq:exportProgress', { phase, index, total: items.length, percent })
+        )
+        return { ok: true, outPath }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
     }
   )
 }

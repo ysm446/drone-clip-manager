@@ -2038,6 +2038,43 @@ body.resizing {
   pointer-events: none;
   z-index: 5;
 }
+/* シーケンスの連結書き出しモーダル */
+.seq-export-modal {
+  width: 440px;
+}
+.seq-export-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: var(--fs-sm);
+}
+.seq-export-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.seq-export-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.seq-export-pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.seq-export-path {
+  color: var(--muted);
+  word-break: break-all;
+  user-select: text;
+}
+.seq-export-err {
+  color: var(--danger);
+  word-break: break-all;
+}
 .seq-node.playing {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-border), var(--shadow-1);

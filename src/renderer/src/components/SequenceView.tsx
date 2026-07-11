@@ -1,5 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, Sequence, SequenceEdge, SequenceNode, TagCount } from '../../../shared/types'
+import type {
+  ClipItem,
+  ConcatProgress,
+  ConcatResult,
+  Sequence,
+  SequenceEdge,
+  SequenceNode,
+  TagCount
+} from '../../../shared/types'
 import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { IconFilm, IconPause, IconPlay } from './icons'
 import { Splitter } from './Splitter'
@@ -112,6 +120,10 @@ export const SequenceView = memo(function SequenceView({
   /** パレットのタグ絞り込み（選んだタグを全て含むクリップだけ表示 = AND） */
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
   const [renaming, setRenaming] = useState<number | null>(null)
+  /** 連結書き出しの進捗（null = 実行中でない） */
+  const [exporting, setExporting] = useState<ConcatProgress | null>(null)
+  /** 連結書き出しの結果（モーダルで表示、閉じるまで保持） */
+  const [exportResult, setExportResult] = useState<ConcatResult | null>(null)
   /** 各カラムの幅（境界のスプリッターでリサイズ） */
   const [seqsW, setSeqsW] = useState(180)
   // クリップ一覧はノードエリアと同程度の広さを既定にする（画面幅からシーケンス列を除いた約半分）
@@ -555,6 +567,49 @@ export const SequenceView = memo(function SequenceView({
     onPlaySequence(playItems)
   }
 
+  // --- 連結書き出し（無劣化 concat / Phase 2.6） ---
+  const runConcatExport = async () => {
+    if (playItems.length === 0 || activeId == null || exporting) return
+    // stream copy の連結はコーデック / 解像度 / fps が揃っていることが前提（メタ未取得は不問）
+    const first = playItems[0].clip
+    const bad = playItems.find(
+      ({ clip: c }) =>
+        (c.videoCodec && first.videoCodec && c.videoCodec !== first.videoCodec) ||
+        (c.videoWidth && first.videoWidth && c.videoWidth !== first.videoWidth) ||
+        (c.videoHeight && first.videoHeight && c.videoHeight !== first.videoHeight) ||
+        (c.videoFps && first.videoFps && Math.abs(c.videoFps - first.videoFps) > 0.01)
+    )
+    if (bad) {
+      setExportResult({
+        ok: false,
+        error:
+          `コーデック / 解像度 / fps が一致しないクリップが含まれています（${bad.clip.videoFilename}）。` +
+          '無劣化連結（stream copy）は同一パラメータの素材のみ対応です。'
+      })
+      return
+    }
+    const dir = await api.pickExportDir()
+    if (!dir) return
+    const name = sequences.find((s) => s.id === activeId)?.name ?? 'シーケンス'
+    setExporting({ phase: 'cut', index: 0, total: playItems.length, percent: 0 })
+    const off = api.onConcatProgress(setExporting)
+    try {
+      const res = await api.exportSequenceConcat(
+        playItems.map(({ clip: c }) => ({
+          videoRelPath: c.videoRelPath,
+          inSec: c.inSnapped ?? c.inTime,
+          outSec: c.outSnapped ?? c.outTime
+        })),
+        dir,
+        name
+      )
+      setExportResult(res)
+    } finally {
+      off()
+      setExporting(null)
+    }
+  }
+
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const isPlaying = playingNodeId != null
 
@@ -721,6 +776,14 @@ export const SequenceView = memo(function SequenceView({
               <IconPlay size={13} /> 再生
             </button>
           )}
+          <button
+            className="btn"
+            disabled={playItems.length === 0 || exporting != null}
+            onClick={runConcatExport}
+            title="順路のクリップを無劣化（stream copy）で 1 本に連結して書き出す"
+          >
+            連結書き出し…
+          </button>
         </div>
 
         <div
@@ -840,6 +903,50 @@ export const SequenceView = memo(function SequenceView({
           )}
         </div>
       </div>
+
+      {(exporting || exportResult) && (
+        <div className="modal-backdrop">
+          <div className="modal seq-export-modal">
+            <div className="modal-head">シーケンスの連結書き出し</div>
+            {exporting ? (
+              <div className="seq-export-body">
+                <div className="seq-export-stage">
+                  {exporting.phase === 'cut'
+                    ? `クリップを切り出し中… (${exporting.index}/${exporting.total})`
+                    : '連結中…'}
+                </div>
+                <div className="seq-export-bar">
+                  <div
+                    className="seq-export-fill"
+                    style={{ width: `${Math.round(exporting.percent * 100)}%` }}
+                  />
+                </div>
+                <div className="seq-export-pct">{Math.round(exporting.percent * 100)}%</div>
+              </div>
+            ) : exportResult?.ok ? (
+              <div className="seq-export-body">
+                <div>書き出しが完了しました（無劣化・stream copy）。</div>
+                <div className="seq-export-path">{exportResult.outPath}</div>
+                <div className="modal-actions">
+                  <button className="btn primary" onClick={() => setExportResult(null)}>
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="seq-export-body">
+                <div>書き出しできませんでした。</div>
+                <div className="seq-export-err">{exportResult?.error}</div>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setExportResult(null)}>
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 })

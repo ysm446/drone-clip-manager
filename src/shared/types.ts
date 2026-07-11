@@ -184,6 +184,31 @@ export interface ExportResult {
   error?: string
 }
 
+/** シーケンス連結書き出しの対象 1 クリップ（順路順 / Phase 2.6） */
+export interface ConcatItem {
+  videoRelPath: string
+  inSec: number
+  outSec: number
+}
+
+/** シーケンス連結書き出しの進捗（main → renderer の逐次イベント） */
+export interface ConcatProgress {
+  /** cut: 各クリップの切り出し / concat: 連結 */
+  phase: 'cut' | 'concat'
+  /** cut 中のクリップ番号（1 始まり）。concat では total と同値。 */
+  index: number
+  total: number
+  /** 全体進捗 0..1（切り出しと連結を通して） */
+  percent: number
+}
+
+/** シーケンス連結書き出しの結果 */
+export interface ConcatResult {
+  ok: boolean
+  outPath?: string
+  error?: string
+}
+
 /** プロキシ生成の状態通知（main → renderer） */
 export interface ProxyUpdate {
   relPath: string
@@ -296,6 +321,10 @@ export interface DcmApi {
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>
   /** 進捗イベントを購読。返り値で解除する。 */
   onExportProgress: (cb: (p: ExportProgress) => void) => () => void
+  /** シーケンスの順路を無劣化連結（concat）で 1 本に書き出す（Phase 2.6） */
+  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string) => Promise<ConcatResult>
+  /** 連結書き出しの進捗イベントを購読。返り値で解除する。 */
+  onConcatProgress: (cb: (p: ConcatProgress) => void) => () => void
   // --- mpv ネイティブ再生 ---
   mpvAvailable: () => Promise<boolean>
   /** startSec を渡すとその位置から一時停止状態で開く（クリップ→in 点ジャンプ用） */

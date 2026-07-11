@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  ConcatItem,
+  ConcatProgress,
   DcmApi,
   ExportJob,
   ExportOptions,
@@ -65,6 +67,13 @@ const api: DcmApi = {
     const handler = (_e: unknown, p: ExportProgress) => cb(p)
     ipcRenderer.on('export:progress', handler)
     return () => ipcRenderer.removeListener('export:progress', handler)
+  },
+  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string) =>
+    ipcRenderer.invoke('seq:export', items, outDir, name),
+  onConcatProgress: (cb: (p: ConcatProgress) => void) => {
+    const handler = (_e: unknown, p: ConcatProgress) => cb(p)
+    ipcRenderer.on('seq:exportProgress', handler)
+    return () => ipcRenderer.removeListener('seq:exportProgress', handler)
   },
   mpvAvailable: () => ipcRenderer.invoke('mpv:available'),
   mpvLoad: (relPath, startSec) => ipcRenderer.invoke('mpv:load', relPath, startSec),
