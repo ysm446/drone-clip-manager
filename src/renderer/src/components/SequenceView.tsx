@@ -147,7 +147,7 @@ export const SequenceView = memo(function SequenceView({
     orig: Map<number, { x: number; y: number }>
   } | null>(null)
   const playItemsRef = useRef<SeqPlayItem[]>([])
-  const marqueeStartRef = useRef<{ x1: number; y1: number } | null>(null)
+  const marqueeStartRef = useRef<{ x1: number; y1: number; button: number } | null>(null)
   const panRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
     null
   )
@@ -411,7 +411,8 @@ export const SequenceView = memo(function SequenceView({
 
   const onMarqueeUp = useCallback(
     (e: MouseEvent) => {
-      if (e.button !== 2) return
+      // 開始したボタン以外の mouseup は無視する
+      if (e.button !== marqueeStartRef.current?.button) return
       marqueeStartRef.current = null
       setMarquee(null)
       window.removeEventListener('mousemove', onMarqueeMove)
@@ -422,18 +423,20 @@ export const SequenceView = memo(function SequenceView({
 
   const onCanvasMouseDown = (e: React.MouseEvent) => {
     const onBackground = e.target === canvasRef.current
-    if (e.button === 2) {
-      // 右ドラッグ: 矩形選択を開始（コンテキストメニューは onContextMenu で抑止）
+    // 矩形選択: 右ドラッグはどこからでも、左ドラッグは背景からのみ
+    // （コンテキストメニューは onContextMenu で抑止）
+    if (e.button === 2 || (e.button === 0 && onBackground)) {
       e.preventDefault()
+      if (e.button === 0) setSelectedIds(new Set()) // 背景クリックは選択解除から始める
       const p = toContent(e.clientX, e.clientY)
-      marqueeStartRef.current = { x1: p.x, y1: p.y }
+      marqueeStartRef.current = { x1: p.x, y1: p.y, button: e.button }
       setMarquee({ x1: p.x, y1: p.y, x2: p.x, y2: p.y })
       window.addEventListener('mousemove', onMarqueeMove)
       window.addEventListener('mouseup', onMarqueeUp)
       return
     }
-    if (e.button === 1 || (e.button === 0 && onBackground)) {
-      if (e.button === 0) setSelectedIds(new Set())
+    // パン: 中ボタンドラッグ
+    if (e.button === 1) {
       e.preventDefault() // 中ボタンのオートスクロールを抑止
       panRef.current = {
         startX: e.clientX,
