@@ -21,6 +21,14 @@ interface Props {
   onOpenClip: (clip: ClipItem) => void
   /** 連続再生中のノード id（App から通知）。null で停止中。 */
   playingNodeId: number | null
+  /** プレイヤー側での in/out 調整をパレット / ノード表示へその場で反映するためのパッチ */
+  segmentPatch?: {
+    id: number
+    inTime: number
+    outTime: number
+    inSnapped: number | null
+    outSnapped: number | null
+  } | null
 }
 
 // ノードカードの寸法（CSS と一致させること。エッジ描画のポート座標計算に使う）。
@@ -88,7 +96,8 @@ export const SequenceView = memo(function SequenceView({
   onPlaySequence,
   onStopSequence,
   onOpenClip,
-  playingNodeId
+  playingNodeId,
+  segmentPatch
 }: Props) {
   const [sequences, setSequences] = useState<Sequence[]>([])
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -148,6 +157,16 @@ export const SequenceView = memo(function SequenceView({
     api.listAllClips().then(setClips)
     api.getAllTags().then(setAllTags)
   }, [])
+
+  // プレイヤー側の in/out 調整（±1 キーフレームボタン等）をパレットとノードへその場で反映
+  useEffect(() => {
+    if (!segmentPatch) return
+    const p = segmentPatch
+    setClips((prev) => prev.map((c) => (c.id === p.id ? { ...c, ...p } : c)))
+    setNodes((prev) =>
+      prev.map((n) => (n.clip?.id === p.id ? { ...n, clip: { ...n.clip, ...p } } : n))
+    )
+  }, [segmentPatch])
 
   // 選択中シーケンスのグラフを読み込む
   const reload = useCallback((id: number) => {

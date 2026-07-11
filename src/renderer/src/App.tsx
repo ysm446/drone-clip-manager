@@ -845,8 +845,9 @@ export function App() {
       }
       const snapped = updateSegmentTimes(selectedSeg, inT, outT)
       setSegPatch({ id: selectedSeg, inTime: inT, outTime: outT, ...snapped })
-      // クリップ再生中はループ範囲も新しいスナップ値に追従させる（再生位置はそのまま）
-      if (view === 'clips' && clipPlayRef.current) {
+      // クリップ再生中はループ範囲も新しいスナップ値に追従させる（再生位置はそのまま）。
+      // クリップ画面とシーケンス画面（パレットのプレビュー再生）の両方が対象。
+      if ((view === 'clips' || view === 'sequence') && clipPlayRef.current) {
         setClipPlayRange({ in: snapped.inSnapped, out: snapped.outSnapped })
       }
     },
@@ -1611,6 +1612,7 @@ export function App() {
               onStopSequence={stopSequence}
               onOpenClip={openClip}
               playingNodeId={playingNodeId}
+              segmentPatch={segPatch}
             />
           ) : (
             <section className="editor-pane">
