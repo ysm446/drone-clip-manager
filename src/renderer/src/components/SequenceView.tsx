@@ -331,11 +331,16 @@ export const SequenceView = memo(function SequenceView({
         if (n) api.moveSequenceNode(id, n.x, n.y).catch(() => void 0)
       }
     } else {
-      // 動かさずに離した = クリック: そのノードの開始位置へ頭出し
+      // 動かさずに離した = クリック: そのノードの開始位置へ頭出し。
+      // 順路（チェーン）に入っていない単独ノードは、クリップ単体のプレビュー再生にする。
       const n = nodesRef.current.find((x) => x.id === d.pressNodeId)
-      if (n?.clip) onJumpToNode(playItemsRef.current, n.id)
+      if (n?.clip) {
+        const items = playItemsRef.current
+        if (items.some((it) => it.nodeId === n.id)) onJumpToNode(items, n.id)
+        else onOpenClip(n.clip)
+      }
     }
-  }, [onDragMove, onJumpToNode])
+  }, [onDragMove, onJumpToNode, onOpenClip])
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
     // 中 / 右ボタンはキャンバス側（パン / 矩形選択）に任せる
