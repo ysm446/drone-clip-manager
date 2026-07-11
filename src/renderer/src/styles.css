@@ -1888,14 +1888,15 @@ body.resizing {
   border-radius: var(--radius-m);
   background: none;
   color: var(--text);
-  cursor: pointer;
+  cursor: grab;
   text-align: left;
+  user-select: none;
 }
-.seq-palette-item:hover:not(:disabled) {
+.seq-palette-item:hover:not(.disabled) {
   background: var(--hover);
   border-color: var(--border);
 }
-.seq-palette-item:disabled {
+.seq-palette-item.disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1931,6 +1932,12 @@ body.resizing {
   color: var(--muted);
   font-size: var(--fs-sm);
 }
+.seq-zoom {
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
 .seq-toolbar .btn {
   display: inline-flex;
   align-items: center;
@@ -1939,10 +1946,18 @@ body.resizing {
 .seq-canvas {
   position: relative;
   flex: 1;
-  overflow: auto;
+  /* スクロールバーは出さない。移動はパン（中ボタン / 背景ドラッグ）、拡縮はホイール */
+  overflow: hidden;
   background:
     radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 24px 24px;
   background-color: var(--bg);
+}
+/* パン / ズームの変換を受けるレイヤ（サイズ 0、子は絶対配置ではみ出して描画） */
+.seq-canvas-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }
 .seq-canvas-empty {
   position: absolute;
@@ -1999,6 +2014,10 @@ body.resizing {
 }
 .seq-node:active {
   cursor: grabbing;
+}
+.seq-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-border), var(--shadow-1);
 }
 .seq-node.playing {
   border-color: var(--accent);

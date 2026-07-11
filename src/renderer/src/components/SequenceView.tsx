@@ -75,9 +75,14 @@ export const SequenceView = memo(function SequenceView({
   const [connecting, setConnecting] = useState<{ srcNodeId: number; x: number; y: number } | null>(
     null
   )
+  /** キャンバスのパン / ズーム。内容座標 → 画面座標は translate(x,y) scale(scale)。 */
+  const [view, setView] = useState({ x: 0, y: 0, scale: 1 })
+  /** 選択中ノード（クリックで選択、Delete で削除） */
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const nodesRef = useRef<SequenceNode[]>([])
+  const viewRef = useRef(view)
   const dragRef = useRef<{
     nodeId: number
     startX: number
@@ -85,9 +90,13 @@ export const SequenceView = memo(function SequenceView({
     origX: number
     origY: number
   } | null>(null)
+  const panRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
+    null
+  )
   const connectingRef = useRef<{ srcNodeId: number } | null>(null)
 
   nodesRef.current = nodes
+  viewRef.current = view
 
   // シーケンス一覧 + パレット用の全クリップを初回取得
   useEffect(() => {
@@ -107,6 +116,7 @@ export const SequenceView = memo(function SequenceView({
   }, [])
 
   useEffect(() => {
+    setSelectedId(null)
     if (activeId == null) {
       setNodes([])
       setEdges([])
@@ -114,6 +124,29 @@ export const SequenceView = memo(function SequenceView({
     }
     reload(activeId)
   }, [activeId, reload])
+
+  // ホイールでカーソル位置を中心にズーム。
+  // React の onWheel は passive で preventDefault できないため native で登録する。
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const r = el.getBoundingClientRect()
+      const v = viewRef.current
+      const scale = Math.min(3, Math.max(0.2, v.scale * Math.exp(-e.deltaY * 0.0015)))
+      const px = e.clientX - r.left
+      const py = e.clientY - r.top
+      // カーソル下の内容座標が動かないよう translate を補正
+      setView({
+        x: px - ((px - v.x) / v.scale) * scale,
+        y: py - ((py - v.y) / v.scale) * scale,
+        scale
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   // 再生順（最長チェーン）。ノードの並び番号バッジとハイライトに使う。
   const orderIndex = useMemo(() => {
@@ -166,21 +199,24 @@ export const SequenceView = memo(function SequenceView({
   }
 
   // --- ノード / エッジ操作 ---
-  const addNode = async (clip: ClipItem) => {
-    if (activeId == null) return
-    const el = canvasRef.current
-    // 少しずつずらして重ならない位置に置く
-    const baseX = 40 + (nodes.length % 6) * 28 + (el?.scrollLeft ?? 0)
-    const baseY = 40 + (nodes.length % 6) * 28 + (el?.scrollTop ?? 0)
-    const node = await api.addSequenceNode(activeId, clip.id, baseX, baseY)
-    setNodes((prev) => [...prev, node])
-  }
-
-  const removeNode = async (nodeId: number) => {
+  const removeNode = useCallback(async (nodeId: number) => {
     await api.removeSequenceNode(nodeId)
     setNodes((prev) => prev.filter((n) => n.id !== nodeId))
     setEdges((prev) => prev.filter((e) => e.srcNodeId !== nodeId && e.dstNodeId !== nodeId))
-  }
+    setSelectedId((cur) => (cur === nodeId ? null : cur))
+  }, [])
+
+  // 選択中ノードを Delete キーで削除（入力欄フォーカス中は無効）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' || selectedId == null) return
+      const t = document.activeElement as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      removeNode(selectedId)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedId, removeNode])
 
   const removeEdge = async (edgeId: number) => {
     await api.removeSequenceEdge(edgeId)
@@ -191,8 +227,10 @@ export const SequenceView = memo(function SequenceView({
   const onDragMove = useCallback((e: MouseEvent) => {
     const d = dragRef.current
     if (!d) return
-    const nx = Math.max(0, d.origX + (e.clientX - d.startX))
-    const ny = Math.max(0, d.origY + (e.clientY - d.startY))
+    // 画面上の移動量をズーム倍率で内容座標に換算
+    const s = viewRef.current.scale
+    const nx = d.origX + (e.clientX - d.startX) / s
+    const ny = d.origY + (e.clientY - d.startY) / s
     setNodes((prev) => prev.map((n) => (n.id === d.nodeId ? { ...n, x: nx, y: ny } : n)))
   }, [])
 
@@ -208,9 +246,13 @@ export const SequenceView = memo(function SequenceView({
   }, [onDragMove])
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
+    // 中ボタンなどはキャンバスのパンに任せる
+    if (e.button !== 0) return
     // ポート / ボタンからの発火は無視（それぞれ専用ハンドラで処理）
     if ((e.target as HTMLElement).closest('.seq-port, .seq-node-remove')) return
     e.preventDefault()
+    e.stopPropagation()
+    setSelectedId(node.id)
     dragRef.current = {
       nodeId: node.id,
       startX: e.clientX,
@@ -222,28 +264,82 @@ export const SequenceView = memo(function SequenceView({
     window.addEventListener('mouseup', onDragUp)
   }
 
-  // --- エッジの接続（出力ポート → 入力ポート） ---
-  const toContent = (clientX: number, clientY: number) => {
-    const el = canvasRef.current
-    const r = el?.getBoundingClientRect()
-    return {
-      x: clientX - (r?.left ?? 0) + (el?.scrollLeft ?? 0),
-      y: clientY - (r?.top ?? 0) + (el?.scrollTop ?? 0)
+  // --- キャンバスのパン（中ボタンドラッグ / 背景の左ドラッグ） ---
+  const onPanMove = useCallback((e: MouseEvent) => {
+    const p = panRef.current
+    if (!p) return
+    setView((v) => ({
+      ...v,
+      x: p.origX + (e.clientX - p.startX),
+      y: p.origY + (e.clientY - p.startY)
+    }))
+  }, [])
+
+  const onPanUp = useCallback(() => {
+    panRef.current = null
+    window.removeEventListener('mousemove', onPanMove)
+    window.removeEventListener('mouseup', onPanUp)
+  }, [onPanMove])
+
+  const onCanvasMouseDown = (e: React.MouseEvent) => {
+    const onBackground = e.target === canvasRef.current
+    if (e.button === 1 || (e.button === 0 && onBackground)) {
+      if (e.button === 0) setSelectedId(null)
+      e.preventDefault() // 中ボタンのオートスクロールを抑止
+      panRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: viewRef.current.x,
+        origY: viewRef.current.y
+      }
+      window.addEventListener('mousemove', onPanMove)
+      window.addEventListener('mouseup', onPanUp)
     }
   }
 
-  const onConnectMove = useCallback((e: MouseEvent) => {
-    setConnecting((c) => {
-      if (!c) return c
-      const el = canvasRef.current
-      const r = el?.getBoundingClientRect()
-      return {
-        ...c,
-        x: e.clientX - (r?.left ?? 0) + (el?.scrollLeft ?? 0),
-        y: e.clientY - (r?.top ?? 0) + (el?.scrollTop ?? 0)
-      }
-    })
+  // --- パレットからのドラッグ＆ドロップ配置 ---
+  const onCanvasDragOver = (e: React.DragEvent) => {
+    if (activeId != null && e.dataTransfer.types.includes('application/x-dcm-clip')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }
+
+  const onCanvasDrop = async (e: React.DragEvent) => {
+    if (activeId == null) return
+    const idStr = e.dataTransfer.getData('application/x-dcm-clip')
+    if (!idStr) return
+    e.preventDefault()
+    // ドロップ位置がノードの中心になるように置く
+    const p = toContent(e.clientX, e.clientY)
+    const node = await api.addSequenceNode(
+      activeId,
+      Number(idStr),
+      Math.round(p.x - NODE_W / 2),
+      Math.round(p.y - NODE_H / 2)
+    )
+    setNodes((prev) => [...prev, node])
+    setSelectedId(node.id)
+  }
+
+  // --- エッジの接続（出力ポート → 入力ポート） ---
+  /** 画面座標 → キャンバス内容座標（パン / ズームを考慮） */
+  const toContent = useCallback((clientX: number, clientY: number) => {
+    const el = canvasRef.current
+    const r = el?.getBoundingClientRect()
+    const v = viewRef.current
+    return {
+      x: (clientX - (r?.left ?? 0) - v.x) / v.scale,
+      y: (clientY - (r?.top ?? 0) - v.y) / v.scale
+    }
   }, [])
+
+  const onConnectMove = useCallback(
+    (e: MouseEvent) => {
+      setConnecting((c) => (c ? { ...c, ...toContent(e.clientX, e.clientY) } : c))
+    },
+    [toContent]
+  )
 
   const onConnectUp = useCallback(() => {
     // ポートで確定しなかった場合はキャンセル
@@ -254,6 +350,7 @@ export const SequenceView = memo(function SequenceView({
   }, [onConnectMove])
 
   const onOutPortDown = (e: React.MouseEvent, node: SequenceNode) => {
+    if (e.button !== 0) return
     e.stopPropagation()
     e.preventDefault()
     connectingRef.current = { srcNodeId: node.id }
@@ -358,16 +455,19 @@ export const SequenceView = memo(function SequenceView({
         />
         <div className="seq-palette">
           {shownClips.map((c) => (
-            <button
+            <div
               key={c.id}
-              className="seq-palette-item"
-              disabled={activeId == null}
-              onClick={() => addNode(c)}
-              title={`${c.videoFilename}\nクリックでシーケンスに追加`}
+              className={`seq-palette-item${activeId == null ? ' disabled' : ''}`}
+              draggable={activeId != null}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/x-dcm-clip', String(c.id))
+                e.dataTransfer.effectAllowed = 'copy'
+              }}
+              title={`${c.videoFilename}\nキャンバスへドラッグして配置`}
             >
               <NodeThumb clip={c} />
               <span className="seq-palette-label">{c.label ?? `区間 #${c.id}`}</span>
-            </button>
+            </div>
           ))}
         </div>
       </div>
@@ -376,6 +476,9 @@ export const SequenceView = memo(function SequenceView({
         <div className="seq-toolbar">
           <span className="seq-count">{playItems.length} ノード（順路）</span>
           <span className="seq-total">合計 {fmtTime(totalDur)}</span>
+          <span className="seq-zoom" title="ホイールでズーム / 中ボタンドラッグでパン">
+            {Math.round(view.scale * 100)}%
+          </span>
           <span className="clips-spacer" />
           {isPlaying ? (
             <button className="btn" onClick={onStopSequence}>
@@ -388,13 +491,27 @@ export const SequenceView = memo(function SequenceView({
           )}
         </div>
 
-        <div className="seq-canvas" ref={canvasRef}>
+        <div
+          className="seq-canvas"
+          ref={canvasRef}
+          onMouseDown={onCanvasMouseDown}
+          onDragOver={onCanvasDragOver}
+          onDrop={onCanvasDrop}
+          style={{
+            // ドット背景もパン / ズームに追従させる
+            backgroundPosition: `${view.x}px ${view.y}px`,
+            backgroundSize: `${24 * view.scale}px ${24 * view.scale}px`
+          }}
+        >
           {activeId == null ? (
             <div className="seq-canvas-empty">
-              左の「＋新規」でシーケンスを作成し、クリップを追加してつないでください。
+              左の「＋新規」でシーケンスを作成し、クリップをドラッグ＆ドロップで配置してください。
             </div>
           ) : (
-            <>
+            <div
+              className="seq-canvas-inner"
+              style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+            >
               <svg className="seq-edges">
                 {edges.map((e) => {
                   const src = nodeById.get(e.srcNodeId)
@@ -427,10 +544,13 @@ export const SequenceView = memo(function SequenceView({
 
               {nodes.map((n) => {
                 const ord = orderIndex.get(n.id)
+                const cls = `seq-node${n.id === selectedId ? ' selected' : ''}${
+                  playingNodeId === n.id ? ' playing' : ''
+                }`
                 return (
                   <div
                     key={n.id}
-                    className={`seq-node${playingNodeId === n.id ? ' playing' : ''}`}
+                    className={cls}
                     style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                     onMouseDown={(e) => onNodeMouseDown(e, n)}
                   >
@@ -470,7 +590,7 @@ export const SequenceView = memo(function SequenceView({
                   </div>
                 )
               })}
-            </>
+            </div>
           )}
         </div>
       </div>
