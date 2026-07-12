@@ -36,7 +36,9 @@ import {
   updateSequenceNodePos,
   removeSequenceNode,
   addSequenceEdge,
-  removeSequenceEdge
+  removeSequenceEdge,
+  restoreSegment,
+  restoreSequenceGraph
 } from './services/db'
 import { exportConcat, exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
@@ -47,6 +49,8 @@ import type {
   ConcatItem,
   ConcatResult,
   DeleteResult,
+  GraphEdgeSnap,
+  GraphNodeSnap,
   MoveResult,
   ExportJob,
   ExportOptions,
@@ -54,6 +58,7 @@ import type {
   ProxyStatus,
   RenameResult,
   RootInfo,
+  Segment,
   SegmentInput
 } from '../shared/types'
 
@@ -183,6 +188,7 @@ export function registerIpc(): void {
     updateSegment(id, patch)
   )
   ipcMain.handle('segments:delete', (_e, id: number) => deleteSegment(id))
+  ipcMain.handle('segments:restore', (_e, seg: Segment) => restoreSegment(seg))
 
   // クリップ一覧（Phase 2.5）: 全区間 + 動画メタの結合。
   // メタ未取得の動画（過去セッションで作った区間など）は先に ffprobe して videos を補完する。
@@ -214,6 +220,11 @@ export function registerIpc(): void {
     addSequenceEdge(seqId, srcNodeId, dstNodeId)
   )
   ipcMain.handle('seq:removeEdge', (_e, edgeId: number) => removeSequenceEdge(edgeId))
+  ipcMain.handle(
+    'seq:restoreGraph',
+    (_e, sequenceId: number, nodes: GraphNodeSnap[], edges: GraphEdgeSnap[]) =>
+      restoreSequenceGraph(sequenceId, nodes, edges)
+  )
 
   ipcMain.handle('thumbs:ensure', (_e, videoRelPath: string, timeSec: number) =>
     ensureThumb(videoRelPath, timeSec)

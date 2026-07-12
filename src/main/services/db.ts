@@ -234,6 +234,36 @@ export function deleteSegment(id: number): void {
   tx(id)
 }
 
+/**
+ * Undo 用: 削除した区間を同じ id で復元する（タグ含む）。
+ * id を保つことでシーケンスノードの segment_id 参照も復活する。
+ */
+export function restoreSegment(seg: Segment): void {
+  const d = getDb()
+  const tx = d.transaction(() => {
+    d.prepare(
+      `INSERT OR REPLACE INTO segments
+         (id, video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color, created_at)
+       VALUES (@id, @videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color, @createdAt)`
+    ).run({
+      id: seg.id,
+      videoRelPath: seg.videoRelPath,
+      inTime: seg.inTime,
+      outTime: seg.outTime,
+      inSnapped: seg.inSnapped,
+      outSnapped: seg.outSnapped,
+      label: seg.label ?? null,
+      note: seg.note ?? null,
+      color: seg.color ?? null,
+      createdAt: seg.createdAt
+    })
+    d.prepare('DELETE FROM segment_tags WHERE segment_id = ?').run(seg.id)
+    const ins = d.prepare('INSERT OR IGNORE INTO segment_tags (segment_id, tag) VALUES (?, ?)')
+    for (const t of seg.tags ?? []) ins.run(seg.id, t)
+  })
+  tx()
+}
+
 // --- 区間タグ（自由記述 / Phase 2.8） ---
 
 export function getSegmentTags(segmentId: number): string[] {
@@ -658,4 +688,29 @@ export function addSequenceEdge(
 
 export function removeSequenceEdge(edgeId: number): void {
   getDb().prepare('DELETE FROM sequence_edges WHERE id = ?').run(edgeId)
+}
+
+/**
+ * Undo 用: シーケンスのグラフ（ノード + エッジ）をスナップショットで丸ごと置き換える。
+ * id を保って再挿入するので、undo / redo を繰り返しても参照が壊れない。
+ */
+export function restoreSequenceGraph(
+  sequenceId: number,
+  nodes: { id: number; segmentId: number; x: number; y: number }[],
+  edges: { id: number; srcNodeId: number; dstNodeId: number }[]
+): void {
+  const d = getDb()
+  const tx = d.transaction(() => {
+    d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(sequenceId)
+    d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
+    const insN = d.prepare(
+      'INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y) VALUES (?, ?, ?, ?, ?)'
+    )
+    for (const n of nodes) insN.run(n.id, sequenceId, n.segmentId, n.x, n.y)
+    const insE = d.prepare(
+      'INSERT INTO sequence_edges (id, sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?, ?)'
+    )
+    for (const e of edges) insE.run(e.id, sequenceId, e.srcNodeId, e.dstNodeId)
+  })
+  tx()
 }

@@ -29,6 +29,7 @@ const api: DcmApi = {
   addSegment: (input: SegmentInput) => ipcRenderer.invoke('segments:add', input),
   updateSegment: (id, patch) => ipcRenderer.invoke('segments:update', id, patch),
   deleteSegment: (id) => ipcRenderer.invoke('segments:delete', id),
+  restoreSegment: (seg) => ipcRenderer.invoke('segments:restore', seg),
   listAllClips: () => ipcRenderer.invoke('segments:listAll'),
   getAllTags: () => ipcRenderer.invoke('tags:all'),
   addSegmentTag: (segmentId, tag) => ipcRenderer.invoke('tags:add', segmentId, tag),
@@ -50,6 +51,8 @@ const api: DcmApi = {
   addSequenceEdge: (sequenceId, srcNodeId, dstNodeId) =>
     ipcRenderer.invoke('seq:addEdge', sequenceId, srcNodeId, dstNodeId),
   removeSequenceEdge: (edgeId) => ipcRenderer.invoke('seq:removeEdge', edgeId),
+  restoreSequenceGraph: (sequenceId, nodes, edges) =>
+    ipcRenderer.invoke('seq:restoreGraph', sequenceId, nodes, edges),
   ensureThumb: (videoRelPath, timeSec) => ipcRenderer.invoke('thumbs:ensure', videoRelPath, timeSec),
   thumbUrl: (thumbName) => `dcm-media://thumb/${encodeURIComponent(thumbName)}`,
   captureScreenshot: (videoRelPath, timeSec, useMpv) =>

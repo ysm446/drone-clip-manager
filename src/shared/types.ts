@@ -105,6 +105,21 @@ export interface SequenceGraph {
   edges: SequenceEdge[]
 }
 
+/** Undo 用のグラフスナップショット行（ノード） */
+export interface GraphNodeSnap {
+  id: number
+  segmentId: number
+  x: number
+  y: number
+}
+
+/** Undo 用のグラフスナップショット行（エッジ） */
+export interface GraphEdgeSnap {
+  id: number
+  srcNodeId: number
+  dstNodeId: number
+}
+
 /** ルート設定の結果 */
 export interface RootInfo {
   root: string | null
@@ -258,6 +273,8 @@ export interface DcmApi {
   addSegment: (input: SegmentInput) => Promise<Segment>
   updateSegment: (id: number, patch: Partial<SegmentInput>) => Promise<Segment>
   deleteSegment: (id: number) => Promise<void>
+  /** Undo 用: 削除した区間を同じ id で復元（タグ含む） */
+  restoreSegment: (seg: Segment) => Promise<void>
   // --- クリップ一覧（Phase 2.5） ---
   /** 全動画の区間を横断取得（動画メタ + タグを結合） */
   listAllClips: () => Promise<ClipItem[]>
@@ -299,6 +316,12 @@ export interface DcmApi {
     dstNodeId: number
   ) => Promise<SequenceEdge>
   removeSequenceEdge: (edgeId: number) => Promise<void>
+  /** Undo 用: シーケンスのグラフをスナップショットで丸ごと置き換える */
+  restoreSequenceGraph: (
+    sequenceId: number,
+    nodes: GraphNodeSnap[],
+    edges: GraphEdgeSnap[]
+  ) => Promise<void>
   /** in 点サムネイルを用意（無ければ生成）。生成物のファイル名を返す。 */
   ensureThumb: (videoRelPath: string, timeSec: number) => Promise<string>
   /** サムネイルを表示するためのカスタムプロトコル URL */

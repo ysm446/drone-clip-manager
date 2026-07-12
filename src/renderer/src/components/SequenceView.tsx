@@ -3,11 +3,14 @@ import type {
   ClipItem,
   ConcatProgress,
   ConcatResult,
+  GraphEdgeSnap,
+  GraphNodeSnap,
   Sequence,
   SequenceEdge,
   SequenceNode,
   TagCount
 } from '../../../shared/types'
+import { pushUndo, registerUndoRefresh } from '../undo'
 import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { ContextMenu } from './ContextMenu'
 import type { ExportTarget } from './ExportModal'
@@ -188,7 +191,12 @@ export const SequenceView = memo(function SequenceView({
   )
   const connectingRef = useRef<{ srcNodeId: number } | null>(null)
 
+  const edgesRef = useRef<SequenceEdge[]>([])
+  const activeIdRef = useRef<number | null>(null)
+
   nodesRef.current = nodes
+  edgesRef.current = edges
+  activeIdRef.current = activeId
   viewRef.current = view
 
   // シーケンス一覧 + パレット用の全クリップを初回取得
@@ -255,6 +263,46 @@ export const SequenceView = memo(function SequenceView({
     }
     reload(activeId, true) // シーケンス切替時は全体表示に合わせる
   }, [activeId, reload])
+
+  // --- Undo（グラフ操作は「操作前後のスナップショット」を丸ごと積む） ---
+  /** 現在のローカル state からグラフのスナップショットを取る */
+  const graphSnapshot = useCallback(
+    (): { nodes: GraphNodeSnap[]; edges: GraphEdgeSnap[] } => ({
+      nodes: nodesRef.current.map((n) => ({ id: n.id, segmentId: n.segmentId, x: n.x, y: n.y })),
+      edges: edgesRef.current.map((e) => ({
+        id: e.id,
+        srcNodeId: e.srcNodeId,
+        dstNodeId: e.dstNodeId
+      }))
+    }),
+    []
+  )
+
+  /** グラフ操作を undo スタックへ積む。after は DB から取り直して正確を期す */
+  const pushGraphUndo = useCallback(
+    async (label: string, before: { nodes: GraphNodeSnap[]; edges: GraphEdgeSnap[] }) => {
+      const seqId = activeIdRef.current
+      if (seqId == null) return
+      const g = await api.getSequenceGraph(seqId)
+      const after = {
+        nodes: g.nodes.map((n) => ({ id: n.id, segmentId: n.segmentId, x: n.x, y: n.y })),
+        edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
+      }
+      pushUndo({
+        label,
+        undo: () => api.restoreSequenceGraph(seqId, before.nodes, before.edges),
+        redo: () => api.restoreSequenceGraph(seqId, after.nodes, after.edges)
+      })
+    },
+    []
+  )
+
+  // undo / redo 後に現在のシーケンスのグラフを取り直す
+  useEffect(() => {
+    return registerUndoRefresh(() => {
+      if (activeIdRef.current != null) reload(activeIdRef.current)
+    })
+  }, [reload])
 
   // ホイールでカーソル位置を中心にズーム。
   // React の onWheel は passive で preventDefault できないため native で登録する。
@@ -331,17 +379,22 @@ export const SequenceView = memo(function SequenceView({
   }
 
   // --- ノード / エッジ操作 ---
-  const removeNode = useCallback(async (nodeId: number) => {
-    await api.removeSequenceNode(nodeId)
-    setNodes((prev) => prev.filter((n) => n.id !== nodeId))
-    setEdges((prev) => prev.filter((e) => e.srcNodeId !== nodeId && e.dstNodeId !== nodeId))
-    setSelectedIds((cur) => {
-      if (!cur.has(nodeId)) return cur
-      const next = new Set(cur)
-      next.delete(nodeId)
-      return next
-    })
-  }, [])
+  const removeNodes = useCallback(
+    async (ids: number[]) => {
+      if (ids.length === 0) return
+      const before = graphSnapshot()
+      for (const id of ids) await api.removeSequenceNode(id)
+      setNodes((prev) => prev.filter((n) => !ids.includes(n.id)))
+      setEdges((prev) => prev.filter((e) => !ids.includes(e.srcNodeId) && !ids.includes(e.dstNodeId)))
+      setSelectedIds((cur) => {
+        const next = new Set(cur)
+        for (const id of ids) next.delete(id)
+        return next
+      })
+      await pushGraphUndo(ids.length > 1 ? `${ids.length} ノードの削除` : 'ノードの削除', before)
+    },
+    [graphSnapshot, pushGraphUndo]
+  )
 
   // キーボード操作（入力欄フォーカス中は無効）:
   //   Delete = 選択ノードを一括削除 / A = 全体表示 / F = 選択ノードへフォーカス
@@ -352,7 +405,7 @@ export const SequenceView = memo(function SequenceView({
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const k = e.key.toLowerCase()
       if (e.key === 'Delete') {
-        for (const id of selectedIds) removeNode(id)
+        removeNodes([...selectedIds])
       } else if (k === 'a') {
         fitToNodes(nodesRef.current)
       } else if (k === 'f') {
@@ -361,11 +414,13 @@ export const SequenceView = memo(function SequenceView({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedIds, removeNode, fitToNodes])
+  }, [selectedIds, removeNodes, fitToNodes])
 
   const removeEdge = async (edgeId: number) => {
+    const before = graphSnapshot()
     await api.removeSequenceEdge(edgeId)
     setEdges((prev) => prev.filter((e) => e.id !== edgeId))
+    await pushGraphUndo('接続の削除', before)
   }
 
   // --- ノードのドラッグ移動（選択中の複数ノードはまとめて動かす） ---
@@ -396,10 +451,27 @@ export const SequenceView = memo(function SequenceView({
     window.removeEventListener('mouseup', onDragUp)
     if (!d) return
     if (d.moved) {
-      for (const id of d.nodeIds) {
-        const n = nodesRef.current.find((x) => x.id === id)
-        if (n) api.moveSequenceNode(id, n.x, n.y).catch(() => void 0)
+      // undo 用の「移動前」はドラッグ開始時の座標（d.orig）から組み立てる
+      const before = {
+        nodes: nodesRef.current.map((n) => {
+          const o = d.orig.get(n.id)
+          return { id: n.id, segmentId: n.segmentId, x: o?.x ?? n.x, y: o?.y ?? n.y }
+        }),
+        edges: edgesRef.current.map((e) => ({
+          id: e.id,
+          srcNodeId: e.srcNodeId,
+          dstNodeId: e.dstNodeId
+        }))
       }
+      void (async () => {
+        await Promise.all(
+          d.nodeIds.map((id) => {
+            const n = nodesRef.current.find((x) => x.id === id)
+            return n ? api.moveSequenceNode(id, n.x, n.y).catch(() => void 0) : Promise.resolve()
+          })
+        )
+        await pushGraphUndo('ノードの移動', before)
+      })()
     } else {
       // 動かさずに離した = クリック: そのノードの開始位置へ頭出し。
       // 順路（チェーン）に入っていない単独ノードは、クリップ単体のプレビュー再生にする。
@@ -410,7 +482,7 @@ export const SequenceView = memo(function SequenceView({
         else onOpenClip(n.clip)
       }
     }
-  }, [onDragMove, onJumpToNode, onOpenClip])
+  }, [onDragMove, onJumpToNode, onOpenClip, pushGraphUndo])
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
     // 中 / 右ボタンはキャンバス側（パン / 矩形選択）に任せる
@@ -539,6 +611,7 @@ export const SequenceView = memo(function SequenceView({
     e.preventDefault()
     // ドロップ位置がノードの中心になるように置く
     const p = toContent(e.clientX, e.clientY)
+    const before = graphSnapshot()
     const node = await api.addSequenceNode(
       activeId,
       Number(idStr),
@@ -547,6 +620,7 @@ export const SequenceView = memo(function SequenceView({
     )
     setNodes((prev) => [...prev, node])
     setSelectedIds(new Set([node.id]))
+    await pushGraphUndo('ノードの追加', before)
   }
 
   // --- エッジの接続（出力ポート → 入力ポート） ---
@@ -583,9 +657,11 @@ export const SequenceView = memo(function SequenceView({
     // stopPropagation で window の mouseup（onConnectUp）が届かないため、ここで明示的に後片付けする
     onConnectUp()
     if (c.srcNodeId !== node.id && activeId != null) {
+      const before = graphSnapshot()
       try {
         await api.addSequenceEdge(activeId, c.srcNodeId, node.id)
         reload(activeId) // 一本道の張り替え結果を反映
+        await pushGraphUndo('ノードの接続', before)
       } catch {
         // 閉路など: 無視
       }
@@ -925,7 +1001,7 @@ export const SequenceView = memo(function SequenceView({
                       className="seq-node-remove"
                       title="ノードを削除"
                       onMouseDown={(e) => e.stopPropagation()}
-                      onClick={() => removeNode(n.id)}
+                      onClick={() => removeNodes([n.id])}
                     >
                       ✕
                     </button>

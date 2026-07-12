@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
+import { pushUndo, registerUndoRefresh } from '../undo'
 import { fmtSec, fmtTime } from '../util'
 import { ContextMenu } from './ContextMenu'
 import { IconFilm } from './icons'
@@ -124,6 +125,14 @@ export const ClipsView = memo(function ClipsView({
 
   const refreshTags = () => api.getAllTags().then(setAllTags)
 
+  // undo / redo 後にクリップ一覧を DB から取り直す
+  useEffect(() => {
+    return registerUndoRefresh(() => {
+      api.listAllClips().then(setClips)
+      api.getAllTags().then(setAllTags)
+    })
+  }, [])
+
   // 開いているクリップのカードが表示範囲外ならスクロールして見せる。
   // 他画面の「クリップ画面で編集」から飛んできた直後（一覧のロード完了後）にも効く。
   useEffect(() => {
@@ -219,11 +228,22 @@ export const ClipsView = memo(function ClipsView({
   const clearSelection = () => setSelected(new Set())
 
   const rename = (id: number, label: string) => {
+    const prev = clips.find((c) => c.id === id)
     setClips((prev) => prev.map((c) => (c.id === id ? { ...c, label } : c)))
     api.updateSegment(id, { label }).catch(() => void 0)
+    if (prev) {
+      const oldLabel = prev.label ?? null
+      pushUndo({
+        label: 'ラベルの変更',
+        mergeKey: `seg-label:${id}`, // 逐次入力を 1 エントリにまとめる
+        undo: () => api.updateSegment(id, { label: oldLabel }).then(() => void 0),
+        redo: () => api.updateSegment(id, { label }).then(() => void 0)
+      })
+    }
   }
 
   const remove = async (id: number) => {
+    const clip = clips.find((c) => c.id === id)
     await api.deleteSegment(id)
     setClips((prev) => prev.filter((c) => c.id !== id))
     setSelected((prev) => {
@@ -232,6 +252,13 @@ export const ClipsView = memo(function ClipsView({
       next.delete(id)
       return next
     })
+    if (clip) {
+      pushUndo({
+        label: 'クリップの削除',
+        undo: () => api.restoreSegment(clip),
+        redo: () => api.deleteSegment(id)
+      })
+    }
   }
 
   if (loading) {

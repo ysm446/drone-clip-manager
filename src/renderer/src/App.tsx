@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
+import { performRedo, performUndo, pushUndo, registerUndoRefresh } from './undo'
 import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
@@ -62,6 +63,9 @@ export function App() {
   const [meta, setMeta] = useState<VideoMeta | null>(null)
   const [keyframes, setKeyframes] = useState<number[]>([])
   const [segments, setSegments] = useState<Segment[]>([])
+  /** undo エントリから最新の segments を参照するためのミラー */
+  const segmentsRef = useRef<Segment[]>([])
+  segmentsRef.current = segments
   /** 選択中動画のタグ（区間作成時に引き継がれる） */
   const [videoTags, setVideoTags] = useState<string[]>([])
   /** タグ補完候補（区間 + 動画の合算。動画タグ入力の datalist に使う） */
@@ -112,6 +116,36 @@ export function App() {
     setStatus({ text, kind })
     if (statusTimerRef.current) window.clearTimeout(statusTimerRef.current)
     statusTimerRef.current = window.setTimeout(() => setStatus(null), 6000)
+  }, [])
+
+  // --- Undo / Redo（Ctrl+Z / Ctrl+Shift+Z・Ctrl+Y）。対象: 区間とシーケンスのグラフ ---
+  useEffect(() => {
+    const onKey = async (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      const isUndo = k === 'z' && !e.shiftKey
+      const isRedo = (k === 'z' && e.shiftKey) || k === 'y'
+      if (!isUndo && !isRedo) return
+      // 入力欄はブラウザ標準のテキスト undo に任せる
+      const t = document.activeElement as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      e.preventDefault()
+      const label = isUndo ? await performUndo() : await performRedo()
+      if (label) showStatus(`${isUndo ? '元に戻しました' : 'やり直しました'}: ${label}`)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showStatus])
+
+  // undo / redo 後、現在の動画の区間リストを DB から取り直す（他ビューは各自のリフレッシャで追従）
+  useEffect(() => {
+    return registerUndoRefresh(() => {
+      const rel = currentRelRef.current
+      if (!rel) return
+      api.listSegments(rel).then((segs) => {
+        if (currentRelRef.current === rel) setSegments(segs)
+      })
+    })
   }, [])
   /** スクリーンショットの多重発火防止（キーリピート / 二重イベント対策） */
   const lastShotRef = useRef(0)
@@ -806,6 +840,11 @@ export function App() {
       })
       setSegments((prev) => [...prev, created].sort((a, b) => a.inTime - b.inTime))
       setSelectedSeg(created.id)
+      pushUndo({
+        label: '区間の作成',
+        undo: () => api.deleteSegment(created.id),
+        redo: () => api.restoreSegment(created)
+      })
       showStatus(
         `区間を作成しました（${fmtTime(created.inSnapped ?? created.inTime)} – ${fmtTime(
           created.outSnapped ?? created.outTime
@@ -820,6 +859,7 @@ export function App() {
     (id: number, inT: number, outT: number) => {
       const inSnapped = keyframes.length ? keyframeBefore(keyframes, inT) : inT
       const outSnapped = keyframes.length ? keyframeAfter(keyframes, outT, duration || outT) : outT
+      const prev = segmentsRef.current.find((s) => s.id === id)
       setSegments((prev) =>
         prev
           .map((s) =>
@@ -828,6 +868,20 @@ export function App() {
           .sort((a, b) => a.inTime - b.inTime)
       )
       api.updateSegment(id, { inTime: inT, outTime: outT, inSnapped, outSnapped }).catch(() => void 0)
+      if (prev) {
+        const oldT = {
+          inTime: prev.inTime,
+          outTime: prev.outTime,
+          inSnapped: prev.inSnapped,
+          outSnapped: prev.outSnapped
+        }
+        const newT = { inTime: inT, outTime: outT, inSnapped, outSnapped }
+        pushUndo({
+          label: '区間の in/out 変更',
+          undo: () => api.updateSegment(id, oldT).then(() => void 0),
+          redo: () => api.updateSegment(id, newT).then(() => void 0)
+        })
+      }
       return { inSnapped, outSnapped }
     },
     [keyframes, duration]
@@ -899,17 +953,35 @@ export function App() {
 
   const deleteSeg = useCallback(
     async (id: number) => {
+      const seg = segmentsRef.current.find((s) => s.id === id)
       await api.deleteSegment(id)
       setSegments((prev) => prev.filter((s) => s.id !== id))
       setSelectedSeg((cur) => (cur === id ? null : cur))
+      if (seg) {
+        pushUndo({
+          label: '区間の削除',
+          undo: () => api.restoreSegment(seg),
+          redo: () => api.deleteSegment(id)
+        })
+      }
       showStatus('区間を削除しました')
     },
     [showStatus]
   )
 
   const renameSeg = useCallback((id: number, label: string) => {
+    const prev = segmentsRef.current.find((s) => s.id === id)
     setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)))
     api.updateSegment(id, { label }).catch(() => void 0)
+    if (prev) {
+      const oldLabel = prev.label ?? null
+      pushUndo({
+        label: 'ラベルの変更',
+        mergeKey: `seg-label:${id}`, // 逐次入力を 1 エントリにまとめる
+        undo: () => api.updateSegment(id, { label: oldLabel }).then(() => void 0),
+        redo: () => api.updateSegment(id, { label }).then(() => void 0)
+      })
+    }
   }, [])
 
   // 区間リストからのタグ変更を segments state に反映（永続化は SegmentList 側で実施済み）
