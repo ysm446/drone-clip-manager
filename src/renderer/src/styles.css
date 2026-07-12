@@ -1916,6 +1916,12 @@ body.resizing {
   opacity: 0.5;
   cursor: default;
 }
+/* 選択中ノード（複数なら先頭）のクリップを強調 */
+.seq-palette-item.active {
+  border-color: var(--accent);
+  background: var(--selected);
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
 .seq-palette-label {
   flex: 1;
   overflow: hidden;

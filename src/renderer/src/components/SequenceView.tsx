@@ -161,6 +161,7 @@ export const SequenceView = memo(function SequenceView({
   )
 
   const canvasRef = useRef<HTMLDivElement>(null)
+  const paletteRef = useRef<HTMLDivElement>(null)
   const nodesRef = useRef<SequenceNode[]>([])
   const viewRef = useRef(view)
   const dragRef = useRef<{
@@ -643,6 +644,21 @@ export const SequenceView = memo(function SequenceView({
       return next
     })
 
+  // 選択中ノード（複数なら先頭）のクリップ id。隣のクリップ一覧の強調 + スクロールに使う
+  const activeClipId = useMemo(() => {
+    const first = selectedIds.values().next().value as number | undefined
+    if (first == null) return null
+    return nodes.find((n) => n.id === first)?.clip?.id ?? null
+  }, [selectedIds, nodes])
+
+  // 対応するカードが一覧の表示範囲外ならスクロールして見せる（絞り込みで非表示なら何もしない）
+  useEffect(() => {
+    if (activeClipId == null) return
+    paletteRef.current
+      ?.querySelector(`[data-clip-id="${activeClipId}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeClipId])
+
   const shownClips = useMemo(() => {
     let list = clips
     if (tagFilter.size > 0) {
@@ -751,11 +767,14 @@ export const SequenceView = memo(function SequenceView({
             )}
           </div>
         )}
-        <div className="seq-palette">
+        <div className="seq-palette" ref={paletteRef}>
           {shownClips.map((c) => (
             <div
               key={c.id}
-              className={`seq-palette-item${activeId == null ? ' disabled' : ''}`}
+              data-clip-id={c.id}
+              className={`seq-palette-item${activeId == null ? ' disabled' : ''}${
+                c.id === activeClipId ? ' active' : ''
+              }`}
               draggable={activeId != null}
               onDragStart={(e) => {
                 e.dataTransfer.setData('application/x-dcm-clip', String(c.id))
