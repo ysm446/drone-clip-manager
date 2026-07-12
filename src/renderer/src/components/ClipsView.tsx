@@ -15,8 +15,10 @@ interface Props {
   onExport: (targets: ExportTarget[]) => void
   /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
   onEditInLibrary: (clip: ClipItem) => void
-  /** 現在プレイヤーで開いている動画の相対パス（再生中クリップの強調に使う） */
+  /** 現在プレイヤーで開いている動画の相対パス（同一動画のクリップの弱い強調に使う） */
   selectedVideoRel: string | null
+  /** いま開いている（編集対象の）区間 id。該当カードを強く強調する */
+  openSegmentId: number | null
   /** プレイヤー側での in/out 調整をカード表示へその場で反映するためのパッチ */
   segmentPatch?: {
     id: number
@@ -82,6 +84,7 @@ export const ClipsView = memo(function ClipsView({
   onExport,
   onEditInLibrary,
   selectedVideoRel,
+  openSegmentId,
   segmentPatch
 }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
@@ -310,11 +313,14 @@ export const ClipsView = memo(function ClipsView({
           const lo = c.inSnapped ?? c.inTime
           const hi = c.outSnapped ?? c.outTime
           const isSel = selected.has(c.id)
-          const isPlaying = selectedVideoRel === c.videoRelPath
+          const isOpen = openSegmentId === c.id
+          const sameVideo = selectedVideoRel === c.videoRelPath
           return (
             <div
               key={c.id}
-              className={`clip-card${isSel ? ' selected' : ''}${isPlaying ? ' playing' : ''}`}
+              className={`clip-card${isSel ? ' selected' : ''}${isOpen ? ' open' : ''}${
+                sameVideo ? ' same-video' : ''
+              }`}
               onClick={(e) => {
                 // Ctrl/Shift+クリックは選択トグル、通常クリックは元動画を上部プレイヤーで再生
                 if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(c.id)

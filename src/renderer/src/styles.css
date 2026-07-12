@@ -1443,11 +1443,13 @@ body.resizing {
   border-color: var(--accent-border);
   background: var(--selected);
 }
-/* いま上部プレイヤーで開いている動画のクリップを強調 */
-.clip-card.playing {
+/* いま開いている（編集対象の）クリップ 1 枚を強く強調（ノード選択と同じ見た目） */
+.clip-card.open {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-border);
 }
-.clip-card.playing::before {
+/* 同じ動画のクリップは左端の細いバーだけの弱い表示 */
+.clip-card.same-video::before {
   content: '';
   position: absolute;
   left: 0;
@@ -1456,6 +1458,10 @@ body.resizing {
   width: 3px;
   border-radius: 0 2px 2px 0;
   background: var(--accent);
+  opacity: 0.55;
+}
+.clip-card.open::before {
+  opacity: 1;
 }
 .clip-check {
   position: absolute;

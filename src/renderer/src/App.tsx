@@ -1679,6 +1679,7 @@ export function App() {
               onExport={setExportItems}
               onEditInLibrary={editInLibrary}
               selectedVideoRel={selected}
+              openSegmentId={selectedSeg}
               segmentPatch={segPatch}
             />
           ) : view === 'sequence' ? (
