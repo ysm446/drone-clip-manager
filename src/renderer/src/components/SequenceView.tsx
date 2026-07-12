@@ -9,6 +9,7 @@ import type {
   TagCount
 } from '../../../shared/types'
 import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
+import { ContextMenu } from './ContextMenu'
 import { IconFilm, IconPause, IconPlay } from './icons'
 import { Splitter } from './Splitter'
 
@@ -27,6 +28,8 @@ interface Props {
   onStopSequence: () => void
   /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
   onOpenClip: (clip: ClipItem) => void
+  /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
+  onEditClip: (clip: ClipItem) => void
   /** ノードのクリックで、順路（items）内のそのノードの開始位置へ頭出しする */
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
@@ -108,6 +111,7 @@ export const SequenceView = memo(function SequenceView({
   onPlaySequence,
   onStopSequence,
   onOpenClip,
+  onEditClip,
   onJumpToNode,
   onModalOpenChange,
   playingNodeId,
@@ -127,6 +131,8 @@ export const SequenceView = memo(function SequenceView({
   const [exporting, setExporting] = useState<ConcatProgress | null>(null)
   /** 連結書き出しの結果（モーダルで表示、閉じるまで保持） */
   const [exportResult, setExportResult] = useState<ConcatResult | null>(null)
+  /** パレットのクリップカードの右クリックメニュー */
+  const [clipMenu, setClipMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
 
   // 書き出しモーダルの表示中は mpv（ネイティブ最前面）に隠されないよう App へ通知して隠してもらう
   useEffect(() => {
@@ -756,6 +762,10 @@ export const SequenceView = memo(function SequenceView({
                 e.dataTransfer.effectAllowed = 'copy'
               }}
               onClick={() => onOpenClip(c)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setClipMenu({ x: e.clientX, y: e.clientY, clip: c })
+              }}
               title={`${c.videoFilename}\nクリック: 上部プレイヤーで再生 / ドラッグ: キャンバスへ配置`}
             >
               <NodeThumb clip={c} />
@@ -919,6 +929,15 @@ export const SequenceView = memo(function SequenceView({
           )}
         </div>
       </div>
+
+      {clipMenu && (
+        <ContextMenu
+          x={clipMenu.x}
+          y={clipMenu.y}
+          onClose={() => setClipMenu(null)}
+          items={[{ label: 'クリップ画面で編集', onClick: () => onEditClip(clipMenu.clip) }]}
+        />
+      )}
 
       {(exporting || exportResult) && (
         <div className="modal-backdrop">

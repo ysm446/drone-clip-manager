@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react'
 import type { Segment, TagCount } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
+import { ContextMenu } from './ContextMenu'
 import { TagEditor } from './TagEditor'
 
 const api = window.dcm
@@ -14,6 +15,8 @@ interface Props {
   onRename: (id: number, label: string) => void
   /** タグ変更を親（App の segments state）へ反映する */
   onTagsChanged: (id: number, tags: string[]) => void
+  /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこの区間を開く */
+  onEditAsClip: (seg: Segment) => void
 }
 
 // 再生ヘッドの時刻更新で App が再レンダリングされても一覧を描き直さないよう memo 化
@@ -24,9 +27,12 @@ export const SegmentList = memo(function SegmentList({
   onJump,
   onDelete,
   onRename,
-  onTagsChanged
+  onTagsChanged,
+  onEditAsClip
 }: Props) {
   const [allTags, setAllTags] = useState<TagCount[]>([])
+  /** 右クリックメニュー（対象区間 id と表示位置） */
+  const [menu, setMenu] = useState<{ x: number; y: number; seg: Segment } | null>(null)
   useEffect(() => {
     api.getAllTags().then(setAllTags)
   }, [])
@@ -58,6 +64,11 @@ export const SegmentList = memo(function SegmentList({
             key={s.id}
             className={`seg-item${selectedId === s.id ? ' selected' : ''}`}
             onClick={() => onSelect(s.id)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              onSelect(s.id)
+              setMenu({ x: e.clientX, y: e.clientY, seg: s })
+            }}
           >
             <div className="seg-item-main">
               <span className="seg-swatch" style={{ background: s.color ?? colorForIndex(i) }} />
@@ -92,6 +103,18 @@ export const SegmentList = memo(function SegmentList({
           </div>
         )
       })}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: 'クリップ画面で編集', onClick: () => onEditAsClip(menu.seg) },
+            { label: '削除', danger: true, onClick: () => onDelete(menu.seg.id) }
+          ]}
+        />
+      )}
     </div>
   )
 })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
+import type { RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
 import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
@@ -991,7 +991,7 @@ export function App() {
   // ビューは切り替えず、クリップビューに留まったまま同じプレイヤーで再生できるようにする。
   // 再生中に別ソースのクリップへ切り替えた場合は、再生状態を引き継いで新しい in 点から再生を継続する。
   const openClip = useCallback(
-    (clip: ClipItem) => {
+    (clip: Segment) => {
       exitSequence() // クリップ単体の再生に切り替えるのでシーケンス表示を解除
       const t = clip.inSnapped ?? clip.inTime
       const range = { in: t, out: clip.outSnapped ?? clip.outTime }
@@ -1013,6 +1013,38 @@ export function App() {
       }
     },
     [seek, selectVideo, setClipPlayRange, exitSequence]
+  )
+
+  /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えて区間を開く */
+  const editAsClip = useCallback(
+    (seg: Segment) => {
+      setView('clips')
+      openClip(seg)
+    },
+    [openClip]
+  )
+
+  /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面で元動画を開き、区間を選択して in 点へ */
+  const editInLibrary = useCallback(
+    (seg: Segment) => {
+      exitSequence()
+      // クリップ単体のループ再生は解除（ライブラリでは動画全体のタイムラインで編集する）
+      clipPlayRef.current = null
+      setClipPlay(null)
+      setView('library')
+      const t = seg.inSnapped ?? seg.inTime
+      if (currentRelRef.current === seg.videoRelPath) {
+        setSelectedSeg(seg.id)
+        seek(t)
+      } else {
+        pendingSeekRef.current = t
+        // selectVideo が selectedSeg を解除するので、ロード後に再設定する
+        selectVideo(seg.videoRelPath).then(() => {
+          if (currentRelRef.current === seg.videoRelPath) setSelectedSeg(seg.id)
+        })
+      }
+    },
+    [exitSequence, seek, selectVideo]
   )
 
 
@@ -1645,6 +1677,7 @@ export function App() {
               key={libVersion}
               onOpenClip={openClip}
               onExport={setExportItems}
+              onEditInLibrary={editInLibrary}
               selectedVideoRel={selected}
               segmentPatch={segPatch}
             />
@@ -1654,6 +1687,7 @@ export function App() {
               onPlaySequence={playSequence}
               onStopSequence={stopSequence}
               onOpenClip={openClip}
+              onEditClip={editAsClip}
               onJumpToNode={jumpToNode}
               onModalOpenChange={setSeqModalOpen}
               playingNodeId={playingNodeId}
@@ -1713,6 +1747,7 @@ export function App() {
                     onDelete={deleteSeg}
                     onRename={renameSeg}
                     onTagsChanged={onSegmentTagsChanged}
+                    onEditAsClip={editAsClip}
                   />
                 </>
               ) : (

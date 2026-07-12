@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtSec, fmtTime } from '../util'
+import { ContextMenu } from './ContextMenu'
 import { IconFilm } from './icons'
 import { TagEditor } from './TagEditor'
 
@@ -12,6 +13,8 @@ const api = window.dcm
 interface Props {
   onOpenClip: (clip: ClipItem) => void
   onExport: (targets: ExportTarget[]) => void
+  /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
+  onEditInLibrary: (clip: ClipItem) => void
   /** 現在プレイヤーで開いている動画の相対パス（再生中クリップの強調に使う） */
   selectedVideoRel: string | null
   /** プレイヤー側での in/out 調整をカード表示へその場で反映するためのパッチ */
@@ -77,10 +80,13 @@ function ClipThumb({ clip }: { clip: ClipItem }) {
 export const ClipsView = memo(function ClipsView({
   onOpenClip,
   onExport,
+  onEditInLibrary,
   selectedVideoRel,
   segmentPatch
 }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
+  /** 右クリックメニュー（対象クリップと表示位置） */
+  const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [videoFilter, setVideoFilter] = useState<string>('')
@@ -314,6 +320,10 @@ export const ClipsView = memo(function ClipsView({
                 if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(c.id)
                 else onOpenClip(c)
               }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setMenu({ x: e.clientX, y: e.clientY, clip: c })
+              }}
               title={`${c.videoRelPath}\nクリック: 上部プレイヤーで再生（in 点へ）/ Ctrl+クリック: 選択`}
             >
               <input
@@ -381,6 +391,19 @@ export const ClipsView = memo(function ClipsView({
           )
         })}
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: 'ライブラリで元動画を編集', onClick: () => onEditInLibrary(menu.clip) },
+            { label: '書き出し…', onClick: () => onExport([toTarget(menu.clip)]) },
+            { label: '削除', danger: true, onClick: () => void remove(menu.clip.id) }
+          ]}
+        />
+      )}
     </div>
   )
 })
