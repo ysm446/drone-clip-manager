@@ -1895,6 +1895,7 @@ body.resizing {
   align-content: start;
 }
 .seq-palette-item {
+  position: relative; /* 選択枠（::after）の基準 */
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1916,11 +1917,19 @@ body.resizing {
   opacity: 0.5;
   cursor: default;
 }
-/* 選択中ノード（複数なら先頭）のクリップを強調 */
+/* 選択中クリップの強調。枠はサムネイル等より手前（::after）に重ね、
+   ホバーのハイライトにも上書きされないようにする */
 .seq-palette-item.active {
-  border-color: var(--accent);
   background: var(--selected);
-  box-shadow: 0 0 0 1px var(--accent-border);
+}
+.seq-palette-item.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-m);
+  pointer-events: none;
+  z-index: 2;
 }
 .seq-palette-label {
   flex: 1;

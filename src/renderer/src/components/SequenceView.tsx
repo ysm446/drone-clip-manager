@@ -240,6 +240,7 @@ export const SequenceView = memo(function SequenceView({
 
   useEffect(() => {
     setSelectedIds(new Set())
+    setActiveClipId(null)
     if (activeId == null) {
       setNodes([])
       setEdges([])
@@ -644,11 +645,15 @@ export const SequenceView = memo(function SequenceView({
       return next
     })
 
-  // 選択中ノード（複数なら先頭）のクリップ id。隣のクリップ一覧の強調 + スクロールに使う
-  const activeClipId = useMemo(() => {
+  // クリップ一覧で強調するクリップ id。カードのクリックとノード選択の両方から更新される
+  const [activeClipId, setActiveClipId] = useState<number | null>(null)
+
+  // ノードを選択したら（複数なら先頭）、対応するクリップを強調対象にする
+  useEffect(() => {
     const first = selectedIds.values().next().value as number | undefined
-    if (first == null) return null
-    return nodes.find((n) => n.id === first)?.clip?.id ?? null
+    if (first == null) return // 選択解除では強調を保つ（カードクリック由来の選択を消さない）
+    const clipId = nodes.find((n) => n.id === first)?.clip?.id
+    if (clipId != null) setActiveClipId(clipId)
   }, [selectedIds, nodes])
 
   // 対応するカードが一覧の表示範囲外ならスクロールして見せる（絞り込みで非表示なら何もしない）
@@ -780,7 +785,10 @@ export const SequenceView = memo(function SequenceView({
                 e.dataTransfer.setData('application/x-dcm-clip', String(c.id))
                 e.dataTransfer.effectAllowed = 'copy'
               }}
-              onClick={() => onOpenClip(c)}
+              onClick={() => {
+                setActiveClipId(c.id) // クリックで選択状態にする（再生も従来どおり）
+                onOpenClip(c)
+              }}
               onContextMenu={(e) => {
                 e.preventDefault()
                 setClipMenu({ x: e.clientX, y: e.clientY, clip: c })
