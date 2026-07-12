@@ -720,12 +720,17 @@ export const SequenceView = memo(function SequenceView({
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const isPlaying = playingNodeId != null
 
-  const toggleTagFilter = (tag: string) =>
+  // クリックは単独選択（同じタグだけが選択済みなら解除）、Ctrl / Shift +クリックはトグルで複数選択
+  const clickTagFilter = (tag: string, additive: boolean) =>
     setTagFilter((prev) => {
-      const next = new Set(prev)
-      if (next.has(tag)) next.delete(tag)
-      else next.add(tag)
-      return next
+      if (additive) {
+        const next = new Set(prev)
+        if (next.has(tag)) next.delete(tag)
+        else next.add(tag)
+        return next
+      }
+      if (prev.size === 1 && prev.has(tag)) return new Set()
+      return new Set([tag])
     })
 
   // クリップ一覧で強調するクリップ id。カードのクリックとノード選択の両方から更新される
@@ -842,7 +847,8 @@ export const SequenceView = memo(function SequenceView({
               <button
                 key={t.tag}
                 className={`tag-chip filter${tagFilter.has(t.tag) ? ' active' : ''}`}
-                onClick={() => toggleTagFilter(t.tag)}
+                onClick={(e) => clickTagFilter(t.tag, e.ctrlKey || e.metaKey || e.shiftKey)}
+                title="クリック: このタグだけで絞り込み / Ctrl+クリック: 複数選択（AND）"
               >
                 {t.tag}
                 <span className="tag-chip-count">{t.count}</span>
