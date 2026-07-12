@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Segment, TagCount } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
 import { ContextMenu } from './ContextMenu'
@@ -33,6 +33,15 @@ export const SegmentList = memo(function SegmentList({
   const [allTags, setAllTags] = useState<TagCount[]>([])
   /** 右クリックメニュー（対象区間 id と表示位置） */
   const [menu, setMenu] = useState<{ x: number; y: number; seg: Segment } | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // タイムラインの区間バー等で選択されたら、一覧の表示範囲外でも見える位置へスクロール
+  useEffect(() => {
+    if (selectedId == null) return
+    listRef.current
+      ?.querySelector(`[data-seg-id="${selectedId}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [selectedId])
   useEffect(() => {
     api.getAllTags().then(setAllTags)
   }, [])
@@ -55,13 +64,14 @@ export const SegmentList = memo(function SegmentList({
     return <div className="seg-empty">区間はまだありません。タイムラインをドラッグして作成。</div>
   }
   return (
-    <div className="seg-list">
+    <div className="seg-list" ref={listRef}>
       {segments.map((s, i) => {
         const lo = s.inSnapped ?? s.inTime
         const hi = s.outSnapped ?? s.outTime
         return (
           <div
             key={s.id}
+            data-seg-id={s.id}
             className={`seg-item${selectedId === s.id ? ' selected' : ''}`}
             onClick={() => onSelect(s.id)}
             onContextMenu={(e) => {

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipItem, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { fmtSec, fmtTime } from '../util'
@@ -90,6 +90,7 @@ export const ClipsView = memo(function ClipsView({
   const [clips, setClips] = useState<ClipItem[]>([])
   /** 右クリックメニュー（対象クリップと表示位置） */
   const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [videoFilter, setVideoFilter] = useState<string>('')
@@ -122,6 +123,15 @@ export const ClipsView = memo(function ClipsView({
   }, [segmentPatch])
 
   const refreshTags = () => api.getAllTags().then(setAllTags)
+
+  // 開いているクリップのカードが表示範囲外ならスクロールして見せる。
+  // 他画面の「クリップ画面で編集」から飛んできた直後（一覧のロード完了後）にも効く。
+  useEffect(() => {
+    if (loading || openSegmentId == null) return
+    gridRef.current
+      ?.querySelector(`[data-clip-id="${openSegmentId}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [openSegmentId, loading])
 
   const addTag = (id: number, tag: string) => {
     api.addSegmentTag(id, tag).then((tags) => {
@@ -308,7 +318,7 @@ export const ClipsView = memo(function ClipsView({
         </div>
       )}
 
-      <div className="clips-grid">
+      <div className="clips-grid" ref={gridRef}>
         {shown.map((c) => {
           const lo = c.inSnapped ?? c.inTime
           const hi = c.outSnapped ?? c.outTime
@@ -318,6 +328,7 @@ export const ClipsView = memo(function ClipsView({
           return (
             <div
               key={c.id}
+              data-clip-id={c.id}
               className={`clip-card${isSel ? ' selected' : ''}${isOpen ? ' open' : ''}${
                 sameVideo ? ' same-video' : ''
               }`}
