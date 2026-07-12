@@ -142,6 +142,7 @@ function NodeRow({
     const isMulti = multiSelected.has(node.relPath)
     return (
       <div
+        data-rel={node.relPath}
         className={`tree-row video${isSel ? ' selected' : ''}${isMulti ? ' multi' : ''}`}
         style={{ paddingLeft: 8 + depth * 14 }}
         draggable={!editing}
@@ -250,6 +251,37 @@ export const FolderTree = memo(function FolderTree({
     setMenu(null)
   }, [rootKey])
 
+  // 選択動画が変わったら（「ライブラリで元動画を編集」などの外部起点も含む）、
+  // 祖先フォルダを開いてから選択行までスクロールして見せる
+  const containerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!selected) return
+    const parts = selected.split('/')
+    if (parts.length > 1) {
+      setOverrides((prev) => {
+        const next = { ...prev }
+        let changed = false
+        let p = ''
+        for (let i = 0; i < parts.length - 1; i++) {
+          p = p ? `${p}/${parts[i]}` : parts[i]
+          if (next[p] !== true) {
+            next[p] = true
+            changed = true
+          }
+        }
+        if (!changed) return prev
+        localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next))
+        return next
+      })
+    }
+    // フォルダを開いた再描画の後にスクロールする
+    requestAnimationFrame(() => {
+      containerRef.current
+        ?.querySelector(`[data-rel="${CSS.escape(selected)}"]`)
+        ?.scrollIntoView({ block: 'nearest' })
+    })
+  }, [selected, rootKey])
+
   // 外部（ヘッダの＋ボタン等）からの名前入力リクエスト
   useEffect(() => {
     if (editRequestPath) {
@@ -352,6 +384,7 @@ export const FolderTree = memo(function FolderTree({
   const children = tree.children ?? []
   return (
     <div
+      ref={containerRef}
       className={`tree${dropTarget === '' ? ' drop-root' : ''}`}
       onContextMenu={openRootMenu}
       onDragOver={(e) => onDirDragOver(e, '')}

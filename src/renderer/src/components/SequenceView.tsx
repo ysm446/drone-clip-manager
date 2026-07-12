@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/types'
 import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { ContextMenu } from './ContextMenu'
+import type { ExportTarget } from './ExportModal'
 import { IconFilm, IconPause, IconPlay } from './icons'
 import { Splitter } from './Splitter'
 
@@ -30,6 +31,10 @@ interface Props {
   onOpenClip: (clip: ClipItem) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
   onEditClip: (clip: ClipItem) => void
+  /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
+  onEditInLibrary: (clip: ClipItem) => void
+  /** 右クリックメニュー「書き出し…」: 書き出しモーダルを開く（ClipsView と同じ経路） */
+  onExport: (targets: ExportTarget[]) => void
   /** ノードのクリックで、順路（items）内のそのノードの開始位置へ頭出しする */
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
@@ -112,6 +117,8 @@ export const SequenceView = memo(function SequenceView({
   onStopSequence,
   onOpenClip,
   onEditClip,
+  onEditInLibrary,
+  onExport,
   onJumpToNode,
   onModalOpenChange,
   playingNodeId,
@@ -962,7 +969,24 @@ export const SequenceView = memo(function SequenceView({
           x={clipMenu.x}
           y={clipMenu.y}
           onClose={() => setClipMenu(null)}
-          items={[{ label: 'クリップ画面で編集', onClick: () => onEditClip(clipMenu.clip) }]}
+          items={[
+            { label: 'クリップ画面で編集', onClick: () => onEditClip(clipMenu.clip) },
+            {
+              label: 'ライブラリで元動画を編集',
+              onClick: () => onEditInLibrary(clipMenu.clip)
+            },
+            {
+              label: '書き出し…',
+              onClick: () =>
+                onExport([
+                  {
+                    segment: clipMenu.clip,
+                    videoRelPath: clipMenu.clip.videoRelPath,
+                    videoFilename: clipMenu.clip.videoFilename
+                  }
+                ])
+            }
+          ]}
         />
       )}
 

@@ -1689,6 +1689,8 @@ export function App() {
               onStopSequence={stopSequence}
               onOpenClip={openClip}
               onEditClip={editAsClip}
+              onEditInLibrary={editInLibrary}
+              onExport={setExportItems}
               onJumpToNode={jumpToNode}
               onModalOpenChange={setSeqModalOpen}
               playingNodeId={playingNodeId}
