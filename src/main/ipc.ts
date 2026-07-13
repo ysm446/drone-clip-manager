@@ -31,6 +31,7 @@ import {
   createSequence,
   renameSequence,
   deleteSequence,
+  duplicateSequence,
   getSequenceGraph,
   addSequenceNode,
   updateSequenceNodePos,
@@ -208,6 +209,7 @@ export function registerIpc(): void {
   ipcMain.handle('seq:create', (_e, name: string) => createSequence(name))
   ipcMain.handle('seq:rename', (_e, id: number, name: string) => renameSequence(id, name))
   ipcMain.handle('seq:delete', (_e, id: number) => deleteSequence(id))
+  ipcMain.handle('seq:duplicate', (_e, id: number, name: string) => duplicateSequence(id, name))
   ipcMain.handle('seq:get', (_e, id: number) => getSequenceGraph(id))
   ipcMain.handle('seq:addNode', (_e, seqId: number, segmentId: number, x: number, y: number) =>
     addSequenceNode(seqId, segmentId, x, y)

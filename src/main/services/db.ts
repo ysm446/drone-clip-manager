@@ -550,6 +550,40 @@ export function deleteSequence(id: number): void {
   tx(id)
 }
 
+/** シーケンスをノード / エッジごと複製する。新しいシーケンスを返す。 */
+export function duplicateSequence(id: number, name: string): Sequence {
+  const d = getDb()
+  const tx = d.transaction((srcId: number, newName: string): SequenceRow => {
+    const info = d.prepare('INSERT INTO sequences (name) VALUES (?)').run(newName)
+    const newSeqId = Number(info.lastInsertRowid)
+    const nodeRows = d
+      .prepare('SELECT * FROM sequence_nodes WHERE sequence_id = ? ORDER BY id ASC')
+      .all(srcId) as SequenceNodeRow[]
+    const edgeRows = d
+      .prepare('SELECT * FROM sequence_edges WHERE sequence_id = ? ORDER BY id ASC')
+      .all(srcId) as SequenceEdgeRow[]
+    // 旧ノード id → 新ノード id の対応（エッジの張り替えに使う）
+    const idMap = new Map<number, number>()
+    const insN = d.prepare(
+      'INSERT INTO sequence_nodes (sequence_id, segment_id, x, y) VALUES (?, ?, ?, ?)'
+    )
+    for (const n of nodeRows) {
+      const r = insN.run(newSeqId, n.segment_id, n.x, n.y)
+      idMap.set(n.id, Number(r.lastInsertRowid))
+    }
+    const insE = d.prepare(
+      'INSERT INTO sequence_edges (sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?)'
+    )
+    for (const e of edgeRows) {
+      const src = idMap.get(e.src_node_id)
+      const dst = idMap.get(e.dst_node_id)
+      if (src != null && dst != null) insE.run(newSeqId, src, dst)
+    }
+    return d.prepare('SELECT * FROM sequences WHERE id = ?').get(newSeqId) as SequenceRow
+  })
+  return rowToSequence(tx(id, name))
+}
+
 interface SequenceNodeRow {
   id: number
   sequence_id: number

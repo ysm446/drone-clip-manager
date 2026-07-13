@@ -43,6 +43,7 @@ const api: DcmApi = {
   createSequence: (name) => ipcRenderer.invoke('seq:create', name),
   renameSequence: (id, name) => ipcRenderer.invoke('seq:rename', id, name),
   deleteSequence: (id) => ipcRenderer.invoke('seq:delete', id),
+  duplicateSequence: (id, name) => ipcRenderer.invoke('seq:duplicate', id, name),
   getSequenceGraph: (id) => ipcRenderer.invoke('seq:get', id),
   addSequenceNode: (sequenceId, segmentId, x, y) =>
     ipcRenderer.invoke('seq:addNode', sequenceId, segmentId, x, y),

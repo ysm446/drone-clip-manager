@@ -1868,17 +1868,19 @@ body.resizing {
   font-size: var(--fs-ui);
   outline: none;
 }
-.seq-del {
+.seq-menu-btn {
   border: none;
   background: none;
   color: var(--faint);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 6px;
   border-radius: var(--radius-s);
   font-size: var(--fs-sm);
+  line-height: 1;
 }
-.seq-list-item:hover .seq-del {
-  color: var(--danger);
+.seq-menu-btn:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .seq-col .clips-search {
   margin: 6px 12px;

@@ -299,6 +299,8 @@ export interface DcmApi {
   createSequence: (name: string) => Promise<Sequence>
   renameSequence: (id: number, name: string) => Promise<void>
   deleteSequence: (id: number) => Promise<void>
+  /** シーケンスをノード / エッジごと複製する */
+  duplicateSequence: (id: number, name: string) => Promise<Sequence>
   /** シーケンスのノード + エッジ（各ノードにクリップ結合済み）を取得 */
   getSequenceGraph: (id: number) => Promise<SequenceGraph>
   addSequenceNode: (

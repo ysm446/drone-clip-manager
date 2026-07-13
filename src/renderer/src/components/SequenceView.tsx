@@ -143,6 +143,8 @@ export const SequenceView = memo(function SequenceView({
   const [exportResult, setExportResult] = useState<ConcatResult | null>(null)
   /** パレットのクリップカードの右クリックメニュー */
   const [clipMenu, setClipMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
+  /** シーケンス一覧の「…」メニュー（複製 / 削除） */
+  const [seqMenu, setSeqMenu] = useState<{ x: number; y: number; seq: Sequence } | null>(null)
 
   // 書き出しモーダルの表示中は mpv（ネイティブ最前面）に隠されないよう App へ通知して隠してもらう
   useEffect(() => {
@@ -238,9 +240,37 @@ export const SequenceView = memo(function SequenceView({
     })
   }, [])
 
-  // 選択中シーケンスのグラフを読み込む。fit=true でロード後に全体表示へ合わせる
+  /**
+   * シーケンスの先頭を上部プレイヤーに頭出しする（再生状態は引き継ぐ = 停止中はシークのみ）。
+   * 順路（最長チェーン）があればその先頭ノードへ、無ければ先頭クリップを単体プレビューする。
+   */
+  const cueHead = useCallback(
+    (ns: SequenceNode[], es: SequenceEdge[]) => {
+      const order = nodeOrderFromEdges(
+        ns.map((n) => n.id),
+        es
+      )
+      const byId = new Map(ns.map((n) => [n.id, n]))
+      const items: SeqPlayItem[] = []
+      for (const id of order) {
+        const n = byId.get(id)
+        if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
+      }
+      if (items.length > 0) {
+        onJumpToNode(items, items[0].nodeId)
+        return
+      }
+      // 未接続 / チェーンなし: 先頭クリップを単体でプレビュー（クリップが 1 つも無ければ何もしない）
+      const first = ns.find((n) => n.clip)
+      if (first?.clip) onOpenClip(first.clip)
+    },
+    [onJumpToNode, onOpenClip]
+  )
+
+  // 選択中シーケンスのグラフを読み込む。fit=true でロード後に全体表示へ合わせる。
+  // cue=true でロード後に先頭を上部プレイヤーへ頭出しする（一覧のクリック選択時のみ）。
   const reload = useCallback(
-    (id: number, fit = false) => {
+    (id: number, fit = false, cue = false) => {
       api.getSequenceGraph(id).then((g) => {
         setNodes(g.nodes)
         setEdges(g.edges)
@@ -248,10 +278,14 @@ export const SequenceView = memo(function SequenceView({
           if (g.nodes.length > 0) fitToNodes(g.nodes)
           else setView({ x: 0, y: 0, scale: 1 }) // 空のシーケンスは初期表示に戻す
         }
+        if (cue) cueHead(g.nodes, g.edges)
       })
     },
-    [fitToNodes]
+    [fitToNodes, cueHead]
   )
+
+  // 一覧のクリック選択時だけ先頭を頭出しする（初回の自動選択や新規 / 複製では奪わない）
+  const cueOnLoadRef = useRef(false)
 
   useEffect(() => {
     setSelectedIds(new Set())
@@ -261,8 +295,20 @@ export const SequenceView = memo(function SequenceView({
       setEdges([])
       return
     }
-    reload(activeId, true) // シーケンス切替時は全体表示に合わせる
+    const cue = cueOnLoadRef.current
+    cueOnLoadRef.current = false
+    reload(activeId, true, cue) // シーケンス切替時は全体表示に合わせる
   }, [activeId, reload])
+
+  /** 一覧の項目クリック: 選択 + 先頭を頭出し。既に選択中なら現在のグラフから直接頭出し。 */
+  const selectSeq = (id: number) => {
+    if (id === activeId) {
+      cueHead(nodesRef.current, edgesRef.current)
+      return
+    }
+    cueOnLoadRef.current = true
+    setActiveId(id)
+  }
 
   // --- Undo（グラフ操作は「操作前後のスナップショット」を丸ごと積む） ---
   /** 現在のローカル state からグラフのスナップショットを取る */
@@ -376,6 +422,13 @@ export const SequenceView = memo(function SequenceView({
     await api.deleteSequence(id)
     setSequences((prev) => prev.filter((s) => s.id !== id))
     if (activeId === id) setActiveId(null)
+  }
+
+  const duplicateSeq = async (seq: Sequence) => {
+    const dup = await api.duplicateSequence(seq.id, `${seq.name} のコピー`)
+    setSequences((prev) => [dup, ...prev])
+    setActiveId(dup.id)
+    setRenaming(dup.id)
   }
 
   // --- ノード / エッジ操作 ---
@@ -787,7 +840,7 @@ export const SequenceView = memo(function SequenceView({
             <div
               key={s.id}
               className={`seq-list-item${s.id === activeId ? ' active' : ''}`}
-              onClick={() => setActiveId(s.id)}
+              onClick={() => selectSeq(s.id)}
             >
               {renaming === s.id ? (
                 <input
@@ -812,14 +865,15 @@ export const SequenceView = memo(function SequenceView({
                 </span>
               )}
               <button
-                className="seq-del"
-                title="削除"
+                className="seq-menu-btn"
+                title="メニュー"
                 onClick={(e) => {
                   e.stopPropagation()
-                  deleteSeq(s.id)
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  setSeqMenu({ x: r.right, y: r.bottom, seq: s })
                 }}
               >
-                ✕
+                …
               </button>
             </div>
           ))}
@@ -1045,6 +1099,18 @@ export const SequenceView = memo(function SequenceView({
           )}
         </div>
       </div>
+
+      {seqMenu && (
+        <ContextMenu
+          x={seqMenu.x}
+          y={seqMenu.y}
+          onClose={() => setSeqMenu(null)}
+          items={[
+            { label: '複製', onClick: () => duplicateSeq(seqMenu.seq) },
+            { label: '削除', danger: true, onClick: () => deleteSeq(seqMenu.seq.id) }
+          ]}
+        />
+      )}
 
       {clipMenu && (
         <ContextMenu
