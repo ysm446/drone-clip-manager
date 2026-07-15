@@ -2,7 +2,14 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs'
 import { join, basename, dirname, extname } from 'node:path'
-import { getBgmDir, getRoot, resolveInRoot, toBgmRelPosix, toRelPosix } from '../util/paths'
+import {
+  getBgmDir,
+  getRoot,
+  resolveInBgm,
+  resolveInRoot,
+  toBgmRelPosix,
+  toRelPosix
+} from '../util/paths'
 import { shell } from 'electron'
 import { deletePathsInDb, getCachedKeyframes, renamePathsInDb, saveKeyframes, upsertVideoMeta } from './db'
 import { mpvStop } from './mpv'
@@ -311,6 +318,73 @@ export async function deleteEntry(relPath: string): Promise<void> {
     await shell.trashItem(abs) // それでも失敗なら投げる
   }
   deletePathsInDb(relPath, isDir)
+}
+
+/**
+ * ルート配下のファイル / フォルダをエクスプローラで表示する。
+ * ファイルは親フォルダを開いて選択状態にし、フォルダ（relPath '' = ルート）はその中身を開く。
+ */
+export async function showEntryInExplorer(relPath: string): Promise<void> {
+  const abs = resolveInRoot(relPath)
+  if (statSync(abs).isDirectory()) {
+    const err = await shell.openPath(abs)
+    if (err) throw new Error(err)
+  } else {
+    shell.showItemInFolder(abs)
+  }
+}
+
+/** BGM フォルダ配下の音声ファイルをエクスプローラで表示する（親フォルダを開いて選択状態にする）。 */
+export function showBgmInExplorer(relPath: string): void {
+  shell.showItemInFolder(resolveInBgm(relPath))
+}
+
+/**
+ * BGM フォルダ配下の音声ファイルの名前を変更する。成功時は新しい相対パスを返す。
+ * BGM は DB 参照を持たないため、ディスク上の rename のみで完結する。
+ */
+export function renameBgmTrack(relPath: string, newName: string): string {
+  const name = newName.trim()
+  validateEntryName(name)
+
+  const abs = resolveInBgm(relPath)
+  const oldName = basename(abs)
+  if (name === oldName) return relPath
+
+  const oldExt = extname(oldName).toLowerCase()
+  if (extname(name).toLowerCase() !== oldExt)
+    throw new Error(`拡張子は変更できません（${oldExt} のままにしてください）`)
+
+  const newAbs = join(dirname(abs), name)
+  // Windows は大文字小文字を区別しないため、大小文字だけの変更は「既に存在」を許す
+  const caseOnly = name.toLowerCase() === oldName.toLowerCase()
+  if (!caseOnly && existsSync(newAbs)) throw new Error('同名のファイルが既に存在します')
+
+  try {
+    renameSync(abs, newAbs)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    // 再生中のトラックは配信中のストリームがファイルを掴んでいることがある
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')
+      throw new Error('再生中は名前を変更できません。停止してからやり直してください。')
+    throw err
+  }
+  return toBgmRelPosix(newAbs)
+}
+
+/**
+ * BGM フォルダ配下の音声ファイルを OS のごみ箱へ移動する。
+ * BGM は DB 参照を持たないため、ごみ箱への移動だけで完結する。
+ */
+export async function deleteBgmTrack(relPath: string): Promise<void> {
+  const abs = resolveInBgm(relPath)
+  try {
+    await shell.trashItem(abs)
+  } catch (err) {
+    // 再生中のトラックは配信中のストリームがファイルを掴んでいることがある
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`ごみ箱に移動できませんでした（再生中なら停止してからやり直してください）: ${msg}`)
+  }
 }
 
 /** BGM フォルダ配下の音声ファイルを再帰走査して一覧を返す。 */

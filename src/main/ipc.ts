@@ -8,7 +8,11 @@ import {
   deleteEntry,
   createFolder,
   moveEntry,
-  scanBgm
+  scanBgm,
+  renameBgmTrack,
+  deleteBgmTrack,
+  showBgmInExplorer,
+  showEntryInExplorer
 } from './services/media'
 import { statSync } from 'node:fs'
 import { resolveInRoot } from './util/paths'
@@ -46,7 +50,9 @@ import { ensureThumb } from './services/thumbs'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
+  BgmDeleteResult,
   BgmInfo,
+  BgmRenameResult,
   ConcatItem,
   ConcatResult,
   DeleteResult,
@@ -60,7 +66,8 @@ import type {
   RenameResult,
   RootInfo,
   Segment,
-  SegmentInput
+  SegmentInput,
+  ShowInFolderResult
 } from '../shared/types'
 
 // 生成中のプロキシ（relPath 単位で重複起動を防ぐ）
@@ -152,6 +159,16 @@ export function registerIpc(): void {
       if (res.response !== 1) return { ok: false, canceled: true }
       await deleteEntry(relPath)
       return { ok: true, root: currentRootInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // エクスプローラで表示（ライブラリツリーの右クリックメニューから）。
+  ipcMain.handle('fs:showInFolder', async (_e, relPath: string): Promise<ShowInFolderResult> => {
+    try {
+      await showEntryInExplorer(relPath)
+      return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -265,6 +282,49 @@ export function registerIpc(): void {
     if (res.canceled || res.filePaths.length === 0) return currentBgmInfo()
     setBgmDir(res.filePaths[0])
     return currentBgmInfo()
+  })
+
+  // BGM ファイルの名前変更（BGM 一覧の右クリックメニューから）。
+  ipcMain.handle('bgm:rename', (_e, relPath: string, newName: string): BgmRenameResult => {
+    try {
+      const newRelPath = renameBgmTrack(relPath, newName)
+      return { ok: true, newRelPath, bgm: currentBgmInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // BGM ファイルの削除（BGM 一覧の右クリックメニューから）。確認ダイアログ → ごみ箱へ移動。
+  ipcMain.handle('bgm:delete', async (e, relPath: string): Promise<BgmDeleteResult> => {
+    try {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? undefined
+      const name = relPath.split('/').pop() ?? relPath
+      const res = await dialog.showMessageBox(win!, {
+        type: 'warning',
+        title: '削除の確認',
+        message: `「${name}」をごみ箱に移動しますか？`,
+        detail: 'BGM フォルダから実ファイルを移動します。',
+        buttons: ['キャンセル', 'ごみ箱に移動'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      })
+      if (res.response !== 1) return { ok: false, canceled: true }
+      await deleteBgmTrack(relPath)
+      return { ok: true, bgm: currentBgmInfo() }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // BGM ファイルをエクスプローラで表示（BGM 一覧の右クリックメニューから）。
+  ipcMain.handle('bgm:showInFolder', (_e, relPath: string): ShowInFolderResult => {
+    try {
+      showBgmInExplorer(relPath)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle('export:pickDir', async (e): Promise<string | null> => {

@@ -64,6 +64,9 @@ const api: DcmApi = {
   pickBgmDir: () => ipcRenderer.invoke('bgm:pick'),
   getBgm: () => ipcRenderer.invoke('bgm:get'),
   bgmUrl: (relPath) => `dcm-media://bgm/${encodeURIComponent(relPath)}`,
+  renameBgmTrack: (relPath, newName) => ipcRenderer.invoke('bgm:rename', relPath, newName),
+  deleteBgmTrack: (relPath) => ipcRenderer.invoke('bgm:delete', relPath),
+  showBgmInFolder: (relPath) => ipcRenderer.invoke('bgm:showInFolder', relPath),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),
   exportSegments: (jobs: ExportJob[], options: ExportOptions) =>
     ipcRenderer.invoke('export:run', jobs, options),
@@ -98,7 +101,8 @@ const api: DcmApi = {
   renameEntry: (relPath, newName) => ipcRenderer.invoke('fs:rename', relPath, newName),
   deleteEntry: (relPath) => ipcRenderer.invoke('fs:delete', relPath),
   createFolder: (parentRel, name) => ipcRenderer.invoke('fs:createFolder', parentRel, name),
-  moveEntries: (relPaths, destDir) => ipcRenderer.invoke('fs:moveMany', relPaths, destDir)
+  moveEntries: (relPaths, destDir) => ipcRenderer.invoke('fs:moveMany', relPaths, destDir),
+  showEntryInFolder: (relPath) => ipcRenderer.invoke('fs:showInFolder', relPath)
 }
 
 contextBridge.exposeInMainWorld('dcm', api)

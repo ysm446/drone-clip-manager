@@ -1206,6 +1206,15 @@ export function App() {
     [showStatus]
   )
 
+  // ツリーからエクスプローラで表示（右クリックメニュー）。relPath '' はルートフォルダ自身。
+  const showTreeEntryInFolder = useCallback(
+    async (relPath: string) => {
+      const res = await api.showEntryInFolder(relPath)
+      if (!res.ok) showStatus(res.error ?? 'エクスプローラで開けませんでした', 'err')
+    },
+    [showStatus]
+  )
+
   // ツリーのドラッグ＆ドロップによる移動。実ファイルの移動と DB 参照の付け替えは main 側。
   // ここでは UI 側の参照（複数選択・開いている動画）を新パスへ追従させる。
   const moveTreeEntries = useCallback(
@@ -1520,6 +1529,7 @@ export function App() {
             onRename={renameTreeEntry}
             onDelete={deleteTreeEntry}
             onCreateFolder={createTreeFolder}
+            onShowInFolder={showTreeEntryInFolder}
             onMove={moveTreeEntries}
             editRequestPath={treeEditRequest}
             onEditRequestHandled={onTreeEditHandled}
@@ -1537,7 +1547,7 @@ export function App() {
             onStart={() => (bgmBaseRef.current = bgmH)}
             onDelta={(dy) => setBgmH(Math.max(120, Math.min(520, bgmBaseRef.current - dy)))}
           />
-          <BgmPlayer height={bgmH} />
+          <BgmPlayer height={bgmH} onStatus={showStatus} />
         </aside>
 
         <Splitter

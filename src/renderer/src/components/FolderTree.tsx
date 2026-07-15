@@ -20,6 +20,8 @@ interface Props {
   onDelete: (relPath: string) => void
   /** 新しいフォルダを parentRel（'' でルート直下）に作成。成功したら新しい相対パスを返す。 */
   onCreateFolder: (parentRel: string) => Promise<string | null>
+  /** エクスプローラで表示（'' でルートフォルダ自身） */
+  onShowInFolder: (relPath: string) => void
   /** ドラッグ＆ドロップでの移動（destDir は '' でルート直下） */
   onMove: (relPaths: string[], destDir: string) => void
   /** 外（ヘッダの＋ボタン等）から名前入力を開始したいノードの相対パス。処理後 onEditRequestHandled を呼ぶ。 */
@@ -230,6 +232,7 @@ export const FolderTree = memo(function FolderTree({
   onRename,
   onDelete,
   onCreateFolder,
+  onShowInFolder,
   onMove,
   editRequestPath,
   onEditRequestHandled,
@@ -319,17 +322,17 @@ export const FolderTree = memo(function FolderTree({
   const openMenu = (e: React.MouseEvent, node: TreeNode) => {
     e.preventDefault()
     e.stopPropagation()
-    // 画面端では見切れないように少し内側へ寄せる
+    // 画面端では見切れないように少し内側へ寄せる（最大 4 項目）
     const x = Math.min(e.clientX, window.innerWidth - 170)
-    const y = Math.min(e.clientY, window.innerHeight - 120)
+    const y = Math.min(e.clientY, window.innerHeight - 150)
     setMenu({ x, y, relPath: node.relPath, type: node.type })
   }
 
-  /** ツリー背景の右クリック = ルート直下が対象（新しいフォルダのみ） */
+  /** ツリー背景の右クリック = ルート直下が対象（新しいフォルダ / フォルダを開く） */
   const openRootMenu = (e: React.MouseEvent) => {
     e.preventDefault()
     const x = Math.min(e.clientX, window.innerWidth - 170)
-    const y = Math.min(e.clientY, window.innerHeight - 120)
+    const y = Math.min(e.clientY, window.innerHeight - 150)
     setMenu({ x, y, relPath: '', type: 'dir' })
   }
 
@@ -428,26 +431,35 @@ export const FolderTree = memo(function FolderTree({
             </button>
           )}
           {menu.relPath !== '' && (
-            <>
-              <button
-                className="tree-menu-item"
-                onClick={() => {
-                  setEditingPath(menu.relPath)
-                  setMenu(null)
-                }}
-              >
-                名前を変更
-              </button>
-              <button
-                className="tree-menu-item danger"
-                onClick={() => {
-                  onDelete(menu.relPath)
-                  setMenu(null)
-                }}
-              >
-                削除…
-              </button>
-            </>
+            <button
+              className="tree-menu-item"
+              onClick={() => {
+                setEditingPath(menu.relPath)
+                setMenu(null)
+              }}
+            >
+              名前を変更
+            </button>
+          )}
+          <button
+            className="tree-menu-item"
+            onClick={() => {
+              onShowInFolder(menu.relPath)
+              setMenu(null)
+            }}
+          >
+            {menu.type === 'dir' ? 'フォルダを開く' : 'ファイルの場所を開く'}
+          </button>
+          {menu.relPath !== '' && (
+            <button
+              className="tree-menu-item danger"
+              onClick={() => {
+                onDelete(menu.relPath)
+                setMenu(null)
+              }}
+            >
+              削除…
+            </button>
           )}
         </div>
       )}

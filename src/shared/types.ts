@@ -163,6 +163,28 @@ export interface BgmInfo {
   tracks: BgmTrack[]
 }
 
+/** BGM ファイル名変更の結果。成功時は新パスと再走査済みの一覧を返す。 */
+export interface BgmRenameResult {
+  ok: boolean
+  error?: string
+  newRelPath?: string
+  bgm?: BgmInfo
+}
+
+/** BGM ファイル削除（ごみ箱へ移動）の結果。canceled は確認ダイアログでのキャンセル。 */
+export interface BgmDeleteResult {
+  ok: boolean
+  canceled?: boolean
+  error?: string
+  bgm?: BgmInfo
+}
+
+/** エクスプローラでの表示結果 */
+export interface ShowInFolderResult {
+  ok: boolean
+  error?: string
+}
+
 /** 書き出し対象の1区間 */
 export interface ExportJob {
   segmentId: number
@@ -341,6 +363,12 @@ export interface DcmApi {
   getBgm: () => Promise<BgmInfo>
   /** BGM を再生するためのカスタムプロトコル URL */
   bgmUrl: (relPath: string) => string
+  /** BGM ファイルの名前を変更（拡張子は据え置き）。成功時は再走査済みの一覧を返す。 */
+  renameBgmTrack: (relPath: string, newName: string) => Promise<BgmRenameResult>
+  /** BGM ファイルをごみ箱へ移動（確認ダイアログ込み）。成功時は再走査済みの一覧を返す。 */
+  deleteBgmTrack: (relPath: string) => Promise<BgmDeleteResult>
+  /** BGM ファイルをエクスプローラで表示（親フォルダを開いて選択状態にする） */
+  showBgmInFolder: (relPath: string) => Promise<ShowInFolderResult>
   // --- 書き出し ---
   pickExportDir: () => Promise<string | null>
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>
@@ -376,4 +404,6 @@ export interface DcmApi {
   createFolder: (parentRel: string, name: string) => Promise<RenameResult>
   /** 複数のファイル / フォルダを destDir フォルダ（'' でルート直下）へ移動 */
   moveEntries: (relPaths: string[], destDir: string) => Promise<MoveResult>
+  /** ルート配下のファイル / フォルダをエクスプローラで表示（フォルダはその中身を開く） */
+  showEntryInFolder: (relPath: string) => Promise<ShowInFolderResult>
 }
