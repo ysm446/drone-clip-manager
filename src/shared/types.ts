@@ -124,6 +124,8 @@ export interface GraphEdgeSnap {
 export interface RootInfo {
   root: string | null
   tree: TreeNode | null
+  /** これまで開いたルートフォルダ（新しい順、現在のルートも含む） */
+  recent: string[]
 }
 
 /** ファイル / フォルダ名変更の結果。成功時は新パスと再走査済みツリーを返す。 */
@@ -282,6 +284,8 @@ export interface MpvBounds {
 export interface DcmApi {
   pickRoot: () => Promise<RootInfo>
   getRoot: () => Promise<RootInfo>
+  /** 履歴などから指定パスをルートとして開く。パスが存在しない場合は reject。 */
+  openRoot: (dirPath: string) => Promise<RootInfo>
   probeVideo: (relPath: string) => Promise<VideoMeta>
   getKeyframes: (relPath: string) => Promise<number[]>
   /** 動画を再生するためのカスタムプロトコル URL */

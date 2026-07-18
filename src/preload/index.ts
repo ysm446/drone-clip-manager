@@ -15,6 +15,7 @@ import type {
 const api: DcmApi = {
   pickRoot: () => ipcRenderer.invoke('root:pick'),
   getRoot: () => ipcRenderer.invoke('root:get'),
+  openRoot: (dirPath) => ipcRenderer.invoke('root:open', dirPath),
   probeVideo: (relPath) => ipcRenderer.invoke('video:probe', relPath),
   getKeyframes: (relPath) => ipcRenderer.invoke('video:keyframes', relPath),
   mediaUrl: (relPath) => `dcm-media://root/${encodeURIComponent(relPath)}`,

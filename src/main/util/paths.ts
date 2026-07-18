@@ -7,9 +7,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 
 const CONFIG_FILE = () => join(app.getPath('userData'), 'drone-clip-manager-config.json')
 
+/** ルート履歴の最大保持数 */
+const MAX_RECENT_ROOTS = 10
+
 interface AppConfig {
   root: string | null
   bgmDir: string | null
+  /** これまで開いたルートフォルダ（新しい順、現在のルートも含む） */
+  recentRoots: string[]
 }
 
 let cached: AppConfig | null = null
@@ -19,9 +24,15 @@ function readConfig(): AppConfig {
   try {
     const raw = readFileSync(CONFIG_FILE(), 'utf-8')
     const parsed = JSON.parse(raw) as Partial<AppConfig>
-    cached = { root: parsed.root ?? null, bgmDir: parsed.bgmDir ?? null }
+    const root = parsed.root ?? null
+    let recentRoots = Array.isArray(parsed.recentRoots)
+      ? parsed.recentRoots.filter((p): p is string => typeof p === 'string')
+      : []
+    // 履歴機能の追加前から使っている場合など、現在のルートが履歴に無ければ先頭に補う
+    if (root && !recentRoots.includes(root)) recentRoots = [root, ...recentRoots]
+    cached = { root, bgmDir: parsed.bgmDir ?? null, recentRoots }
   } catch {
-    cached = { root: null, bgmDir: null }
+    cached = { root: null, bgmDir: null, recentRoots: [] }
   }
   return cached!
 }
@@ -37,7 +48,17 @@ export function getRoot(): string | null {
 }
 
 export function setRoot(root: string): void {
-  writeConfig({ root })
+  // 履歴の先頭に移動（重複は除去）。ドライブ未接続で消えないよう、ここでは存在チェックしない。
+  const recent = [root, ...readConfig().recentRoots.filter((p) => p !== root)].slice(
+    0,
+    MAX_RECENT_ROOTS
+  )
+  writeConfig({ root, recentRoots: recent })
+}
+
+/** これまで開いたルートフォルダ（新しい順）。今アクセスできないもの（未接続ドライブ等）は除いて返す。 */
+export function getRecentRoots(): string[] {
+  return readConfig().recentRoots.filter((p) => existsSync(p))
 }
 
 export function getBgmDir(): string | null {

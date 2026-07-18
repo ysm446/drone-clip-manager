@@ -210,6 +210,30 @@ input:focus-visible {
 .topbar .btn:focus-visible {
   outline: none;
 }
+/* 「ルートフォルダを選択…」のスプリットボタン（右端▾で履歴プルダウン） */
+.root-pick {
+  display: inline-flex;
+}
+.root-pick .root-pick-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.root-pick .root-pick-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid var(--bar-border);
+  padding: 3px 6px;
+}
+/* 履歴メニュー: フルパスは長いので省略表示（全文はツールチップで見える） */
+.root-recent-menu {
+  max-width: min(560px, 80vw);
+}
+.root-recent-menu .tree-menu-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .root-path {
   color: var(--bar-muted);
   font-size: var(--fs-sm);

@@ -14,6 +14,7 @@ import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
 import { Filmstrip } from './components/Filmstrip'
 import { IconPause, IconPlay } from './components/icons'
+import { ContextMenu } from './components/ContextMenu'
 import { colorForIndex, fmtSec, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
@@ -58,7 +59,7 @@ function BulkTagBar({
 }
 
 export function App() {
-  const [root, setRoot] = useState<RootInfo>({ root: null, tree: null })
+  const [root, setRoot] = useState<RootInfo>({ root: null, tree: null, recent: [] })
   const [selected, setSelected] = useState<string | null>(null)
   const [meta, setMeta] = useState<VideoMeta | null>(null)
   const [keyframes, setKeyframes] = useState<number[]>([])
@@ -399,8 +400,8 @@ export function App() {
     setProxyGen({ active: false, percent: 0, error: null })
   }
 
-  const pickRoot = async () => {
-    const info = await api.pickRoot()
+  /** ルート切り替え後の共通処理（選択・再生・キャッシュ類のリセット） */
+  const applyRootInfo = (info: RootInfo) => {
     setRoot(info)
     setSelected(null)
     currentRelRef.current = null
@@ -413,6 +414,21 @@ export function App() {
     seekThumbCacheRef.current.clear() // 別ルートの同名相対パスと混ざらないように
     resetPlayback()
     api.getAllTags().then(setAllTags) // ルートが変わると DB も変わる
+  }
+
+  const pickRoot = async () => {
+    applyRootInfo(await api.pickRoot())
+  }
+
+  // 履歴のプルダウン（「ルートフォルダを選択…」右端の▼）
+  const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null)
+  const openRecentRoot = async (dirPath: string) => {
+    try {
+      applyRootInfo(await api.openRoot(dirPath))
+    } catch {
+      showStatus(`フォルダを開けませんでした: ${dirPath}`, 'err')
+      api.getRoot().then(setRoot) // 消えたパスが履歴から外れた状態に更新
+    }
   }
 
   const selectVideo = useCallback(async (relPath: string) => {
@@ -1480,9 +1496,39 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <button className="btn" onClick={pickRoot}>
-          ルートフォルダを選択…
-        </button>
+        <div className="root-pick">
+          <button className="btn root-pick-main" onClick={pickRoot}>
+            ルートフォルダを選択…
+          </button>
+          <button
+            className="btn root-pick-caret"
+            title="最近開いたルートフォルダ"
+            disabled={root.recent.filter((p) => p !== root.root).length === 0}
+            onMouseDown={(e) => {
+              // ContextMenu の「外側 mousedown で閉じる」と競合して閉じた直後に再度開かないようにする
+              e.stopPropagation()
+              if (rootMenu) {
+                setRootMenu(null)
+                return
+              }
+              const r = (e.currentTarget.parentElement ?? e.currentTarget).getBoundingClientRect()
+              setRootMenu({ x: r.left, y: r.bottom + 4 })
+            }}
+          >
+            ▾
+          </button>
+        </div>
+        {rootMenu && (
+          <ContextMenu
+            x={rootMenu.x}
+            y={rootMenu.y}
+            className="root-recent-menu"
+            items={root.recent
+              .filter((p) => p !== root.root)
+              .map((p) => ({ label: p, onClick: () => openRecentRoot(p) }))}
+            onClose={() => setRootMenu(null)}
+          />
+        )}
         <nav className="view-tabs">
           <button
             className={`view-tab${view === 'library' ? ' active' : ''}`}

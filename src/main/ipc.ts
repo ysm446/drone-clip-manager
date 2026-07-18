@@ -1,5 +1,5 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { getBgmDir, getRoot, setBgmDir, setRoot } from './util/paths'
+import { getBgmDir, getRecentRoots, getRoot, setBgmDir, setRoot } from './util/paths'
 import {
   scanTree,
   probeVideo,
@@ -75,7 +75,7 @@ const proxyInFlight = new Set<string>()
 
 function currentRootInfo(): RootInfo {
   const root = getRoot()
-  return { root, tree: root ? scanTree() : null }
+  return { root, tree: root ? scanTree() : null, recent: getRecentRoots() }
 }
 
 function currentBgmInfo(): BgmInfo {
@@ -94,6 +94,18 @@ export function registerIpc(): void {
     })
     if (res.canceled || res.filePaths.length === 0) return currentRootInfo()
     setRoot(res.filePaths[0])
+    resetDb() // ルートが変わったので DB を開き直す
+    return currentRootInfo()
+  })
+
+  // 履歴などから指定パスをルートとして開く（ダイアログなし）
+  ipcMain.handle('root:open', (_e, dirPath: string): RootInfo => {
+    try {
+      if (!statSync(dirPath).isDirectory()) throw new Error()
+    } catch {
+      throw new Error(`フォルダが見つかりません: ${dirPath}`)
+    }
+    setRoot(dirPath)
     resetDb() // ルートが変わったので DB を開き直す
     return currentRootInfo()
   })

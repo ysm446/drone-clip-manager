@@ -15,12 +15,15 @@ export function ContextMenu({
   x,
   y,
   items,
-  onClose
+  onClose,
+  className
 }: {
   x: number
   y: number
   items: CtxMenuItem[]
   onClose: () => void
+  /** 見た目の追加調整用（例: 長いパスを省略表示する root-recent-menu） */
+  className?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -42,7 +45,7 @@ export function ContextMenu({
 
   return (
     <div
-      className="tree-menu"
+      className={`tree-menu${className ? ` ${className}` : ''}`}
       ref={ref}
       style={{
         left: Math.min(x, window.innerWidth - 190),
@@ -52,6 +55,7 @@ export function ContextMenu({
       {items.map((it) => (
         <button
           key={it.label}
+          title={it.label}
           className={`tree-menu-item${it.danger ? ' danger' : ''}`}
           onClick={() => {
             onClose()
