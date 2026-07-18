@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
-import { performRedo, performUndo, pushUndo, registerUndoRefresh } from './undo'
+import { clearUndo, performRedo, performUndo, pushUndo, registerUndoRefresh } from './undo'
 import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
@@ -403,8 +403,20 @@ export function App() {
   /** ルート切り替え後の共通処理（選択・再生・キャッシュ類のリセット） */
   const applyRootInfo = (info: RootInfo) => {
     setRoot(info)
+    // シーケンス再生・クリップ再生の状態を旧ルートから持ち越さない
+    exitSequence()
+    seqQueueRef.current = []
+    seqIndexRef.current = -1
+    autoPlayNextRef.current = false
+    setSeqIdx(0)
+    setClipPlayRange(null)
+    setSegPatch(null)
+    if (mpvModeRef.current) api.mpvStop()
     setSelected(null)
     currentRelRef.current = null
+    setSelectedSeg(null)
+    setCurrentTime(0)
+    setDuration(0)
     setMeta(null)
     setSegments([])
     setVideoTags([])
@@ -413,6 +425,8 @@ export function App() {
     setKeyframes([])
     seekThumbCacheRef.current.clear() // 別ルートの同名相対パスと混ざらないように
     resetPlayback()
+    clearUndo() // 履歴のエントリは旧ルートの DB の id を参照しているため無効化する
+    setLibVersion((v) => v + 1) // クリップ / シーケンス画面を新ルートの DB で再取得させる
     api.getAllTags().then(setAllTags) // ルートが変わると DB も変わる
   }
 

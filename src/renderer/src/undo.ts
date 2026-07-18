@@ -35,6 +35,15 @@ export function pushUndo(entry: UndoEntry): void {
   redoStack.length = 0
 }
 
+/**
+ * 履歴を全消去する。ルートフォルダの切り替え時に呼ぶ
+ * （エントリは旧ルートの DB の id を閉じ込めているため、新ルートでは実行できない）。
+ */
+export function clearUndo(): void {
+  undoStack.length = 0
+  redoStack.length = 0
+}
+
 /** undo / redo 後に呼ばれるビューのリフレッシャを登録する。返り値で解除。 */
 export function registerUndoRefresh(fn: () => void): () => void {
   refreshers.add(fn)
