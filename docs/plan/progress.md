@@ -1,7 +1,7 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-12 13:58
+更新日時: 2026-07-17 15:58
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -117,6 +117,14 @@
   INSERT OR IGNORE）、IPC `videoTags:addMany`。`npm run build` / `typecheck` 成功（UI 実操作は手動確認）。
 - 残（今回スコープ外）: カテゴリ（名前空間）、時間帯の `recorded_at` 自動サジェスト。
 - 詳細・論点は [plan.md](plan.md) の「Phase 2.8」を参照
+
+### Phase 2.9 — クリップ並び順の自動提案（構成アルゴリズム）※構想・未着手（2026-07-17）
+- [ ] 「並べ方の 7 原則」のスコア関数化 + 章分け + 貪欲/2-opt による並び順提案。
+  LLM ではなく決定的アルゴリズムで行う。設計メモ:
+  [../reference/clip-ordering-algorithm.md](../reference/clip-ordering-algorithm.md)、
+  元資料: [../reference/drone-editing-tips.md](../reference/drone-editing-tips.md)
+- 依存: Phase 2.8 の名前空間付きタグ（`motion:` 等）、クリップ評価（星 or `見せ場` タグ）は要検討。
+- 詳細は [plan.md](plan.md) の「Phase 2.9」を参照
 
 ### Phase 1 — ライブラリ基盤（おおむね完了、残あり）
 - [x] Electron + React プロジェクトのスキャフォールド、`package.json`（`version` 基準）
