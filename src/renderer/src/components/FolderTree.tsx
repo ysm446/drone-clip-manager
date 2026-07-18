@@ -159,6 +159,10 @@ function NodeRow({
         onContextMenu={(e) => onOpenMenu(e, node)}
         title={node.relPath}
       >
+        {/* フォルダ行の ▸ と同じ幅のスペーサー。これがないと子ファイルの
+            インデント 1 段分（14px）が ▸ の幅とほぼ相殺され、親フォルダと
+            同じ深さに見えてしまう */}
+        <span className="tree-caret" />
         <span className="tree-icon">
           <IconFilm />
         </span>
