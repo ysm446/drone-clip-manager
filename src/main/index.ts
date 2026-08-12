@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, protocol, Menu, nativeImage } from 
 import { extname, join } from 'node:path'
 import { createReadStream, rmSync, statSync } from 'node:fs'
 import { Readable } from 'node:stream'
+import appIcon from '../../assets/app-icon.png?asset'
 import { registerIpc } from './ipc'
 import {
   cleanTempProxies,
@@ -214,6 +215,7 @@ function createWindow(): void {
     useContentSize: true,
     minWidth: 960,
     minHeight: 600,
+    icon: appIcon,
     backgroundColor: '#14161a',
     show: false,
     webPreferences: {
