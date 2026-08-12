@@ -81,8 +81,10 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [busy, setBusy] = useState(false)
-  /** 書き出しモーダルの対象（null なら非表示）。ライブラリ / クリップ両ビューから使う。 */
+  /** 書き出しモーダルの対象（null なら非表示）。ライブラリ / クリップ / シーケンス各ビューから使う。 */
   const [exportItems, setExportItems] = useState<ExportTarget[] | null>(null)
+  /** シーケンスの分割書き出しで開いたときのシーケンス名（通常の書き出しでは null / Phase 2.6） */
+  const [exportSeqName, setExportSeqName] = useState<string | null>(null)
   /** ライブラリ / クリップ / シーケンスの表示切替（Phase 2.5 / 2.6） */
   const [view, setView] = useState<'library' | 'clips' | 'sequence'>('library')
   /** シーケンス連続再生中のノード id（停止中は null / Phase 2.6） */
@@ -1397,10 +1399,17 @@ export function App() {
   const openExportForCurrent = useCallback(() => {
     if (!selected) return
     const videoFilename = meta?.filename ?? selected
+    setExportSeqName(null)
     setExportItems(
       segments.map((s) => ({ segment: s, videoRelPath: selected, videoFilename }))
     )
   }, [selected, meta, segments])
+
+  // 各ビューからの書き出しモーダル起動。seqName 付き = シーケンスの分割書き出し（連番命名）
+  const openExport = useCallback((targets: ExportTarget[], seqName?: string) => {
+    setExportSeqName(seqName ?? null)
+    setExportItems(targets)
+  }, [])
 
   // I / O キーで現在位置を in/out に使った区間作成の補助
   useEffect(() => {
@@ -1818,7 +1827,7 @@ export function App() {
             <ClipsView
               key={libVersion}
               onOpenClip={openClip}
-              onExport={setExportItems}
+              onExport={openExport}
               onEditInLibrary={editInLibrary}
               selectedVideoRel={selected}
               openSegmentId={selectedSeg}
@@ -1832,7 +1841,7 @@ export function App() {
               onOpenClip={openClip}
               onEditClip={editAsClip}
               onEditInLibrary={editInLibrary}
-              onExport={setExportItems}
+              onExport={openExport}
               onJumpToNode={jumpToNode}
               onModalOpenChange={setSeqModalOpen}
               playingNodeId={playingNodeId}
@@ -1930,7 +1939,11 @@ export function App() {
       </datalist>
 
       {exportItems && exportItems.length > 0 && (
-        <ExportModal items={exportItems} onClose={() => setExportItems(null)} />
+        <ExportModal
+          items={exportItems}
+          seqName={exportSeqName ?? undefined}
+          onClose={() => setExportItems(null)}
+        />
       )}
     </div>
   )

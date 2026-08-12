@@ -36,8 +36,11 @@ interface Props {
   onEditClip: (clip: ClipItem) => void
   /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
   onEditInLibrary: (clip: ClipItem) => void
-  /** 右クリックメニュー「書き出し…」: 書き出しモーダルを開く（ClipsView と同じ経路） */
-  onExport: (targets: ExportTarget[]) => void
+  /**
+   * 書き出しモーダルを開く（ClipsView と同じ経路）。右クリックメニュー「書き出し…」と、
+   * ツールバーの「分割書き出し…」（seqName 付き = 順路順の連番命名）から使う。
+   */
+  onExport: (targets: ExportTarget[], seqName?: string) => void
   /** ノードのクリックで、順路（items）内のそのノードの開始位置へ頭出しする */
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
@@ -770,6 +773,21 @@ export const SequenceView = memo(function SequenceView({
     }
   }
 
+  // --- 分割書き出し（順路のクリップを 1 本ずつロスレスで / 連番命名） ---
+  const runSplitExport = () => {
+    if (playItems.length === 0 || activeId == null) return
+    const name = sequences.find((s) => s.id === activeId)?.name ?? 'シーケンス'
+    // 順路順に渡す = ExportModal の連番（{index}）がそのまま並び順になる
+    onExport(
+      playItems.map(({ clip: c }) => ({
+        segment: c,
+        videoRelPath: c.videoRelPath,
+        videoFilename: c.videoFilename
+      })),
+      name
+    )
+  }
+
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const isPlaying = playingNodeId != null
 
@@ -979,6 +997,14 @@ export const SequenceView = memo(function SequenceView({
             title="順路のクリップを無劣化（stream copy）で 1 本に連結して書き出す"
           >
             連結書き出し…
+          </button>
+          <button
+            className="btn"
+            disabled={playItems.length === 0 || exporting != null}
+            onClick={runSplitExport}
+            title="順路のクリップを無劣化（stream copy）で 1 本ずつ、順路順の連番で書き出す"
+          >
+            分割書き出し…
           </button>
         </div>
 

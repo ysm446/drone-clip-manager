@@ -1,7 +1,7 @@
 # progress — drone-clip-manager 進捗
 
 作成日時: 2026-07-08 12:29
-更新日時: 2026-07-17 15:58
+更新日時: 2026-08-12 17:07
 
 現在の進捗・完了済み・未完了・注意点をまとめる。作業のたびに更新する。
 
@@ -17,6 +17,7 @@
 - クリップ一覧ビュー: ライブラリ ⟷ クリップのタブ切替、in 点サムネイル付きカード、絞り込み/ソート/検索、
   クリップ → 元動画の in 点ジャンプ、複数選択 → **動画横断のまとめて書き出し** まで実機（CDP）で動作確認済み。
 - Electron + React + TS アプリのスキャフォールドを作成し、3ペインUI（ツリー / プレイヤー / タイムライン + 区間リスト）が動作。
+- ドローンと再生ボタンを組み合わせたアプリアイコンを作成し、Electron のメインウィンドウとビルド成果物へ反映。
 - ルート指定 → 走査 → ffprobe メタ / キーフレーム抽出 → タイムライン可視化 → ドラッグで区間作成（キーフレームスナップ）→ SQLite 永続化までが一通り通る。
 - `npm run typecheck` / `npm run build` 成功。Electron 起動（空ライブラリ）でクラッシュ無しを確認。better-sqlite3 は Electron ABI プレビルドで動作確認済み（SQLite 3.49.2）。
 - ロスレス書き出し（Export）実装済み。実機（DJI HEVC 10bit 4K60）で書き出し成功を確認（in/out キーフレーム整合、区間長一致）。
@@ -29,6 +30,7 @@
 - [x] `CLAUDE.md` — Claude Code 向け入口（`@AGENTS.md` インポート + プロジェクト概要）
 - [x] `docs/plan/goals.md` / `plan.md` / `progress.md` — 計画ドキュメントを記入
 - [x] アプリのスキャフォールド（electron-vite + React + TS、`.npmrc` で better-sqlite3 の Electron プレビルド取得）
+- [x] アプリアイコン（`assets/app-icon.png`）を追加し、`BrowserWindow` と `electron-vite` のビルドアセットへ設定
 - [x] メインプロセス: 独自プロトコル `dcm-media`（Range 対応の動画/BGM 配信）、ルート設定の永続化、`.dcm/` 初期化
 - [x] サービス: `db`（better-sqlite3、videos/keyframes/segments）、`media`（再帰走査 / ffprobe メタ / キーフレーム抽出）
 - [x] IPC + preload（contextBridge で `window.dcm` API 公開）
@@ -80,6 +82,14 @@
   コーデック / 解像度 / fps の混在は実行前に検証してエラー表示。進捗モーダル（切り出し n/m → 連結、全体 %）。
   実装: `exportConcat`（export.ts）、IPC `seq:export` + `seq:exportProgress`、SequenceView のボタン + モーダル。
   `npm run build` / `typecheck` 成功（実素材での書き出し検証は手動確認が必要）。
+- [x] **分割書き出し（1 クリップ = 1 ファイル / 連番）**（2026-08-12）: シーケンス画面ツールバー
+  「分割書き出し…」。順路順の `ExportTarget[]` を既存の `ExportModal` に渡すだけで、書き出し本体は
+  既存の `exportOne`（stream copy）を再利用。`buildStem` に `{index:000}`（ゼロ埋め連番）と
+  `{seq}`（シーケンス名）を追加、`ExportOptions` に `seqName` / `subDir` を追加（`subDir` 指定時は
+  `outDir/subDir` を作成して出力）。分割書き出し用のテンプレート（既定 `{seq}_{index:000}`）と
+  サブフォルダ設定（既定 ON）は別の localStorage キーで記憶。
+  前提: 同じクリップを 1 シーケンスに 2 回置く運用は無い（`ExportModal` は行を `segment.id` で管理）。
+  `npm run build` / `typecheck` 成功（UI 実操作は手動確認）。
 - [ ] **連結書き出しに BGM を載せる（Phase 2.6b）**: BGM フォルダから 1 曲選択、音声を BGM で上書き、
   フェードイン / アウト秒数設定。映像は copy のまま・音声のみ AAC。仕様と実装方針は
   [plan.md](plan.md) の「Phase 2.6b」に確定済み（実装待ち）。

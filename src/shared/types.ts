@@ -200,8 +200,15 @@ export interface ExportJob {
 /** 書き出しオプション */
 export interface ExportOptions {
   outDir: string
-  /** 命名テンプレート。{filename} / {label} / {index} を置換。拡張子は元素材から自動付与。 */
+  /**
+   * 命名テンプレート。{filename} / {label} / {index} / {index:000}（ゼロ埋め連番） / {seq} を置換。
+   * 拡張子は元素材から自動付与。
+   */
   template: string
+  /** {seq} に入れる名前（シーケンスの分割書き出しで使用） */
+  seqName?: string
+  /** 出力先に作るサブフォルダ名。指定時は outDir/subDir へ書き出す（無ければ作成） */
+  subDir?: string
 }
 
 /** 書き出し進捗（main → renderer の逐次イベント） */

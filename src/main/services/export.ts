@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { basename, extname, join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolveInRoot } from '../util/paths'
@@ -15,11 +15,20 @@ function sanitize(name: string): string {
   return cleaned || 'clip'
 }
 
-function buildStem(template: string, filename: string, label: string, index: number): string {
+function buildStem(
+  template: string,
+  filename: string,
+  label: string,
+  index: number,
+  seqName: string
+): string {
   return sanitize(
     template
       .replace(/\{filename\}/g, filename)
       .replace(/\{label\}/g, label)
+      .replace(/\{seq\}/g, seqName)
+      // {index:000} は 0 の数を桁数としたゼロ埋め連番（例: 001）。{index} は従来通り無加工。
+      .replace(/\{index:(0+)\}/g, (_m, zeros: string) => String(index).padStart(zeros.length, '0'))
       .replace(/\{index\}/g, String(index))
   )
 }
@@ -52,8 +61,17 @@ export function exportOne(
   const dur = job.outSec - job.inSec
   if (!(dur > 0)) return Promise.reject(new Error('区間長が0以下です'))
 
-  const stem = buildStem(options.template, srcStem, job.label ?? `seg${job.segmentId}`, job.index)
-  const outPath = uniquePath(options.outDir, stem, ext)
+  const stem = buildStem(
+    options.template,
+    srcStem,
+    job.label ?? `seg${job.segmentId}`,
+    job.index,
+    options.seqName ?? ''
+  )
+  // サブフォルダ指定時は outDir 直下ではなく outDir/subDir へ出す（無ければ作成）
+  const outDir = options.subDir ? join(options.outDir, sanitize(options.subDir)) : options.outDir
+  if (options.subDir) mkdirSync(outDir, { recursive: true })
+  const outPath = uniquePath(outDir, stem, ext)
 
   const args = [
     '-hide_banner',

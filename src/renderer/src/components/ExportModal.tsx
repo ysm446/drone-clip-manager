@@ -13,6 +13,8 @@ export interface ExportTarget {
 
 interface Props {
   items: ExportTarget[]
+  /** シーケンスの分割書き出しで開いた場合のシーケンス名（通常の書き出しでは undefined / Phase 2.6） */
+  seqName?: string
   onClose: () => void
 }
 
@@ -21,10 +23,21 @@ type RowState = { status: ExportProgress['status']; percent: number; outPath?: s
 const LS_DIR = 'dcm.exportDir'
 const LS_TPL = 'dcm.exportTemplate'
 const DEFAULT_TPL = '{filename}_{label}_{index}'
+// シーケンスの分割書き出しは連番が主目的なので、テンプレートとサブフォルダ設定を別枠で記憶する
+const LS_TPL_SEQ = 'dcm.exportTemplate.seq'
+const LS_SUBDIR_SEQ = 'dcm.exportSubfolder.seq'
+const DEFAULT_TPL_SEQ = '{seq}_{index:000}'
 
-export function ExportModal({ items, onClose }: Props) {
+export function ExportModal({ items, seqName, onClose }: Props) {
   const [outDir, setOutDir] = useState<string>(() => localStorage.getItem(LS_DIR) ?? '')
-  const [template, setTemplate] = useState<string>(() => localStorage.getItem(LS_TPL) ?? DEFAULT_TPL)
+  const tplKey = seqName ? LS_TPL_SEQ : LS_TPL
+  const [template, setTemplate] = useState<string>(
+    () => localStorage.getItem(tplKey) ?? (seqName ? DEFAULT_TPL_SEQ : DEFAULT_TPL)
+  )
+  // 出力先にシーケンス名のフォルダを作るか（既定 ON）
+  const [useSubDir, setUseSubDir] = useState<boolean>(
+    () => localStorage.getItem(LS_SUBDIR_SEQ) !== '0'
+  )
   const [checked, setChecked] = useState<Set<number>>(() => new Set(items.map((t) => t.segment.id)))
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
@@ -68,7 +81,7 @@ export function ExportModal({ items, onClose }: Props) {
 
   const run = async () => {
     if (!outDir || selectedItems.length === 0) return
-    localStorage.setItem(LS_TPL, template)
+    localStorage.setItem(tplKey, template)
     setRunning(true)
     setFinished(false)
     setProgress({})
@@ -81,7 +94,12 @@ export function ExportModal({ items, onClose }: Props) {
       index: i + 1
     }))
     try {
-      await api.exportSegments(jobs, { outDir, template })
+      await api.exportSegments(jobs, {
+        outDir,
+        template,
+        seqName,
+        subDir: seqName && useSubDir ? seqName : undefined
+      })
     } finally {
       setRunning(false)
       setFinished(true)
@@ -95,7 +113,9 @@ export function ExportModal({ items, onClose }: Props) {
     <div className="modal-backdrop" onClick={running ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span>ロスレス書き出し（stream copy）</span>
+          <span>
+            {seqName ? 'シーケンスの分割書き出し（stream copy）' : 'ロスレス書き出し（stream copy）'}
+          </span>
           <button className="modal-close" onClick={onClose} disabled={running}>
             ✕
           </button>
@@ -123,9 +143,32 @@ export function ExportModal({ items, onClose }: Props) {
           />
         </div>
         <div className="modal-hint">
-          使用可: <code>{'{filename}'}</code> <code>{'{label}'}</code> <code>{'{index}'}</code>
-          ／ 拡張子は元素材から自動付与
+          使用可: <code>{'{filename}'}</code> <code>{'{label}'}</code> <code>{'{index}'}</code>{' '}
+          <code>{'{index:000}'}</code>
+          {seqName && <> <code>{'{seq}'}</code></>}
+          ／ <code>{'{index:000}'}</code> は 0 の数だけゼロ埋めした連番（001, 002…）／
+          拡張子は元素材から自動付与
         </div>
+
+        {seqName && (
+          <div className="modal-row">
+            <label>サブフォルダ</label>
+            <label className="modal-check">
+              <input
+                type="checkbox"
+                checked={useSubDir}
+                onChange={(e) => {
+                  setUseSubDir(e.target.checked)
+                  localStorage.setItem(LS_SUBDIR_SEQ, e.target.checked ? '1' : '0')
+                }}
+                disabled={running}
+              />
+              <span>
+                書き出し先に「{seqName}」フォルダを作る
+              </span>
+            </label>
+          </div>
+        )}
 
         <div className="modal-list">
           {items.map((t) => {
