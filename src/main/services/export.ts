@@ -45,11 +45,31 @@ function uniquePath(dir: string, stem: string, ext: string): string {
 }
 
 /**
- * 1区間をロスレス書き出しする。
- * ffmpeg -ss <in> -i input -t <dur> -c copy -map 0 -avoid_negative_ts make_zero out
+ * 切り出し（stream copy）の共通引数。exportOne と exportConcat の切り出し段で共有する。
+ * ffmpeg -ss <in> -i input -t <dur> -c copy -map 0:V -map 0:a? -avoid_negative_ts make_zero out
  * - -ss は -i の前（input seeking、キーフレームへ高速シーク）
  * - 区間長は -to ではなく -t（input seek 時の -to は挙動が紛らわしい）
+ * - ストリーム選択は「本編映像（0:V）+ 音声」に限定する。理由は 2 つ:
+ *   1. DJI 等のデータストリーム（telemetry / dbgi, codec=none）は mp4 に copy できず失敗する。
+ *   2. DJI が埋め込むサムネイル（mjpeg の attached pic）は PTS=0 の 1 枚絵なので、
+ *      これを含めると「出力の先頭は既に 0 秒」と判定され、本編のタイムスタンプが
+ *      ゼロ基準に戻されない。結果、mp4 に in 点ぶんの空 edit list が書かれ、
+ *      DaVinci Resolve 等では「元の尺のまま・該当部分以外は真っ黒」になる。
+ *   小文字の 0:v ではなく大文字の 0:V を使うと attached pic を除いた映像だけを選べる。
  */
+function cutArgs(absInput: string, inSec: number, dur: number): string[] {
+  return [
+    '-ss', String(inSec),
+    '-i', absInput,
+    '-t', String(dur),
+    '-c', 'copy',
+    '-map', '0:V',
+    '-map', '0:a?',
+    '-avoid_negative_ts', 'make_zero'
+  ]
+}
+
+/** 1区間をロスレス書き出しする（引数は cutArgs を参照）。 */
 export function exportOne(
   job: ExportJob,
   options: ExportOptions,
@@ -75,15 +95,7 @@ export function exportOne(
 
   const args = [
     '-hide_banner',
-    '-ss', String(job.inSec),
-    '-i', absInput,
-    '-t', String(dur),
-    '-c', 'copy',
-    '-map', '0',
-    // DJI 等のデータストリーム（timecode/telemetry, codec=none）は mp4 に copy できず
-    // 書き出しが失敗するため除外する。映像・音声・サムネイル等は保持。
-    '-map', '-0:d',
-    '-avoid_negative_ts', 'make_zero',
+    ...cutArgs(absInput, job.inSec, dur),
     '-progress', 'pipe:1',
     '-nostats',
     '-y',
@@ -173,16 +185,7 @@ export async function exportConcat(
       const part = join(tmp, `part${String(i).padStart(4, '0')}${extname(absInput) || '.mp4'}`)
       parts.push(part)
       await runFfmpeg(
-        [
-          '-ss', String(it.inSec),
-          '-i', absInput,
-          '-t', String(durs[i]),
-          '-c', 'copy',
-          '-map', '0',
-          '-map', '-0:d', // DJI のデータストリームは copy 不能のため除外（exportOne と同じ）
-          '-avoid_negative_ts', 'make_zero',
-          part
-        ],
+        [...cutArgs(absInput, it.inSec, durs[i]), part],
         (sec) => onProgress('cut', i + 1, (doneDur + Math.min(sec, durs[i])) / (totalDur * 2))
       )
       doneDur += durs[i]
