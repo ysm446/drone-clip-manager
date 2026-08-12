@@ -260,12 +260,14 @@ input:focus-visible {
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.view-tab:hover {
-  color: var(--bar-text);
-}
-.view-tab.active {
+.view-tab:not(.active):hover {
   background: var(--bar-hover);
   color: var(--bar-text);
+}
+/* 選択中はキーカラーの面で示す（現在地が一目で分かるようにする） */
+.view-tab.active {
+  background: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -756,6 +758,28 @@ body.resizing {
 .mpv-play:disabled {
   opacity: 0.45;
   cursor: default;
+}
+/* シーケンスの繰り返し再生トグル（再生ボタンの右 / シーケンス画面のみ表示） */
+.mpv-loop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--bar-muted);
+  border-radius: var(--radius-m);
+  padding: 4px 8px;
+  margin-left: -6px; /* 再生ボタンと 1 組に見せる（.mpv-controls の gap を詰める） */
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mpv-loop:hover {
+  background: var(--bar-hover);
+  color: var(--bar-text);
+}
+.mpv-loop.on {
+  background: var(--bar-surface);
+  color: var(--accent);
 }
 .mpv-time {
   color: var(--bar-muted);

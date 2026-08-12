@@ -13,7 +13,7 @@ import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
 import { Filmstrip } from './components/Filmstrip'
-import { IconPause, IconPlay } from './components/icons'
+import { IconLoop, IconPause, IconPlay } from './components/icons'
 import { ContextMenu } from './components/ContextMenu'
 import { colorForIndex, fmtSec, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
@@ -646,6 +646,8 @@ export function App() {
   const [seqQueue, setSeqQueue] = useState<SeqPlayItem[] | null>(null)
   /** 表示用の現在クリップ index（停止後もバーの位置を保つため ref とは別に持つ） */
   const [seqIdx, setSeqIdx] = useState(0)
+  /** シーケンスのループ再生（末尾まで来たら停止せず先頭へ戻る / Phase 2.6） */
+  const [seqLoop, setSeqLoop] = useState(false)
 
   // 停止（再生をやめるだけ。シークバーのシーケンス表示は保持する）
   const stopSequence = useCallback(() => {
@@ -728,10 +730,11 @@ export function App() {
         seqArmedRef.current = false
         const next = seqIndexRef.current + 1
         if (next < seqQueueRef.current.length) loadSeqIndex(next)
+        else if (seqLoop) loadSeqIndex(0) // ループ ON: 末尾で止めずに先頭へ戻る
         else stopSequence()
       }
     },
-    [loadSeqIndex, stopSequence]
+    [loadSeqIndex, stopSequence, seqLoop]
   )
   advanceRef.current = maybeAdvance
 
@@ -1651,6 +1654,16 @@ export function App() {
                   <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
                     {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
+                  {view === 'sequence' && (
+                    <button
+                      className={`mpv-loop${seqLoop ? ' on' : ''}`}
+                      onClick={() => setSeqLoop((v) => !v)}
+                      title="シーケンスを繰り返し再生（末尾まで来たら先頭へ戻る）"
+                      aria-pressed={seqLoop}
+                    >
+                      <IconLoop size={15} />
+                    </button>
+                  )}
                   {selectedSeg != null && (
                     <span
                       className="nudge-group"
