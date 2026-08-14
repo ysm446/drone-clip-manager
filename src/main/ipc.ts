@@ -58,6 +58,7 @@ import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BeatAnalysisResult,
+  ConcatBgm,
   SequenceBgm,
   WaveformResult,
   BgmDeleteResult,
@@ -433,10 +434,21 @@ export function registerIpc(): void {
   // シーケンスの無劣化連結書き出し（Phase 2.6）
   ipcMain.handle(
     'seq:export',
-    async (e, items: ConcatItem[], outDir: string, name: string): Promise<ConcatResult> => {
+    async (
+      e,
+      items: ConcatItem[],
+      outDir: string,
+      name: string,
+      bgm?: ConcatBgm
+    ): Promise<ConcatResult> => {
       try {
-        const outPath = await exportConcat(items, outDir, name, (phase, index, percent) =>
-          e.sender.send('seq:exportProgress', { phase, index, total: items.length, percent })
+        const outPath = await exportConcat(
+          items,
+          outDir,
+          name,
+          (phase, index, percent) =>
+            e.sender.send('seq:exportProgress', { phase, index, total: items.length, percent }),
+          bgm
         )
         return { ok: true, outPath }
       } catch (err) {

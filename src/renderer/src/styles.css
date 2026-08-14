@@ -2688,3 +2688,25 @@ body.resizing {
 .mtl-clip.dragging {
   cursor: grabbing;
 }
+/* BGM のフェード秒数入力（音楽タイムラインのヘッダ） */
+.mtl-fade {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.mtl-fade input {
+  width: 48px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  outline: none;
+}
+.mtl-fade input:focus {
+  border-color: var(--accent);
+}

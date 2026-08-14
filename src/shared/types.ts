@@ -314,10 +314,25 @@ export interface ConcatItem {
   outSec: number
 }
 
+/**
+ * 連結書き出しに載せる BGM（Phase 2.6b / 2.6c 段階 4）。
+ * 映像は stream copy のまま、音声だけ BGM で上書きする。
+ */
+export interface ConcatBgm {
+  /** BGM フォルダからの相対パス */
+  relPath: string
+  /** 曲のどこから使い始めるか（イントロ飛ばし / サビ合わせ） */
+  startOffsetSec: number
+  /** フェードイン秒数（0 で無効） */
+  fadeInSec: number
+  /** フェードアウト秒数（0 で無効） */
+  fadeOutSec: number
+}
+
 /** シーケンス連結書き出しの進捗（main → renderer の逐次イベント） */
 export interface ConcatProgress {
-  /** cut: 各クリップの切り出し / concat: 連結 */
-  phase: 'cut' | 'concat'
+  /** cut: 各クリップの切り出し / concat: 連結 / bgm: BGM の合成 */
+  phase: 'cut' | 'concat' | 'bgm'
   /** cut 中のクリップ番号（1 始まり）。concat では total と同値。 */
   index: number
   total: number
@@ -488,7 +503,12 @@ export interface DcmApi {
   /** 進捗イベントを購読。返り値で解除する。 */
   onExportProgress: (cb: (p: ExportProgress) => void) => () => void
   /** シーケンスの順路を無劣化連結（concat）で 1 本に書き出す（Phase 2.6） */
-  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string) => Promise<ConcatResult>
+  exportSequenceConcat: (
+    items: ConcatItem[],
+    outDir: string,
+    name: string,
+    bgm?: ConcatBgm
+  ) => Promise<ConcatResult>
   /** 連結書き出しの進捗イベントを購読。返り値で解除する。 */
   onConcatProgress: (cb: (p: ConcatProgress) => void) => () => void
   // --- mpv ネイティブ再生 ---

@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClipItem,
+  ConcatBgm,
+  ConcatItem,
   ConcatProgress,
   ConcatResult,
   GraphEdgeSnap,
@@ -786,9 +788,11 @@ export const SequenceView = memo(function SequenceView({
   }
 
   // --- 連結書き出し（無劣化 concat / Phase 2.6） ---
-  const runConcatExport = async () => {
-    if (playItems.length === 0 || activeId == null || exporting) return
-    // stream copy の連結はコーデック / 解像度 / fps が揃っていることが前提（メタ未取得は不問）
+  /**
+   * stream copy の連結はコーデック / 解像度 / fps が揃っていることが前提（メタ未取得は不問）。
+   * 揃っていなければ結果モーダルにエラーを出して false を返す。
+   */
+  const checkConcatCompatible = (): boolean => {
     const first = playItems[0].clip
     const bad = playItems.find(
       ({ clip: c }) =>
@@ -804,8 +808,35 @@ export const SequenceView = memo(function SequenceView({
           `コーデック / 解像度 / fps が一致しないクリップが含まれています（${bad.clip.videoFilename}）。` +
           '無劣化連結（stream copy）は同一パラメータの素材のみ対応です。'
       })
-      return
+      return false
     }
+    return true
+  }
+
+  /**
+   * 音楽タイムラインからの書き出し（Phase 2.6c 段階 4）。
+   * in / out は拍に合わせて算出済みのものを受け取り、BGM を合成して 1 本に出す。
+   * 既存の「連結書き出し」「分割書き出し」の挙動には影響しない。
+   */
+  const runMusicExport = async (items: ConcatItem[], bgm: ConcatBgm): Promise<void> => {
+    if (items.length === 0 || activeId == null || exporting) return
+    if (!checkConcatCompatible()) return
+    const dir = await api.pickExportDir()
+    if (!dir) return
+    const name = sequences.find((s) => s.id === activeId)?.name ?? 'シーケンス'
+    setExporting({ phase: 'cut', index: 0, total: items.length, percent: 0 })
+    const off = api.onConcatProgress(setExporting)
+    try {
+      setExportResult(await api.exportSequenceConcat(items, dir, name, bgm))
+    } finally {
+      off()
+      setExporting(null)
+    }
+  }
+
+  const runConcatExport = async () => {
+    if (playItems.length === 0 || activeId == null || exporting) return
+    if (!checkConcatCompatible()) return
     const dir = await api.pickExportDir()
     if (!dir) return
     const name = sequences.find((s) => s.id === activeId)?.name ?? 'シーケンス'
@@ -1088,6 +1119,8 @@ export const SequenceView = memo(function SequenceView({
             nodes={nodes}
             onNodesChanged={reloadActive}
             onDropClip={dropClipIntoOrder}
+            onExport={runMusicExport}
+            exporting={exporting != null}
           />
         ) : (
         <div
@@ -1256,7 +1289,9 @@ export const SequenceView = memo(function SequenceView({
                 <div className="seq-export-stage">
                   {exporting.phase === 'cut'
                     ? `クリップを切り出し中… (${exporting.index}/${exporting.total})`
-                    : '連結中…'}
+                    : exporting.phase === 'bgm'
+                      ? 'BGM を合成中…'
+                      : '連結中…'}
                 </div>
                 <div className="seq-export-bar">
                   <div

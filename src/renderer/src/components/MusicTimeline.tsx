@@ -3,6 +3,7 @@ import type {
   BeatAnalysis,
   BgmInfo,
   ClipItem,
+  ConcatBgm,
   SequenceBgm,
   SequenceNode,
   Waveform
@@ -55,6 +56,13 @@ interface Props {
   onNodesChanged?: () => void
   /** クリップパレットからのドロップ配置（順路の insertAt 番目へ挿し込む） */
   onDropClip?: (segmentId: number, insertAt: number) => Promise<void>
+  /** 拍に合わせた in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
+  onExport?: (
+    items: { videoRelPath: string; inSec: number; outSec: number }[],
+    bgm: ConcatBgm
+  ) => Promise<void>
+  /** 書き出し実行中（ボタンを無効にする） */
+  exporting?: boolean
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
 }
 
@@ -64,6 +72,8 @@ export const MusicTimeline = memo(function MusicTimeline({
   nodes,
   onNodesChanged,
   onDropClip,
+  onExport,
+  exporting,
   onStatus
 }: Props) {
   const [bgmInfo, setBgmInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
@@ -72,6 +82,9 @@ export const MusicTimeline = memo(function MusicTimeline({
   const [wave, setWave] = useState<Waveform | null>(null)
   const [loading, setLoading] = useState(false)
   const [pps, setPps] = useState(40) // px / 秒
+  /** BGM のフェード秒数（既定はイン 1s / アウト 2s） */
+  const [fadeIn, setFadeIn] = useState(1)
+  const [fadeOut, setFadeOut] = useState(2)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const clipsRef = useRef<HTMLDivElement>(null)
   /**
@@ -381,6 +394,58 @@ export const MusicTimeline = memo(function MusicTimeline({
     void api.updateSequenceNodeMusic(nodeId, null, 0, false).then(() => onNodesChanged?.())
   }
 
+  /**
+   * 書き出し用の in / out を組み立てる（Phase 2.6c 段階 4）。
+   *
+   * - 尺は `units * 1拍` ではなく **ビート列の差**（`beats[to] - beats[from]`）を使う。
+   *   テンポが流れる曲では小節の長さが場所によって変わるため、これを使わないと
+   *   連結後のカットが曲から徐々にずれる。
+   * - `src_offset` で in をずらす場合は、**直前のキーフレームへ丸める**。
+   *   stream copy では in がキーフレーム上にないと先頭が壊れるため。
+   *   out 側は任意フレームで切れるので、丸めによって尺は変えない（= カットは拍の上に残る）。
+   * - 尺は**フレーム単位へ量子化し、誤差を次のクリップへ持ち越す**（誤差拡散）。
+   *   stream copy の切り出しは 1 フレーム単位でしか切れず、常に切り上げ側に丸まるため、
+   *   そのままだとクリップ数だけ誤差が積もって曲の後半でカットが拍からずれる。
+   *   「理想の累積時刻」との差で毎回の尺を決めるので、累積ズレは半フレーム未満に留まる。
+   */
+  const buildExportItems = useCallback(async (): Promise<
+    { videoRelPath: string; inSec: number; outSec: number }[]
+  > => {
+    if (!layout) return []
+    const out: { videoRelPath: string; inSec: number; outSec: number }[] = []
+    // キーフレームは動画ごとに 1 回だけ引く
+    const kfCache = new Map<string, number[]>()
+    let targetAcc = 0 // 拍ぴったりの累積時刻（理想）
+    let actualAcc = 0 // フレーム量子化後の累積時刻（実際に出力される尺）
+    for (const b of layout.blocks) {
+      const c = b.clip
+      const baseIn = c.inSnapped ?? c.inTime
+      let inSec = baseIn + b.srcOffset
+      if (b.srcOffset > 0.001) {
+        let kf = kfCache.get(c.videoRelPath)
+        if (!kf) {
+          kf = await api.getKeyframes(c.videoRelPath)
+          kfCache.set(c.videoRelPath, kf)
+        }
+        // 直前のキーフレームへ丸める（無ければ元の in のまま）
+        let prev = baseIn
+        for (const t of kf) {
+          if (t <= inSec + 0.001) prev = t
+          else break
+        }
+        inSec = prev
+      }
+      targetAcc += b.endSec - b.startSec
+      const fps = c.videoFps && c.videoFps > 0 ? c.videoFps : 30
+      // 理想の累積との差を、この動画のフレーム数へ丸める（余りは次のクリップへ持ち越す）
+      const frames = Math.max(1, Math.round((targetAcc - actualAcc) * fps))
+      const dur = frames / fps
+      actualAcc += dur
+      out.push({ videoRelPath: c.videoRelPath, inSec, outSec: inSec + dur })
+    }
+    return out
+  }, [layout])
+
   // 波形と小節グリッドは canvas に描く（小節線が数百本になるため DOM では重い）
   useEffect(() => {
     const cv = canvasRef.current
@@ -500,6 +565,50 @@ export const MusicTimeline = memo(function MusicTimeline({
         <button className="mtl-zoom" onClick={() => setPps((v) => Math.min(MAX_PPS, v * 1.5))}>
           ＋
         </button>
+
+        {onExport && (
+          <>
+            <label className="mtl-fade" title="BGM のフェードイン / フェードアウト秒数">
+              フェード
+              <input
+                type="number"
+                min={0}
+                max={30}
+                step={0.5}
+                value={fadeIn}
+                onChange={(e) => setFadeIn(Math.max(0, Number(e.target.value)))}
+              />
+              /
+              <input
+                type="number"
+                min={0}
+                max={30}
+                step={0.5}
+                value={fadeOut}
+                onChange={(e) => setFadeOut(Math.max(0, Number(e.target.value)))}
+              />
+              秒
+            </label>
+            <button
+              className="btn primary"
+              disabled={!beat || !layout?.blocks.length || !seqBgm || exporting}
+              onClick={() => {
+                if (!seqBgm) return
+                void buildExportItems().then((exportItems) =>
+                  onExport(exportItems, {
+                    relPath: seqBgm.relPath,
+                    startOffsetSec: seqBgm.startOffsetSec,
+                    fadeInSec: fadeIn,
+                    fadeOutSec: fadeOut
+                  })
+                )
+              }}
+              title="拍に合わせた長さで無劣化連結し、BGM を載せて 1 本に書き出す"
+            >
+              書き出し…
+            </button>
+          </>
+        )}
       </div>
 
       {!seqBgm ? (

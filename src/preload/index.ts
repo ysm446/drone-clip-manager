@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  ConcatBgm,
   ConcatItem,
   ConcatProgress,
   DcmApi,
@@ -86,8 +87,8 @@ const api: DcmApi = {
     ipcRenderer.on('export:progress', handler)
     return () => ipcRenderer.removeListener('export:progress', handler)
   },
-  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string) =>
-    ipcRenderer.invoke('seq:export', items, outDir, name),
+  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string, bgm?: ConcatBgm) =>
+    ipcRenderer.invoke('seq:export', items, outDir, name, bgm),
   onConcatProgress: (cb: (p: ConcatProgress) => void) => {
     const handler = (_e: unknown, p: ConcatProgress) => cb(p)
     ipcRenderer.on('seq:exportProgress', handler)

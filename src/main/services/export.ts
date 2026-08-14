@@ -3,8 +3,8 @@ import { basename, extname, join } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { resolveInRoot } from '../util/paths'
-import type { ConcatItem, ExportJob, ExportOptions } from '../../shared/types'
+import { resolveInBgm, resolveInRoot } from '../util/paths'
+import type { ConcatBgm, ConcatItem, ExportJob, ExportOptions } from '../../shared/types'
 
 // ロスレス書き出し（stream copy / spec §6.3）。再エンコードしない。
 const FFMPEG = 'ffmpeg'
@@ -57,6 +57,35 @@ function uniquePath(dir: string, stem: string, ext: string): string {
  *      DaVinci Resolve 等では「元の尺のまま・該当部分以外は真っ黒」になる。
  *   小文字の 0:v ではなく大文字の 0:V を使うと attached pic を除いた映像だけを選べる。
  */
+/**
+ * 連結結果に BGM を載せる ffmpeg 引数（Phase 2.6b）。
+ * 映像は copy のまま、音声は BGM で上書きする（元音声は出力に含めない）。
+ * 曲が総尺 T より短い場合は apad で無音を足し、長い場合は -t で切る。
+ */
+function bgmArgs(concatPath: string, bgm: ConcatBgm, totalDur: number, outPath: string): string[] {
+  const filters = [`apad=whole_dur=${totalDur.toFixed(3)}`]
+  if (bgm.fadeInSec > 0) filters.push(`afade=t=in:st=0:d=${bgm.fadeInSec.toFixed(3)}`)
+  if (bgm.fadeOutSec > 0) {
+    const st = Math.max(0, totalDur - bgm.fadeOutSec)
+    filters.push(`afade=t=out:st=${st.toFixed(3)}:d=${bgm.fadeOutSec.toFixed(3)}`)
+  }
+  return [
+    '-i', concatPath,
+    // 曲側の開始位置（イントロ飛ばし / サビ合わせ）。-i の前に置いて input seeking にする
+    ...(bgm.startOffsetSec > 0 ? ['-ss', String(bgm.startOffsetSec)] : []),
+    '-i', resolveInBgm(bgm.relPath),
+    '-map', '0:V',
+    '-map', '1:a',
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '256k',
+    '-af', filters.join(','),
+    '-t', totalDur.toFixed(3),
+    '-movflags', '+faststart',
+    outPath
+  ]
+}
+
 function cutArgs(absInput: string, inSec: number, dur: number): string[] {
   return [
     '-ss', String(inSec),
@@ -165,7 +194,8 @@ export async function exportConcat(
   items: ConcatItem[],
   outDir: string,
   name: string,
-  onProgress: (phase: 'cut' | 'concat', index: number, percent: number) => void
+  onProgress: (phase: 'cut' | 'concat' | 'bgm', index: number, percent: number) => void,
+  bgm?: ConcatBgm
 ): Promise<string> {
   if (items.length === 0) throw new Error('連結対象がありません')
   const durs = items.map((it) => it.outSec - it.inSec)
@@ -173,6 +203,8 @@ export async function exportConcat(
   const totalDur = durs.reduce((s, d) => s + d, 0)
   const outExt = extname(resolveInRoot(items[0].videoRelPath)) || '.mp4'
   const outPath = uniquePath(outDir, sanitize(name), outExt)
+  // BGM 合成は「切り出し → 連結 → 合成」の 3 段。進捗の分母も 3 倍で数える。
+  const stages = bgm ? 3 : 2
 
   const tmp = await mkdtemp(join(tmpdir(), 'dcm-concat-'))
   try {
@@ -186,10 +218,10 @@ export async function exportConcat(
       parts.push(part)
       await runFfmpeg(
         [...cutArgs(absInput, it.inSec, durs[i]), part],
-        (sec) => onProgress('cut', i + 1, (doneDur + Math.min(sec, durs[i])) / (totalDur * 2))
+        (sec) => onProgress('cut', i + 1, (doneDur + Math.min(sec, durs[i])) / (totalDur * stages))
       )
       doneDur += durs[i]
-      onProgress('cut', i + 1, doneDur / (totalDur * 2))
+      onProgress('cut', i + 1, doneDur / (totalDur * stages))
     }
 
     // 2. concat demuxer で連結（パスは ' を '\'' にエスケープして quote する）
@@ -198,6 +230,8 @@ export async function exportConcat(
       .map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
       .join('\n')
     await writeFile(listPath, listBody, 'utf8')
+    // BGM を載せる場合、連結結果はいったん一時ファイルへ出す（3 段目の入力にする）
+    const concatOut = bgm ? join(tmp, `concat${outExt}`) : outPath
     await runFfmpeg(
       [
         '-f', 'concat',
@@ -206,11 +240,26 @@ export async function exportConcat(
         '-c', 'copy',
         '-map', '0',
         '-avoid_negative_ts', 'make_zero',
-        outPath
+        concatOut
       ],
-      (sec) => onProgress('concat', items.length, (totalDur + Math.min(sec, totalDur)) / (totalDur * 2))
+      (sec) =>
+        onProgress('concat', items.length, (totalDur + Math.min(sec, totalDur)) / (totalDur * stages))
     )
-    onProgress('concat', items.length, 1)
+    onProgress('concat', items.length, 2 / stages)
+
+    // 3. BGM を合成（映像は copy のまま、音声だけ BGM で上書き）
+    if (bgm) {
+      await runFfmpeg(
+        bgmArgs(concatOut, bgm, totalDur, outPath),
+        (sec) =>
+          onProgress(
+            'bgm',
+            items.length,
+            (totalDur * 2 + Math.min(sec, totalDur)) / (totalDur * stages)
+          )
+      )
+    }
+    onProgress(bgm ? 'bgm' : 'concat', items.length, 1)
     return outPath
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => void 0)
