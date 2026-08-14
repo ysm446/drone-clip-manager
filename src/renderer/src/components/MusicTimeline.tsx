@@ -154,6 +154,8 @@ const MIN_PPS = 6 // 最小ズーム（px / 秒）
 const MAX_PPS = 200
 /** 端ドラッグ / スライドの当たり判定（px） */
 const EDGE_HIT = 8
+/** 矩形選択とみなす最小のドラッグ量（px）。これ以下は右クリック / クリック扱い。 */
+const MARQUEE_MIN_PX = 3
 
 interface Props {
   sequenceId: number | null
@@ -288,6 +290,11 @@ export const MusicTimeline = memo(function MusicTimeline({
   const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
     null
   )
+  /**
+   * 直前の右ドラッグが実際に動いたか。**右クリックメニューを出すかの判定に使う**
+   * （Windows では contextmenu が mouseup の後に来るので、動いたなら矩形選択だったとみなす）。
+   */
+  const marqueeMovedRef = useRef(false)
   /** クリップの右クリックメニュー */
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
   /** ブロックにサムネイルを出すか（幅が足りないブロックは自動で省く） */
@@ -552,33 +559,52 @@ export const MusicTimeline = memo(function MusicTimeline({
   )
 
   /**
-   * 矩形選択（ラバーバンド）。**クリップ列の空きから左ドラッグ**で始める
-   * （札の上から始まるドラッグは配置の編集なので、そちらを邪魔しない）。
+   * 矩形選択（ラバーバンド）。**右ドラッグはどこからでも / 左ドラッグは空きからだけ**
+   * （SequenceView と同じ規則）。札の上の左ドラッグは配置の編集なので譲る。
+   *
+   * 音楽タイムラインは 1 行に札が詰めて並ぶため、**空きは実質「最後の札より後ろ」しか無い**。
+   * 左ドラッグだけにすると、並んでいる札を囲む操作がほぼできない。
+   * 右ドラッグは動かさずに離したときだけ右クリックメニューを出す（`marqueeMovedRef`）。
+   *
    * Shift / Ctrl を押しながらなら、いまの選択に足し込む。
    */
   const startMarquee = (e: React.MouseEvent): void => {
     const lane = clipsRef.current
-    if (!lane || e.button !== 0) return
+    if (!lane) return
     // 空き = 列そのもの、または隙間の表示（見た目だけの帯なので空き扱いにする）
     const el = e.target as HTMLElement
-    if (el !== lane && !el.classList.contains('mtl-gap')) return
+    const onEmpty = el === lane || el.classList.contains('mtl-gap')
+    if (!(e.button === 2 || (e.button === 0 && onEmpty))) return
     e.preventDefault()
 
+    const button = e.button
+    const startX = e.clientX
+    const startY = e.clientY
+    marqueeMovedRef.current = false
     const rect = lane.getBoundingClientRect()
-    const x0 = e.clientX - rect.left
-    const y0 = e.clientY - rect.top
+    const x0 = startX - rect.left
+    const y0 = startY - rect.top
     // ドラッグ中は並びが変わらないので、当たり判定用の札はここで控えておけばよい
     const blocks = layoutBlocks
     const additive = e.shiftKey || e.ctrlKey || e.metaKey
     const base = additive ? new Set(selected) : new Set<number>()
-    if (!additive) setSelected(base) // 空きのクリックは選択解除から始める
+    // 左ドラッグ（空きから）は押した時点で選択解除。**右ドラッグは動かすまで選択を保つ**
+    // （動かさずに離したら右クリックメニューなので、そこで選択を壊してはいけない）。
+    if (button === 0 && !additive) setSelected(base)
     setMarquee({ x1: x0, y1: y0, x2: x0, y2: y0 })
 
-    let ids = base
+    let ids: Set<number> | null = null
     const onMove = (ev: MouseEvent): void => {
       const x = ev.clientX - rect.left
       const y = ev.clientY - rect.top
       setMarquee({ x1: x0, y1: y0, x2: x, y2: y })
+      if (
+        Math.abs(ev.clientX - startX) > MARQUEE_MIN_PX ||
+        Math.abs(ev.clientY - startY) > MARQUEE_MIN_PX
+      ) {
+        marqueeMovedRef.current = true
+      }
+      if (!marqueeMovedRef.current) return // 手が震えただけの動きでは選択を変えない
       const lox = Math.min(x0, x)
       const hix = Math.max(x0, x)
       // 縦の判定はしない。札はどれも 1 行の中で高さいっぱいに並ぶので、
@@ -590,12 +616,14 @@ export const MusicTimeline = memo(function MusicTimeline({
       ids = next
       setSelected(next)
     }
-    const onUp = (): void => {
+    const onUp = (ev: MouseEvent): void => {
+      if (ev.button !== button) return // 開始したボタン以外の mouseup は無視する
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       setMarquee(null)
       // ナッジ対象の通知はここで 1 回だけ（ドラッグ中に毎回流すと上部プレイヤーが暴れる）
-      applySelection(ids)
+      if (ids) applySelection(ids)
+      else if (button === 0 && !additive) applySelection(base) // 空きのクリック = 選択解除
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -1268,6 +1296,8 @@ export const MusicTimeline = memo(function MusicTimeline({
               style={{ height: TRACK_H }}
               ref={clipsRef}
               onMouseDown={startMarquee}
+              // 右ドラッグは矩形選択なので、空きで離したときに素のメニューを出さない
+              onContextMenu={(e) => e.preventDefault()}
               onDragOver={(e) => {
                 if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
                 e.preventDefault()
@@ -1346,6 +1376,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                     onDoubleClick={() => resetDur(b.key)}
                     onContextMenu={(e) => {
                       e.preventDefault()
+                      // 右ドラッグ（矩形選択）だったならメニューは出さない
+                      if (marqueeMovedRef.current) return
                       // 選択の中の 1 枚なら選択を保つ（まとめて削除できるように）
                       if (!selected.has(b.key)) selectOne(b.key)
                       setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
@@ -1366,7 +1398,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                       '本体ドラッグ: 位置を移動（重なった札は押し出される）',
                       '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
                       'ダブルクリック: 尺を自動に戻す',
-                      'Shift / Ctrl+クリック: 選択に足す・外す / 空きから左ドラッグ: 矩形選択'
+                      '右ドラッグ: 矩形選択 / Shift / Ctrl+クリック: 選択に足す・外す'
                     ]
                       .filter(Boolean)
                       .join('\n')}
