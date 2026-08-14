@@ -594,6 +594,27 @@ export function App() {
   }, [])
 
   const togglePlay = useCallback(() => {
+    // 音楽モードで BGM を伴う連続再生中なら、曲も映像と一緒に止め / 再開する
+    // （上部の再生ボタンだけで映像を止めても音が鳴り続けるのを防ぐ）。
+    const bgm = seqBgmRef.current
+    const audio = seqAudioRef.current
+    const willPlay = mpvModeRef.current ? mpvPausedRef.current : !!videoRef.current?.paused
+    if (bgm && audio && seqQueueRef.current.length > 0) {
+      if (willPlay) {
+        // 再開位置に曲を合わせる（それまでのクリップ尺の合計 + 現クリップ内の経過）
+        const q = seqQueueRef.current
+        const idx = Math.max(0, Math.min(seqIndexRef.current, q.length - 1))
+        let elapsed = 0
+        for (let k = 0; k < idx; k++) elapsed += Math.max(0, itemOut(q[k]) - itemIn(q[k]))
+        const v = videoRef.current
+        if (v) elapsed += Math.max(0, v.currentTime - itemIn(q[idx]))
+        audio.currentTime = bgm.startOffsetSec + elapsed
+        audio.play().catch(() => void 0)
+      } else {
+        audio.pause()
+      }
+      setSeqPlaying(willPlay)
+    }
     if (mpvModeRef.current) {
       if (mpvPausedRef.current) api.mpvPlay()
       else api.mpvPause()
