@@ -296,15 +296,17 @@ export const BgmPlayer = memo(function BgmPlayer({
     void ctx.resume()
     const beats = beat.beats
 
-    const schedule = (when: number, strong: boolean): void => {
+    // 全ての拍を同じ音で鳴らす（強弱を付けない）。
+    // 拍子は 4/4 固定で小節頭の位置が当てにならず、誤った強拍は判断を誤らせるため。
+    const schedule = (when: number): void => {
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
-      osc.frequency.value = strong ? 2000 : 1200 // 小節頭だけ高い音にする
+      osc.frequency.value = 1400
       osc.connect(gain)
       gain.connect(ctx.destination)
       // クリック音: 2ms で立ち上げて 50ms で減衰（exponential なので 0 は使えない）
       gain.gain.setValueAtTime(0.0001, when)
-      gain.gain.exponentialRampToValueAtTime(strong ? 0.5 : 0.28, when + 0.002)
+      gain.gain.exponentialRampToValueAtTime(0.32, when + 0.002)
       gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05)
       osc.start(when)
       osc.stop(when + 0.06)
@@ -329,12 +331,8 @@ export const BgmPlayer = memo(function BgmPlayer({
         i = beatIndexAt(beats, t) + 1
       }
       while (i < beats.length && beats[i] <= horizon) {
-        if (beats[i] >= t) {
-          const rel = i - beat.barPhase
-          const strong = (((rel % beat.beatsPerBar) + beat.beatsPerBar) % beat.beatsPerBar) === 0
-          // 再生位置との差を AudioContext の時計に載せ替える
-          schedule(ctx.currentTime + (beats[i] - t), strong)
-        }
+        // 再生位置との差を AudioContext の時計に載せ替える
+        if (beats[i] >= t) schedule(ctx.currentTime + (beats[i] - t))
         i++
       }
       clickIdxRef.current = i

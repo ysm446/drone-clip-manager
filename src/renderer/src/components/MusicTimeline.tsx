@@ -11,6 +11,7 @@ import type {
 import type { SeqPlayItem } from './SequenceView'
 import { colorForIndex, fmtSec } from '../util'
 import { ContextMenu } from './ContextMenu'
+import { IconMetronome } from './icons'
 
 const api = window.dcm
 
@@ -34,6 +35,10 @@ const SNAP_UNITS = [
 ]
 const SNAP_KEY = 'dcm.mtl.snapBeats'
 const THUMB_KEY = 'dcm.mtl.showThumbs'
+const METRO_KEY = 'dcm.mtl.metronome'
+/** メトロノームの先読み時間（秒）と、予約を回す間隔（ms） */
+const CLICK_LOOKAHEAD_SEC = 0.2
+const CLICK_TICK_MS = 40
 /** サムネイルを出す最小のブロック幅（px）。これより狭いと絵が潰れて役に立たない。 */
 const THUMB_MIN_W = 64
 /** 尺（秒）を出す最小のブロック幅 */
@@ -233,6 +238,17 @@ export const MusicTimeline = memo(function MusicTimeline({
   const [showThumbs, setShowThumbs] = useState<boolean>(
     () => localStorage.getItem(THUMB_KEY) !== '0'
   )
+  /** メトロノーム（拍にクリック音を重ねる）。カットが拍に乗っているかを耳で確かめる用。 */
+  const [metronome, setMetronome] = useState<boolean>(
+    () => localStorage.getItem(METRO_KEY) === '1'
+  )
+  const metroCtxRef = useRef<AudioContext | null>(null)
+  const metroPendingRef = useRef<OscillatorNode[]>([])
+  /**
+   * 曲の時刻の推定用。進捗イベントは毎秒 4 回程度しか来ないので、
+   * 「最後に分かった曲の時刻」と「その時の時計」を控えて間を線形に外挿する。
+   */
+  const songClockRef = useRef<{ songSec: number; at: number } | null>(null)
 
   useEffect(() => {
     api.getBgm().then(setBgmInfo)
@@ -645,9 +661,12 @@ export const MusicTimeline = memo(function MusicTimeline({
       const d = (e as CustomEvent).detail as { nodeId: number; ratio: number }
       const b = byNode.get(d.nodeId)
       if (!b) return
+      const songSec = b.startSec + (b.endSec - b.startSec) * d.ratio
+      // メトロノームの時計。ヘッドの抑制とは別に、常に最新へ更新する
+      songClockRef.current = { songSec, at: performance.now() }
       // 手動の頭出し直後は、シークの着地誤差でヘッドを動かさない
       if (performance.now() < seekGuardRef.current) return
-      moveHead(b.startSec + (b.endSec - b.startSec) * d.ratio)
+      moveHead(songSec)
     }
     window.addEventListener('dcm:seq-progress', onProgress)
     return () => window.removeEventListener('dcm:seq-progress', onProgress)
@@ -657,6 +676,87 @@ export const MusicTimeline = memo(function MusicTimeline({
   useEffect(() => {
     if (headSecRef.current != null) moveHead(headSecRef.current)
   }, [effPps, moveHead])
+
+  /**
+   * メトロノーム。曲の時刻を進捗イベントから外挿し、少し先の拍を Web Audio へ予約する。
+   * setInterval は「先読みして予約する」ためだけに使うので、タイマの精度は音のズレに影響しない
+   * （BGM プレイヤーのメトロノームと同じ方式）。
+   */
+  useEffect(() => {
+    const ctx = metroCtxRef.current
+    if (!metronome || !ctx || !beat || !beat.beats.length || !playing) return
+    void ctx.resume()
+    const beats = beat.beats
+
+    // 全ての拍を同じ音で鳴らす（強弱を付けない）。
+    // 拍子は 4/4 固定なので小節頭の位置が当てにならず、誤った強拍はかえって判断を誤らせるため。
+    const schedule = (when: number): void => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.frequency.value = 1400
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      gain.gain.setValueAtTime(0.0001, when)
+      gain.gain.exponentialRampToValueAtTime(0.32, when + 0.002)
+      gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05)
+      osc.start(when)
+      osc.stop(when + 0.06)
+      metroPendingRef.current.push(osc)
+      osc.onended = () => {
+        metroPendingRef.current = metroPendingRef.current.filter((o) => o !== osc)
+      }
+    }
+
+    let idx = -1
+    const id = window.setInterval(() => {
+      const clk = songClockRef.current
+      if (!clk) return
+      // 進捗イベントの間は 1 倍速で進んでいるものとして外挿する
+      const nowSong = clk.songSec + (performance.now() - clk.at) / 1000
+      // 頭出しやループで飛んだら予約位置を貼り直す
+      if (
+        idx < 0 ||
+        (idx > 0 && idx <= beats.length && beats[idx - 1] > nowSong) ||
+        (idx < beats.length && beats[idx] < nowSong - 1)
+      ) {
+        idx = beatIndexAt(beats, nowSong) + 1
+      }
+      const horizon = nowSong + CLICK_LOOKAHEAD_SEC
+      while (idx < beats.length && beats[idx] <= horizon) {
+        if (beats[idx] >= nowSong) schedule(ctx.currentTime + (beats[idx] - nowSong))
+        idx++
+      }
+    }, CLICK_TICK_MS)
+
+    return () => {
+      window.clearInterval(id)
+      for (const osc of metroPendingRef.current) {
+        try {
+          osc.stop()
+        } catch {
+          /* 既に停止済み */
+        }
+      }
+      metroPendingRef.current = []
+    }
+  }, [metronome, playing, beat])
+
+  // AudioContext はアンマウント時に閉じる（トグルの切替では使い回す）
+  useEffect(() => {
+    return () => {
+      void metroCtxRef.current?.close()
+      metroCtxRef.current = null
+    }
+  }, [])
+
+  /** メトロノームの ON / OFF。AudioContext はユーザー操作の中でしか生成できない。 */
+  const toggleMetronome = (): void => {
+    if (!metroCtxRef.current) metroCtxRef.current = new AudioContext()
+    setMetronome((v) => {
+      localStorage.setItem(METRO_KEY, v ? '0' : '1')
+      return !v
+    })
+  }
 
   // 波形と小節グリッドは canvas に描く（小節線が数百本になるため DOM では重い）
   useEffect(() => {
@@ -763,6 +863,15 @@ export const MusicTimeline = memo(function MusicTimeline({
             {beat.warning && <span className="mtl-warn">{beat.warning}</span>}
           </>
         )}
+
+        <button
+          className={`mtl-zoom${metronome ? ' on' : ''}`}
+          onClick={toggleMetronome}
+          disabled={!beat}
+          title="拍にクリック音を重ねる（小節頭は高い音）。カットが拍に乗っているかの確認用"
+        >
+          <IconMetronome size={13} />
+        </button>
 
         <button
           className={`mtl-zoom${showThumbs ? ' on' : ''}`}
