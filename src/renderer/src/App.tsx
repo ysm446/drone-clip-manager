@@ -8,7 +8,13 @@ import { SegmentList } from './components/SegmentList'
 import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
-import { SequenceView, type SeqPlayItem } from './components/SequenceView'
+import {
+  SequenceView,
+  itemIn,
+  itemOut,
+  type SeqPlayBgm,
+  type SeqPlayItem
+} from './components/SequenceView'
 import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
@@ -648,6 +654,14 @@ export function App() {
   const [seqIdx, setSeqIdx] = useState(0)
   /** シーケンスのループ再生（末尾まで来たら停止せず先頭へ戻る / Phase 2.6） */
   const [seqLoop, setSeqLoop] = useState(false)
+  /**
+   * 音楽モードの連続再生で一緒に鳴らす BGM（Phase 2.6c）。
+   * 音は途切れさせず流し続け、クリップの切り替わりで**映像側を音に合わせる**
+   * （読み込みの間に音が進んだぶんだけ、次のクリップの頭を飛ばす）。
+   * 音を止めると拍が判断できなくなるため、ズレは映像側で吸収する。
+   */
+  const seqBgmRef = useRef<SeqPlayBgm | null>(null)
+  const seqAudioRef = useRef<HTMLAudioElement>(null)
 
   // 停止（再生をやめるだけ。シークバーのシーケンス表示は保持する）
   const stopSequence = useCallback(() => {
@@ -655,6 +669,7 @@ export function App() {
     seqArmedRef.current = false
     autoPlayNextRef.current = false
     setPlayingNodeId(null)
+    seqAudioRef.current?.pause()
     if (mpvModeRef.current) {
       api.mpvPause()
       mpvPausedRef.current = true
@@ -673,6 +688,9 @@ export function App() {
     seqArmedRef.current = false
     setPlayingNodeId(null)
     setSeqQueue(null)
+    // 別の動画を開いたときに BGM だけ鳴り続けないよう止める
+    seqAudioRef.current?.pause()
+    seqBgmRef.current = null
   }, [])
 
   // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）。
@@ -689,7 +707,21 @@ export function App() {
       seqArmedRef.current = false
       setPlayingNodeId(item.nodeId)
       setSeqIdx(i)
-      const startSec = atSec ?? item.clip.inSnapped ?? item.clip.inTime
+      // BGM 同期中は、音が先に進んだぶんだけこのクリップの頭を飛ばして映像を音に合わせる。
+      // （音は止めないので、クリップ読み込みの待ち時間だけ映像が遅れる）
+      let catchUp = 0
+      const bgm = seqBgmRef.current
+      const audio = seqAudioRef.current
+      if (bgm && audio && atSec == null && autoplay) {
+        const q = seqQueueRef.current
+        let elapsed = 0
+        for (let k = 0; k < i; k++) elapsed += Math.max(0, itemOut(q[k]) - itemIn(q[k]))
+        const drift = audio.currentTime - bgm.startOffsetSec - elapsed
+        const dur = Math.max(0, itemOut(item) - itemIn(item))
+        // 1 クリップぶんを超える遅れは追いつけないので諦める（音側を戻さない方針）
+        if (drift > 0.05) catchUp = Math.min(drift, Math.max(0, dur - 0.2))
+      }
+      const startSec = atSec ?? itemIn(item) + catchUp
       const rel = item.clip.videoRelPath
       if (currentRelRef.current === rel) {
         // 再生中のクリップを in/out ナッジの対象にする
@@ -713,10 +745,10 @@ export function App() {
     (t: number) => {
       const item = seqQueueRef.current[seqIndexRef.current]
       if (!item) return
-      const out = item.clip.outSnapped ?? item.clip.outTime
+      const out = itemOut(item)
       // 再生中ノードの進捗バーへ通知（SequenceView は memo 化しているため
       // props ではなくイベントで流し、バーの DOM だけを更新する）
-      const inSec = item.clip.inSnapped ?? item.clip.inTime
+      const inSec = itemIn(item)
       const ratio = Math.min(1, Math.max(0, (t - inSec) / Math.max(0.001, out - inSec)))
       window.dispatchEvent(
         new CustomEvent('dcm:seq-progress', { detail: { nodeId: item.nodeId, ratio } })
@@ -730,8 +762,12 @@ export function App() {
         seqArmedRef.current = false
         const next = seqIndexRef.current + 1
         if (next < seqQueueRef.current.length) loadSeqIndex(next)
-        else if (seqLoop) loadSeqIndex(0) // ループ ON: 末尾で止めずに先頭へ戻る
-        else stopSequence()
+        else if (seqLoop) {
+          // ループ ON: 末尾で止めずに先頭へ戻る。BGM も使い始め位置へ巻き戻す。
+          const bgm = seqBgmRef.current
+          if (bgm && seqAudioRef.current) seqAudioRef.current.currentTime = bgm.startOffsetSec
+          loadSeqIndex(0)
+        } else stopSequence()
       }
     },
     [loadSeqIndex, stopSequence, seqLoop]
@@ -739,7 +775,7 @@ export function App() {
   advanceRef.current = maybeAdvance
 
   const playSequence = useCallback(
-    (items: SeqPlayItem[]) => {
+    (items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => {
       if (items.length === 0) return
       seqQueueRef.current = items
       seqActiveRef.current = true
@@ -747,6 +783,20 @@ export function App() {
       clipPlayRef.current = null
       setClipPlay(null)
       setSeqQueue(items)
+      // BGM は曲の使い始め位置から流し始め、以降は止めない（音が主）
+      seqBgmRef.current = bgm ?? null
+      const audio = seqAudioRef.current
+      if (audio) {
+        if (bgm) {
+          const url = api.bgmUrl(bgm.relPath)
+          if (audio.src !== url) audio.src = url
+          audio.volume = 0.7 // BGM プレイヤーの既定音量に合わせる
+          audio.currentTime = bgm.startOffsetSec
+          audio.play().catch(() => void 0)
+        } else {
+          audio.pause()
+        }
+      }
       loadSeqIndex(0)
     },
     [loadSeqIndex]
@@ -783,9 +833,9 @@ export function App() {
     const q = seqQueueRef.current
     let acc = 0
     for (let i = 0; i < q.length; i++) {
-      const c = q[i].clip
-      const inSec = c.inSnapped ?? c.inTime
-      const d = Math.max(0, (c.outSnapped ?? c.outTime) - inSec)
+      // 音楽モードでは尺が拍に合わせて上書きされるので、実効値を使う
+      const inSec = itemIn(q[i])
+      const d = Math.max(0, itemOut(q[i]) - inSec)
       if (ts < acc + d || i === q.length - 1) {
         return { idx: i, sec: inSec + Math.min(Math.max(0, ts - acc), Math.max(0, d - 0.2)) }
       }
@@ -812,6 +862,33 @@ export function App() {
     [seqLocate, seek, loadSeqIndex]
   )
 
+  /**
+   * 音楽タイムラインのクリックによる頭出し（Phase 2.6c）。
+   * まだ音楽モードのキューになっていない場合もあるので、キューと BGM を設定してからシークする。
+   * ts はシーケンス先頭からの経過秒。
+   */
+  const seekMusic = useCallback(
+    (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => {
+      if (items.length === 0) return
+      seqQueueRef.current = items
+      seqActiveRef.current = true
+      clipPlayRef.current = null
+      setClipPlay(null)
+      setSeqQueue(items)
+      seqBgmRef.current = bgm
+      const audio = seqAudioRef.current
+      if (audio) {
+        const url = api.bgmUrl(bgm.relPath)
+        if (audio.src !== url) audio.src = url
+        audio.volume = 0.7
+        audio.currentTime = bgm.startOffsetSec + Math.max(0, ts)
+        audio.play().catch(() => void 0)
+      }
+      seekSequence(ts)
+    },
+    [seekSequence]
+  )
+
   // シーケンスバーのホバーサムネイル: シーケンス時間 → 該当クリップの動画・時刻で生成
   const getSeqThumb = useCallback(
     async (ts: number): Promise<string | null> => {
@@ -822,10 +899,7 @@ export function App() {
       const total = q.reduce(
         (s, it) =>
           s +
-          Math.max(
-            0,
-            (it.clip.outSnapped ?? it.clip.outTime) - (it.clip.inSnapped ?? it.clip.inTime)
-          ),
+          Math.max(0, itemOut(it) - itemIn(it)),
         0
       )
       // 通常バーと同じ方針でグリッドに量子化してキャッシュを効かせる
@@ -1491,12 +1565,7 @@ export function App() {
   // シークバーを「クリップを連結した仮想タイムライン（0..合計）」にする
   const seqPlayback = useMemo(() => {
     if (!seqQueue || seqQueue.length === 0) return null
-    const durs = seqQueue.map((it) =>
-      Math.max(
-        0,
-        (it.clip.outSnapped ?? it.clip.outTime) - (it.clip.inSnapped ?? it.clip.inTime)
-      )
-    )
+    const durs = seqQueue.map((it) => Math.max(0, itemOut(it) - itemIn(it)))
     const offsets: number[] = []
     let total = 0
     for (const d of durs) {
@@ -1850,6 +1919,7 @@ export function App() {
             <SequenceView
               key={libVersion}
               onPlaySequence={playSequence}
+              onSeekMusic={seekMusic}
               onStopSequence={stopSequence}
               onOpenClip={openClip}
               onEditClip={editAsClip}
@@ -1926,6 +1996,12 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/*
+        音楽モードの連続再生で鳴らす BGM。映像とは独立に流し続け、
+        クリップの切り替わりでは映像側を音に合わせる（音は止めない）。
+      */}
+      <audio ref={seqAudioRef} />
 
       {/* 下部ステータスバー: 左にアクション通知、右に開いている動画の情報 */}
       <footer className="statusbar">

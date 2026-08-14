@@ -19,12 +19,26 @@ const api = window.dcm
 // 尺は秒ではなく「拍数」で持つ（sequence_nodes.units）。実尺は毎回ビート列から求めるので、
 // 曲を差し替えると全クリップが自動で並び直る。元の segments は書き換えない。
 
-/** 尺の単位（拍数 / 4-4 拍子）。非 2 冪の 3・6 小節も含める（plan.md の決定事項）。 */
-const UNIT_BEATS = [1, 2, 4, 8, 12, 16, 24, 32]
+/**
+ * 吸着単位（拍数 / 4-4 拍子）。尺はこの整数倍になる。
+ * 固定の候補リストではなく「単位 × 整数倍」にすることで、
+ * 1 小節を選べば 3 小節・5 小節・7 小節も作れる（plan.md の「非 2 冪も可」を包含する）。
+ */
+const SNAP_UNITS = [
+  { label: '1拍', beats: 1 },
+  { label: '2拍', beats: 2 },
+  { label: '1小節', beats: 4 },
+  { label: '2小節', beats: 8 },
+  { label: '4小節', beats: 16 }
+]
+const SNAP_KEY = 'dcm.mtl.snapBeats'
 
-/** 単位の表示名 */
+/** 尺の表示名（例: 12 → 3小節 / 6 → 1小節2拍 / 2 → 2拍） */
 function unitLabel(beats: number): string {
-  return beats < 4 ? `${beats}拍` : `${beats / 4}小節`
+  const bars = Math.floor(beats / 4)
+  const rest = beats % 4
+  if (bars === 0) return `${rest}拍`
+  return rest === 0 ? `${bars}小節` : `${bars}小節${rest}拍`
 }
 
 /** 区間の実尺（キーフレームスナップ後の値を優先） */
@@ -32,11 +46,10 @@ function clipDuration(c: ClipItem): number {
   return (c.outSnapped ?? c.outTime) - (c.inSnapped ?? c.inTime)
 }
 
-/** 尺 dur に収まる最大の単位（どれにも収まらなければ最小単位） */
-function largestUnitWithin(dur: number, beatSec: number): number {
-  let u = UNIT_BEATS[0]
-  for (const x of UNIT_BEATS) if (x * beatSec <= dur) u = x
-  return u
+/** 尺 dur に収まる最大の「吸着単位の整数倍」（収まらなければ 1 単位） */
+function largestUnitWithin(dur: number, beatSec: number, snap: number): number {
+  const n = Math.floor(dur / (snap * beatSec))
+  return Math.max(1, n) * snap
 }
 
 const RULER_H = 22 // 小節番号ルーラー
@@ -56,6 +69,21 @@ interface Props {
   onNodesChanged?: () => void
   /** クリップパレットからのドロップ配置（順路の insertAt 番目へ挿し込む） */
   onDropClip?: (segmentId: number, insertAt: number) => Promise<void>
+  /** 拍に合わせた尺 + BGM で連続再生する（音楽モードの再生） */
+  onPlay?: (
+    items: { nodeId: number; inSec: number; outSec: number }[],
+    bgm: { relPath: string; startOffsetSec: number }
+  ) => void
+  /** タイムラインのクリックで頭出し（ts = シーケンス先頭からの経過秒） */
+  onSeek?: (
+    items: { nodeId: number; inSec: number; outSec: number }[],
+    ts: number,
+    bgm: { relPath: string; startOffsetSec: number }
+  ) => void
+  /** 再生の停止 */
+  onStop?: () => void
+  /** 連続再生中か */
+  playing?: boolean
   /** 拍に合わせた in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (
     items: { videoRelPath: string; inSec: number; outSec: number }[],
@@ -72,6 +100,10 @@ export const MusicTimeline = memo(function MusicTimeline({
   nodes,
   onNodesChanged,
   onDropClip,
+  onPlay,
+  onSeek,
+  onStop,
+  playing,
   onExport,
   exporting,
   onStatus
@@ -85,8 +117,18 @@ export const MusicTimeline = memo(function MusicTimeline({
   /** BGM のフェード秒数（既定はイン 1s / アウト 2s） */
   const [fadeIn, setFadeIn] = useState(1)
   const [fadeOut, setFadeOut] = useState(2)
+  /** 吸着単位（拍数）。尺はこの整数倍になる。既定は 1 小節。 */
+  const [snapBeats, setSnapBeats] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(SNAP_KEY))
+    return SNAP_UNITS.some((u) => u.beats === saved) ? saved : 4
+  })
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const clipsRef = useRef<HTMLDivElement>(null)
+  /**
+   * 再生ヘッド。React の再レンダリングを介さず DOM の transform だけを更新する
+   * （SequenceView 内の NodeProgress と同じ方針。毎フレームの再描画を避ける）。
+   */
+  const headRef = useRef<HTMLDivElement>(null)
   /**
    * 編集中のドラッグ。
    * - units: 右端を引いて尺（拍数）を変える。単位候補に吸着する
@@ -190,7 +232,7 @@ export const MusicTimeline = memo(function MusicTimeline({
           }
           continue
         }
-        const next = largestUnitWithin(dur, beatSec)
+        const next = largestUnitWithin(dur, beatSec, snapBeats)
         rows.push({ nodeId: n.id, units: next, srcOffset: n.srcOffset, autoShrunk: true })
       }
       if (!rows.length) return
@@ -199,7 +241,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       if (shrunk) onStatus?.(`曲に合わせて ${shrunk} 件のクリップの尺を縮めました`)
       onNodesChanged?.()
     },
-    [items, nodeById, onNodesChanged, onStatus]
+    [items, nodeById, onNodesChanged, onStatus, snapBeats]
   )
   // 自動縮小は「曲が変わった瞬間」だけ呼びたいので、依存に載せず ref 越しに参照する
   const autoShrinkRef = useRef(autoShrinkForBeat)
@@ -233,7 +275,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       // 保存された意図があればそれを使い、無ければ「収まる最大の単位」を自動で当てる
       const units = dragging
         ? drag.units
-        : (node?.units ?? largestUnitWithin(clipDuration(it.clip), beatSec))
+        : (node?.units ?? largestUnitWithin(clipDuration(it.clip), beatSec, snapBeats))
       const from = cursor
       const to = cursor + units
       cursor = to
@@ -272,7 +314,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       slackSec: beat.durationSec - endSec,
       slackBars: (beat.durationSec - endSec) / (beatSec * beat.beatsPerBar)
     }
-  }, [beat, items, nodeById, drag, seqBgm?.startOffsetSec])
+  }, [beat, items, nodeById, drag, snapBeats, seqBgm?.startOffsetSec])
 
   const totalSec = Math.max(beat?.durationSec ?? 0, layout?.endSec ?? 0) + 2
   // canvas は幅 32767px 前後で描画に失敗する（超えると真っ白になる）。
@@ -345,12 +387,10 @@ export const MusicTimeline = memo(function MusicTimeline({
         return
       }
       if (drag.kind === 'units') {
-        // 引いた先の長さに最も近い単位へ吸着する
+        // 引いた先の長さを、吸着単位の整数倍へ丸める（最短でも 1 単位）
         const target = drag.baseUnits * beatSec + dxSec
-        let best = UNIT_BEATS[0]
-        for (const u of UNIT_BEATS) {
-          if (Math.abs(u * beatSec - target) < Math.abs(best * beatSec - target)) best = u
-        }
+        const steps = Math.max(1, Math.round(target / (snapBeats * beatSec)))
+        const best = steps * snapBeats
         setDrag((d) => (d && d.units !== best ? { ...d, units: best } : d))
       } else {
         // 使用範囲は元の区間の中に収める
@@ -387,7 +427,25 @@ export const MusicTimeline = memo(function MusicTimeline({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [drag, beat, beatSec, effPps, insertIndexAtX, onNodesChanged, orderIds, sequenceId])
+  }, [drag, beat, beatSec, effPps, insertIndexAtX, onNodesChanged, orderIds, sequenceId, snapBeats])
+
+  /** 再生用の項目（拍に合わせた in/out。書き出しと違いキーフレーム丸めは不要） */
+  const buildPlayItems = useCallback(() => {
+    if (!layout) return []
+    return layout.blocks.map((b) => {
+      const inSec = (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset
+      return { nodeId: b.key, inSec, outSec: inSec + (b.endSec - b.startSec) }
+    })
+  }, [layout])
+
+  /** 曲の時刻 → シーケンス先頭からの経過秒（前詰めなので単純な引き算で対応する） */
+  const songToSeqSec = useCallback(
+    (songSec: number): number => {
+      const first = layout?.blocks[0]
+      return first ? songSec - first.startSec : 0
+    },
+    [layout]
+  )
 
   /** 尺の指定を捨てて自動（収まる最大の単位）へ戻す */
   const resetUnits = (nodeId: number): void => {
@@ -445,6 +503,25 @@ export const MusicTimeline = memo(function MusicTimeline({
     }
     return out
   }, [layout])
+
+  // 再生ヘッドの追従。App が dispatch する 'dcm:seq-progress'（再生中ノードと進捗率）から
+  // 曲の時刻を割り出して縦線を動かす。ブロックの並びは前詰めなので、
+  // 「そのブロックの開始 + 尺 × 進捗率」がそのまま曲の時刻になる。
+  useEffect(() => {
+    const el = headRef.current
+    if (!el || !layout) return
+    const byNode = new Map(layout.blocks.map((b) => [b.key, b]))
+    const onProgress = (e: Event): void => {
+      const d = (e as CustomEvent).detail as { nodeId: number; ratio: number }
+      const b = byNode.get(d.nodeId)
+      if (!b) return
+      const songSec = b.startSec + (b.endSec - b.startSec) * d.ratio
+      el.style.transform = `translateX(${Math.round(songSec * effPps)}px)`
+      el.style.display = 'block'
+    }
+    window.addEventListener('dcm:seq-progress', onProgress)
+    return () => window.removeEventListener('dcm:seq-progress', onProgress)
+  }, [layout, effPps])
 
   // 波形と小節グリッドは canvas に描く（小節線が数百本になるため DOM では重い）
   useEffect(() => {
@@ -547,6 +624,25 @@ export const MusicTimeline = memo(function MusicTimeline({
           </>
         )}
 
+        {/* 吸着単位。尺はこの整数倍になる（1小節を選べば 3小節・5小節も作れる） */}
+        <label className="mtl-snap" title="クリップの尺を吸着させる単位">
+          吸着
+          <select
+            value={snapBeats}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setSnapBeats(v)
+              localStorage.setItem(SNAP_KEY, String(v))
+            }}
+          >
+            {SNAP_UNITS.map((u) => (
+              <option key={u.beats} value={u.beats}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <span className="clips-spacer" />
 
         {layout && beat && (
@@ -565,6 +661,31 @@ export const MusicTimeline = memo(function MusicTimeline({
         <button className="mtl-zoom" onClick={() => setPps((v) => Math.min(MAX_PPS, v * 1.5))}>
           ＋
         </button>
+
+        {onPlay && onStop && (
+          <button
+            className="btn"
+            disabled={!layout?.blocks.length || !seqBgm}
+            onClick={() => {
+              if (playing) {
+                onStop()
+                return
+              }
+              if (!layout || !seqBgm) return
+              // 再生は拍に合わせた尺で（書き出しと違いキーフレーム丸めは不要）
+              onPlay(
+                layout.blocks.map((b) => {
+                  const inSec = (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset
+                  return { nodeId: b.key, inSec, outSec: inSec + (b.endSec - b.startSec) }
+                }),
+                { relPath: seqBgm.relPath, startOffsetSec: seqBgm.startOffsetSec }
+              )
+            }}
+            title="曲と一緒に順路を再生する"
+          >
+            {playing ? '停止' : '再生'}
+          </button>
+        )}
 
         {onExport && (
           <>
@@ -618,8 +739,27 @@ export const MusicTimeline = memo(function MusicTimeline({
       ) : (
         <div className="mtl-scroll">
           <div className="mtl-inner" style={{ width: contentW }}>
-            {/* 曲トラック（上）: ルーラー + 波形 + グリッド */}
-            <canvas ref={canvasRef} className="mtl-canvas" />
+            {/* 曲トラック（上）: ルーラー + 波形 + グリッド。クリックで頭出しする */}
+            <canvas
+              ref={canvasRef}
+              className="mtl-canvas"
+              onClick={(e) => {
+                if (!onSeek || !seqBgm || !layout?.blocks.length) return
+                const rect = e.currentTarget.getBoundingClientRect()
+                const songSec = (e.clientX - rect.left) / effPps
+                const ts = songToSeqSec(songSec)
+                if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
+                onSeek(buildPlayItems(), ts, {
+                  relPath: seqBgm.relPath,
+                  startOffsetSec: seqBgm.startOffsetSec
+                })
+              }}
+            />
+
+            {/* 再生ヘッド（シルバー。アクセント色とは別系統 / style-guide 1.2） */}
+            <div ref={headRef} className="mtl-head-line" style={{ display: 'none' }}>
+              <span className="mtl-head-marker" />
+            </div>
 
             {/* クリップ列（下）: 前詰め */}
             <div

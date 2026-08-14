@@ -2710,3 +2710,48 @@ body.resizing {
 .mtl-fade input:focus {
   border-color: var(--accent);
 }
+/* 吸着単位のセレクタ（音楽タイムラインのヘッダ） */
+.mtl-snap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.mtl-snap select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  padding: 1px 4px;
+  outline: none;
+}
+.mtl-snap select:focus {
+  border-color: var(--accent);
+}
+/* 音楽タイムラインの再生ヘッド。色はシルバー（--playhead）でアクセント紫とは別系統 */
+.mtl-head-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--playhead);
+  pointer-events: none;
+  z-index: 5;
+}
+/* 頭部マーカー（タイムラインの再生ヘッドと同じ 12×14px） */
+.mtl-head-marker {
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 12px;
+  height: 14px;
+  background: var(--playhead);
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+}
+/* 曲トラックはクリックで頭出しできる */
+.mtl-canvas {
+  cursor: pointer;
+}

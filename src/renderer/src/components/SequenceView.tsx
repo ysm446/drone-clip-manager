@@ -28,10 +28,34 @@ const api = window.dcm
 export interface SeqPlayItem {
   nodeId: number
   clip: ClipItem
+  /**
+   * 音楽タイムラインから再生するときの in / out（秒）。
+   * 未指定なら区間の値（inSnapped / outSnapped）をそのまま使う。
+   * 音楽モードでは尺が拍に合わせて変わるため、ここで上書きする。
+   */
+  inSec?: number
+  outSec?: number
+}
+
+/** 連続再生に合わせて鳴らす BGM（音楽モード） */
+export interface SeqPlayBgm {
+  relPath: string
+  startOffsetSec: number
+}
+
+/** SeqPlayItem の実効 in / out */
+export function itemIn(it: SeqPlayItem): number {
+  return it.inSec ?? it.clip.inSnapped ?? it.clip.inTime
+}
+export function itemOut(it: SeqPlayItem): number {
+  return it.outSec ?? it.clip.outSnapped ?? it.clip.outTime
 }
 
 interface Props {
-  onPlaySequence: (items: SeqPlayItem[]) => void
+  /** 連続再生。bgm を渡すと曲も一緒に鳴らす（音楽モード） */
+  onPlaySequence: (items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => void
+  /** 音楽タイムラインのクリックによる頭出し（ts = シーケンス先頭からの経過秒） */
+  onSeekMusic: (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => void
   onStopSequence: () => void
   /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
   onOpenClip: (clip: ClipItem) => void
@@ -123,6 +147,7 @@ function NodeProgress({ nodeId }: { nodeId: number }) {
 // 再生ヘッドの時刻更新で App が再レンダリングされてもグラフを描き直さないよう memo 化
 export const SequenceView = memo(function SequenceView({
   onPlaySequence,
+  onSeekMusic,
   onStopSequence,
   onOpenClip,
   onEditClip,
@@ -736,6 +761,44 @@ export const SequenceView = memo(function SequenceView({
     if (activeId != null) void reload(activeId)
   }, [activeId, reload])
 
+  /**
+   * 音楽モードの再生（Phase 2.6c）。拍に合わせた in/out で順路を再生し、BGM も一緒に鳴らす。
+   * 尺はタイムライン側で算出済みのものを受け取る。
+   */
+  const playMusic = useCallback(
+    (
+      music: { nodeId: number; inSec: number; outSec: number }[],
+      bgm: { relPath: string; startOffsetSec: number }
+    ) => {
+      const byNode = new Map(playItemsRef.current.map((it) => [it.nodeId, it]))
+      const items: SeqPlayItem[] = []
+      for (const m of music) {
+        const base = byNode.get(m.nodeId)
+        if (base) items.push({ ...base, inSec: m.inSec, outSec: m.outSec })
+      }
+      if (items.length) onPlaySequence(items, bgm)
+    },
+    [onPlaySequence]
+  )
+
+  /** 音楽タイムラインのクリックによる頭出し。再生と同じキューを組んでから位置を渡す。 */
+  const seekMusic = useCallback(
+    (
+      music: { nodeId: number; inSec: number; outSec: number }[],
+      ts: number,
+      bgm: { relPath: string; startOffsetSec: number }
+    ) => {
+      const byNode = new Map(playItemsRef.current.map((it) => [it.nodeId, it]))
+      const items: SeqPlayItem[] = []
+      for (const m of music) {
+        const base = byNode.get(m.nodeId)
+        if (base) items.push({ ...base, inSec: m.inSec, outSec: m.outSec })
+      }
+      if (items.length) onSeekMusic(items, ts, bgm)
+    },
+    [onSeekMusic]
+  )
+
   // --- エッジの接続（出力ポート → 入力ポート） ---
   const onConnectMove = useCallback(
     (e: MouseEvent) => {
@@ -1119,6 +1182,10 @@ export const SequenceView = memo(function SequenceView({
             nodes={nodes}
             onNodesChanged={reloadActive}
             onDropClip={dropClipIntoOrder}
+            onPlay={playMusic}
+            onSeek={seekMusic}
+            onStop={onStopSequence}
+            playing={isPlaying}
             onExport={runMusicExport}
             exporting={exporting != null}
           />
