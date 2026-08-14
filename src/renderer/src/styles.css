@@ -2780,3 +2780,108 @@ body.resizing {
   background: var(--selected);
   color: var(--accent);
 }
+
+/* ============================================================
+   シーケンスモードのサイドバー（BGM のみ / 折りたたみ可）
+   ============================================================ */
+/* 素材ツリーはシーケンス編集ではほとんど使わないので隠し、幅をタイムラインへ回す */
+.sidebar.bgm-only {
+  width: 200px;
+  flex: none;
+}
+.sidebar.bgm-only > .sidebar-head,
+.sidebar.bgm-only > .tree,
+.sidebar.bgm-only > .bulk-tag-bar,
+.sidebar.bgm-only > .splitter {
+  display: none;
+}
+.sidebar.bgm-only > .bgm {
+  flex: 1;
+  min-height: 0;
+}
+/* 折りたたみ時は見出しボタンだけ残す（クリックで開く = いつでも触れる） */
+.sidebar.bgm-only.collapsed {
+  width: 28px;
+}
+.sidebar.bgm-only.collapsed > .bgm {
+  display: none;
+}
+.bgm-collapse {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.bgm-collapse:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* ============================================================
+   シーケンスモードのレイアウト（2026-08-15）
+   上段 [クリップパネル | 再生画面] / 下段 [シーケンス一覧 | ノード・音楽]
+   ============================================================ */
+/*
+  再生画面とクリップパネルを DOM 上で動かすと再マウントされ、再生位置と BGM が飛ぶ。
+  そのため JSX の並びは変えず、グリッドの配置だけで見た目を組み替える。
+  .sequence-view は display: contents で、その子（各列）を .main のグリッド項目に昇格させる。
+*/
+.main.view-sequence {
+  display: grid;
+  grid-template-columns: var(--seq-left-w, 320px) 1fr;
+  grid-template-rows: var(--seq-top-h, 320px) 1fr;
+  min-height: 0;
+  min-width: 0;
+}
+.main.view-sequence > .sequence-view {
+  display: contents;
+}
+.main.view-sequence > .player-pane {
+  grid-row: 1;
+  grid-column: 2;
+  height: auto; /* 高さはグリッドの行が決める（inline style の height を打ち消す） */
+}
+.main.view-sequence .seq-col-clips {
+  grid-row: 1;
+  grid-column: 1;
+  width: auto;
+  min-width: 0;
+}
+.main.view-sequence .seq-col-seqs {
+  grid-row: 2;
+  grid-column: 1;
+  width: auto;
+  min-width: 0;
+}
+.main.view-sequence .seq-main {
+  grid-row: 2;
+  grid-column: 2;
+  min-width: 0;
+}
+/* 行の境界（再生画面の高さ）: 下段の上端に敷く */
+.main.view-sequence > .seq-split-row {
+  grid-row: 2;
+  grid-column: 1 / 3;
+  align-self: start;
+  z-index: 6;
+}
+/* 列の境界（左列の幅）: 右側の左端に、上下 2 段を貫いて敷く */
+.main.view-sequence > .seq-split-left {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  justify-self: start;
+  z-index: 6;
+}

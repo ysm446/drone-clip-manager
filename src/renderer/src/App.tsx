@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
 import { clearUndo, performRedo, performUndo, pushUndo, registerUndoRefresh } from './undo'
 import { FolderTree, type VideoClickMods } from './components/FolderTree'
@@ -654,6 +655,11 @@ export function App() {
   const [seqIdx, setSeqIdx] = useState(0)
   /** シーケンスのループ再生（末尾まで来たら停止せず先頭へ戻る / Phase 2.6） */
   const [seqLoop, setSeqLoop] = useState(false)
+  /** シーケンスモードで BGM パネルを畳んでいるか（幅をタイムラインへ譲る） */
+  const [bgmCollapsed, setBgmCollapsed] = useState(false)
+  /** シーケンスモードの左列（クリップパネル / シーケンス一覧）の幅 */
+  const [seqLeftW, setSeqLeftW] = useState(320)
+  const seqLeftBaseRef = useRef(0)
   /**
    * 音楽モードの連続再生で一緒に鳴らす BGM（Phase 2.6c）。
    * 音は途切れさせず流し続け、クリップの切り替わりで**映像側を音に合わせる**
@@ -1674,7 +1680,17 @@ export function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar" style={{ width: sidebarW }}>
+        {/*
+          サイドバーの中身はモードで変える（2026-08-15）。
+          シーケンスモードでは素材ツリーをほとんど使わないので隠し、BGM だけを残して
+          その分の幅をノード / 音楽タイムラインへ回す。
+          BgmPlayer はモードを跨いでもアンマウントしない（曲の再生が途切れないよう、
+          ここに置いたままにする）。
+        */}
+        <aside
+          className={`sidebar${view === 'sequence' ? ' bgm-only' : ''}${view === 'sequence' && bgmCollapsed ? ' collapsed' : ''}`}
+          style={{ width: view === 'sequence' ? undefined : sidebarW }}
+        >
           <div className="sidebar-head">
             <span>ライブラリ</span>
             <button
@@ -1712,19 +1728,39 @@ export function App() {
             onStart={() => (bgmBaseRef.current = bgmH)}
             onDelta={(dy) => setBgmH(Math.max(120, Math.min(520, bgmBaseRef.current - dy)))}
           />
-          <BgmPlayer height={bgmH} onStatus={showStatus} />
+          {/* シーケンスモードは BGM だけを残し、折りたたんで幅を譲れるようにする */}
+          {view === 'sequence' && (
+            <button
+              className="bgm-collapse"
+              onClick={() => setBgmCollapsed((v) => !v)}
+              title={bgmCollapsed ? 'BGM を開く' : 'BGM を畳む'}
+              aria-pressed={bgmCollapsed}
+            >
+              {bgmCollapsed ? '♪' : '♪  BGM  ‹'}
+            </button>
+          )}
+          {/* シーケンスモードでは BGM が残り全部を使う（高さ指定を外す） */}
+          <BgmPlayer height={view === 'sequence' ? undefined : bgmH} onStatus={showStatus} />
         </aside>
 
-        <Splitter
-          axis="x"
-          onStart={() => (sidebarBaseRef.current = sidebarW)}
-          onDelta={(dx) => setSidebarW(Math.max(200, Math.min(640, sidebarBaseRef.current + dx)))}
-        />
+        {view !== 'sequence' && (
+          <Splitter
+            axis="x"
+            onStart={() => (sidebarBaseRef.current = sidebarW)}
+            onDelta={(dx) => setSidebarW(Math.max(200, Math.min(640, sidebarBaseRef.current + dx)))}
+          />
+        )}
 
         <main
           className={`main${view === 'clips' ? ' view-clips' : ''}${
             view === 'sequence' ? ' view-sequence' : ''
           }`}
+          /* シーケンスモードのグリッド: 上段 [クリップ|再生] / 下段 [シーケンス|ノード・音楽] */
+          style={
+            view === 'sequence'
+              ? ({ '--seq-left-w': `${seqLeftW}px`, '--seq-top-h': `${playerH}px` } as CSSProperties)
+              : undefined
+          }
         >
           <section
             className={`player-pane${fullscreen ? ' fullscreen' : ''}`}
@@ -1923,11 +1959,24 @@ export function App() {
 
           <Splitter
             axis="y"
+            className={view === 'sequence' ? 'seq-split-row' : undefined}
             onStart={() => (playerBaseRef.current = playerH)}
             onDelta={(dy) =>
               setPlayerH(Math.max(140, Math.min(window.innerHeight - 240, playerBaseRef.current + dy)))
             }
           />
+
+          {/* シーケンスモードの左列（クリップパネル / シーケンス一覧）と右側の境界 */}
+          {view === 'sequence' && (
+            <Splitter
+              axis="x"
+              className="seq-split-left"
+              onStart={() => (seqLeftBaseRef.current = seqLeftW)}
+              onDelta={(dx) =>
+                setSeqLeftW(Math.max(220, Math.min(620, seqLeftBaseRef.current + dx)))
+              }
+            />
+          )}
 
           {view === 'clips' ? (
             <ClipsView

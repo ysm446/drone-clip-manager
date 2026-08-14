@@ -7,10 +7,13 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
  */
 export function Splitter({
   axis,
+  className,
   onStart,
   onDelta
 }: {
   axis: 'x' | 'y'
+  /** レイアウト側で位置を指定したいときの追加クラス */
+  className?: string
   onStart: () => void
   onDelta: (deltaPx: number) => void
 }) {
@@ -32,7 +35,7 @@ export function Splitter({
   }
   return (
     <div
-      className={`splitter splitter-${axis}`}
+      className={`splitter splitter-${axis}${className ? ` ${className}` : ''}`}
       role="separator"
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       onPointerDown={onPointerDown}

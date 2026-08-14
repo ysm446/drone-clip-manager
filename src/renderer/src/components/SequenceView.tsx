@@ -18,7 +18,6 @@ import { ContextMenu } from './ContextMenu'
 import type { ExportTarget } from './ExportModal'
 import { IconFilm, IconPause, IconPlay } from './icons'
 import { MusicTimeline } from './MusicTimeline'
-import { Splitter } from './Splitter'
 
 const api = window.dcm
 
@@ -182,14 +181,7 @@ export const SequenceView = memo(function SequenceView({
     onModalOpenChange(exporting != null || exportResult != null)
     return () => onModalOpenChange(false) // アンマウント（タブ切替）時は解除
   }, [exporting, exportResult, onModalOpenChange])
-  /** 各カラムの幅（境界のスプリッターでリサイズ） */
-  const [seqsW, setSeqsW] = useState(180)
-  // クリップ一覧はノードエリアと同程度の広さを既定にする（画面幅からシーケンス列を除いた約半分）
-  const [clipsW, setClipsW] = useState(() =>
-    Math.max(420, Math.round((window.innerWidth - 180) * 0.45))
-  )
-  const seqsBaseRef = useRef(0)
-  const clipsBaseRef = useRef(0)
+  // 列の幅とその境界（スプリッタ）は App 側が持つ（.main.view-sequence のグリッドで配置するため）
   /** 接続中のドラッグ（出力ポート → 入力ポート）。座標はキャンバス内容座標。 */
   const [connecting, setConnecting] = useState<{ srcNodeId: number; x: number; y: number } | null>(
     null
@@ -1014,7 +1006,7 @@ export const SequenceView = memo(function SequenceView({
   return (
     <div className="sequence-view">
       {/* 1 列目: シーケンス一覧 */}
-      <div className="seq-col seq-col-seqs" style={{ width: seqsW }}>
+      <div className="seq-col seq-col-seqs">
         <div className="seq-side-head">
           シーケンス
           <button className="btn small" onClick={createSeq}>
@@ -1067,14 +1059,14 @@ export const SequenceView = memo(function SequenceView({
         </div>
       </div>
 
-      <Splitter
-        axis="x"
-        onStart={() => (seqsBaseRef.current = seqsW)}
-        onDelta={(dx) => setSeqsW(Math.max(120, Math.min(400, seqsBaseRef.current + dx)))}
-      />
+      {/*
+        列の境界（スプリッタ）と幅は App 側が持つ。
+        レイアウトは .main.view-sequence のグリッドで決まり、SequenceView の各列は
+        display: contents でそのグリッド項目になるため、境界は親でしか置けない。
+      */}
 
       {/* 2 列目: クリップパレット */}
-      <div className="seq-col seq-col-clips" style={{ width: clipsW }}>
+      <div className="seq-col seq-col-clips">
         <div className="seq-side-head">クリップ</div>
         <input
           className="clips-search"
@@ -1131,12 +1123,6 @@ export const SequenceView = memo(function SequenceView({
           ))}
         </div>
       </div>
-
-      <Splitter
-        axis="x"
-        onStart={() => (clipsBaseRef.current = clipsW)}
-        onDelta={(dx) => setClipsW(Math.max(200, Math.min(1200, clipsBaseRef.current + dx)))}
-      />
 
       {/* 3 列目: ノードネットワーク */}
       <div className="seq-main">
