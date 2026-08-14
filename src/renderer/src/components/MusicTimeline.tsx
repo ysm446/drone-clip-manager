@@ -43,6 +43,13 @@ const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 const RULER_TICK_MIN_PX = 64
 /** クリップの最小の尺（秒）。これ以下には縮められない。 */
 const MIN_DUR_SEC = 0.1
+/** ドラッグの種類ごとの undo ラベル */
+const DRAG_LABELS: Record<'move' | 'dur' | 'trimL' | 'slip', string> = {
+  move: 'クリップの移動',
+  dur: '尺の変更',
+  trimL: 'イン点のトリム',
+  slip: '使用範囲のスライド'
+}
 const SNAP_KEY = 'dcm.mtl.snapSec'
 const THUMB_KEY = 'dcm.mtl.showThumbs'
 /** サムネイルを出す最小のブロック幅（px）。これより狭いと絵が潰れて役に立たない。 */
@@ -151,6 +158,12 @@ interface Props {
   nodes: SequenceNode[]
   /** 尺を変更したあとにグラフを読み直してもらう */
   onNodesChanged?: () => void
+  /**
+   * 配置の編集（移動 / 尺 / トリム / スライド）を undo に載せて実行してもらう。
+   * 変更そのものはここが渡し、前後のスナップショットは呼び出し側で挟む。
+   * 未指定なら undo に載せずそのまま実行する。
+   */
+  runPlacementEdit?: (label: string, apply: () => Promise<void>) => Promise<void>
   /** クリップパレットからのドロップ配置（曲の startSec の位置へ置く） */
   onDropClip?: (segmentId: number, startSec: number) => Promise<void>
   /**
@@ -182,6 +195,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   items,
   nodes,
   onNodesChanged,
+  runPlacementEdit,
   onDropClip,
   queueRef,
   onSeek,
@@ -605,18 +619,25 @@ export const MusicTimeline = memo(function MusicTimeline({
       }))
       // 保存が返るまでは画面をこの配置のまま保つ（戻ってから飛ぶのを防ぐ）
       setPending(new Map(rows.map((r) => [r.nodeId, r])))
-      void api
-        .updateSequenceNodeMusicMany(rows)
-        .then(async () => {
-          // 順路の並びを時刻順に揃える（ノードグラフ側と食い違わないように）
-          if (sequenceId != null) {
-            await api.setSequenceOrder(
-              sequenceId,
-              layoutBlocks.map((b) => b.key)
-            )
-          }
-          onNodesChanged?.()
-        })
+      const apply = async (): Promise<void> => {
+        await api.updateSequenceNodeMusicMany(rows)
+        // 順路の並びを時刻順に揃える（ノードグラフ側と食い違わないように）
+        if (sequenceId != null) {
+          await api.setSequenceOrder(
+            sequenceId,
+            layoutBlocks.map((b) => b.key)
+          )
+        }
+      }
+      const label = DRAG_LABELS[d.kind]
+      // undo に載せて実行する（載せ先が無ければそのまま実行して読み直してもらう）
+      const run = runPlacementEdit
+        ? runPlacementEdit(label, apply)
+        : apply().then(() => onNodesChanged?.())
+      void run
+        // 反映が終わったら控えを外す。ここで外さないと、直後に undo したときに
+        // 控えのほうが優先されたままになり、戻したはずの配置が画面に出ない。
+        .then(() => setPending(null))
         .catch(() => {
           // 保存できなければ控えを捨てて、保存済みの状態を正として描き直す
           setPending(null)
@@ -638,6 +659,7 @@ export const MusicTimeline = memo(function MusicTimeline({
     nodeById,
     onNodesChanged,
     onStatus,
+    runPlacementEdit,
     sequenceId,
     snapSec
   ])
@@ -792,9 +814,12 @@ export const MusicTimeline = memo(function MusicTimeline({
   /** 尺の指定を捨てて自動（元の区間の残り全部）へ戻す。置いてある位置は動かさない。 */
   const resetDur = (nodeId: number): void => {
     const b = layoutBlocks.find((x) => x.key === nodeId)
-    void api
-      .updateSequenceNodeMusic(nodeId, b?.startSec ?? null, null, 0)
-      .then(() => onNodesChanged?.())
+    const apply = async (): Promise<void> => {
+      await api.updateSequenceNodeMusic(nodeId, b?.startSec ?? null, null, 0)
+    }
+    void (runPlacementEdit
+      ? runPlacementEdit('尺を自動に戻す', apply)
+      : apply().then(() => onNodesChanged?.()))
   }
 
   /**

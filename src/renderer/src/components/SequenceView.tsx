@@ -342,9 +342,10 @@ export const SequenceView = memo(function SequenceView({
 
   // 選択中シーケンスのグラフを読み込む。fit=true でロード後に全体表示へ合わせる。
   // cue=true でロード後に先頭を上部プレイヤーへ頭出しする（一覧のクリック選択時のみ）。
+  // 反映を待ちたい呼び出し（配置編集の undo など）のために Promise を返す
   const reload = useCallback(
-    (id: number, fit = false, cue = false) => {
-      api.getSequenceGraph(id).then((g) => {
+    (id: number, fit = false, cue = false): Promise<void> => {
+      return api.getSequenceGraph(id).then((g) => {
         setNodes(g.nodes)
         setEdges(g.edges)
         if (fit) {
@@ -885,6 +886,23 @@ export const SequenceView = memo(function SequenceView({
     [graphSnapshot, pushGraphUndo, reload]
   )
 
+  /**
+   * 音楽タイムラインでの配置編集（移動 / 尺 / トリム / スライド）を undo に載せる。
+   * 変更そのものはタイムライン側が知っているので、**前後のスナップショットだけをここで挟む**。
+   * `GraphNodeSnap` は `startSec` / `durSec` / `srcOffset` も持つので、戻せば配置ごと戻る。
+   */
+  const runPlacementEdit = useCallback(
+    async (label: string, apply: () => Promise<void>): Promise<void> => {
+      const seqId = activeIdRef.current
+      if (seqId == null) return apply()
+      const before = graphSnapshot()
+      await apply()
+      await reload(seqId)
+      await pushGraphUndo(label, before)
+    },
+    [graphSnapshot, pushGraphUndo, reload]
+  )
+
   /** 音楽タイムラインのクリックによる頭出し。キューはタイムライン側で組んだものをそのまま渡す。 */
   const seekMusic = useCallback(
     (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => {
@@ -1274,6 +1292,7 @@ export const SequenceView = memo(function SequenceView({
             items={playItems}
             nodes={nodes}
             onNodesChanged={reloadActive}
+            runPlacementEdit={runPlacementEdit}
             onDropClip={dropClipIntoOrder}
             queueRef={musicQueueRef}
             onSeek={seekMusic}
