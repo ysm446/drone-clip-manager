@@ -45,11 +45,13 @@ import {
   restoreSegment,
   restoreSequenceGraph
 } from './services/db'
+import { analyzeBeats } from './services/beats'
 import { exportConcat, exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
+  BeatAnalysisResult,
   BgmDeleteResult,
   BgmInfo,
   BgmRenameResult,
@@ -334,6 +336,15 @@ export function registerIpc(): void {
     try {
       showBgmInExplorer(relPath)
       return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // BGM のビート解析（Phase 2.6c 段階 1）。結果は .dcm/beats/ にキャッシュされる。
+  ipcMain.handle('bgm:analyzeBeats', async (_e, relPath: string): Promise<BeatAnalysisResult> => {
+    try {
+      return { ok: true, analysis: await analyzeBeats(relPath) }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

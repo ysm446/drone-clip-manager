@@ -181,6 +181,40 @@ export interface BgmDeleteResult {
   bgm?: BgmInfo
 }
 
+/**
+ * BGM のビート解析結果（Phase 2.6c 段階 1）。
+ * グリッドの正本は `beats`（拍の時刻）で、`bpm` は表示・手動補正用の代表値。
+ * テンポが流れる曲は単一 BPM では表せないため（plan.md「Phase 2.6c」の検証結果を参照）。
+ */
+export interface BeatAnalysis {
+  relPath: string
+  durationSec: number
+  /** 代表 BPM */
+  bpm: number
+  /** 拍の時刻（秒）。テンポが揺れる曲にも追従する */
+  beats: number[]
+  firstBeatSec: number
+  /** 小節頭になる拍の位相（0 〜 beatsPerBar-1） */
+  barPhase: number
+  beatsPerBar: number
+  /** ビートと実オンセットの平均ズレ（ms）。小さいほど信頼できる */
+  meanDeviationMs: number
+  /** 局所テンポの変動幅（%）。10 を超えると拍スナップに向かない */
+  tempoVariationPct: number
+  /** 等間隔グリッドを採用したか（false なら拍ごとに追従している） */
+  uniform: boolean
+  /** 拍スナップに向かない曲の警告。問題なければ null */
+  warning: string | null
+  analyzedMs: number
+}
+
+/** ビート解析の結果（失敗時はエラー文言を返す） */
+export interface BeatAnalysisResult {
+  ok: boolean
+  error?: string
+  analysis?: BeatAnalysis
+}
+
 /** エクスプローラでの表示結果 */
 export interface ShowInFolderResult {
   ok: boolean
@@ -380,6 +414,8 @@ export interface DcmApi {
   deleteBgmTrack: (relPath: string) => Promise<BgmDeleteResult>
   /** BGM ファイルをエクスプローラで表示（親フォルダを開いて選択状態にする） */
   showBgmInFolder: (relPath: string) => Promise<ShowInFolderResult>
+  /** BGM のビートを解析する（結果は .dcm/beats/ にキャッシュ。2 回目以降は即返る） */
+  analyzeBgmBeats: (relPath: string) => Promise<BeatAnalysisResult>
   // --- 書き出し ---
   pickExportDir: () => Promise<string | null>
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>

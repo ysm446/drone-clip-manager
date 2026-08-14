@@ -1,9 +1,14 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import type { BgmInfo, BgmTrack } from '../../../shared/types'
+import type { BeatAnalysis, BgmInfo, BgmTrack } from '../../../shared/types'
 import { ContextMenu } from './ContextMenu'
 import { IconFolder, IconLoop, IconNext, IconPause, IconPlay, IconPrev } from './icons'
 
 const api = window.dcm
+
+/** 拍が光って見える時間（秒）。これを超えたら消灯する。 */
+const BEAT_FLASH_SEC = 0.12
+/** タップテンポで「打ち直し」とみなす無入力時間（秒） */
+const TAP_RESET_SEC = 2.5
 
 /** 秒 → m:ss */
 function fmtClock(s: number): string {
@@ -11,6 +16,23 @@ function fmtClock(s: number): string {
   const m = Math.floor(s / 60)
   const ss = Math.floor(s % 60)
   return `${m}:${String(ss).padStart(2, '0')}`
+}
+
+/** 拍の時刻配列から「時刻 t の直前の拍」の番号を二分探索で求める。無ければ -1。 */
+function beatIndexAt(beats: number[], t: number): number {
+  let lo = 0
+  let hi = beats.length - 1
+  let ans = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (beats[mid] <= t) {
+      ans = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return ans
 }
 
 /** 名前変更のインライン入力。Enter で確定 / Esc でキャンセル / フォーカス喪失で確定。 */
@@ -76,6 +98,14 @@ export const BgmPlayer = memo(function BgmPlayer({
   const [menu, setMenu] = useState<{ x: number; y: number; track: BgmTrack } | null>(null)
   /** 名前変更モード中のトラック（相対パス）。null で通常表示。 */
   const [editRel, setEditRel] = useState<string | null>(null)
+  /** ビート解析の結果（Phase 2.6c 段階 1）。null は未解析。 */
+  const [beat, setBeat] = useState<BeatAnalysis | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  /** 再生中の小節 / 拍と点灯状態 */
+  const [beatPos, setBeatPos] = useState<{ bar: number; beat: number; lit: boolean } | null>(null)
+  /** タップテンポで求めた BPM。null なら自動検出値を使う。 */
+  const [tapBpm, setTapBpm] = useState<number | null>(null)
+  const tapsRef = useRef<number[]>([])
 
   useEffect(() => {
     api.getBgm().then(setInfo)
@@ -187,6 +217,71 @@ export const BgmPlayer = memo(function BgmPlayer({
   }
 
   const current = index != null ? info.tracks[index] : null
+  const currentRelPath = current?.relPath ?? null
+
+  // 曲を選ぶたびにビートを解析する（2 回目以降は .dcm/beats/ のキャッシュで即返る）。
+  useEffect(() => {
+    setBeat(null)
+    setBeatPos(null)
+    setTapBpm(null)
+    tapsRef.current = []
+    if (!currentRelPath) return
+    let alive = true
+    setAnalyzing(true)
+    api
+      .analyzeBgmBeats(currentRelPath)
+      .then((res) => {
+        if (!alive) return
+        setAnalyzing(false)
+        if (res.ok && res.analysis) setBeat(res.analysis)
+        else onStatus?.(res.error ?? 'ビートを解析できませんでした', 'err')
+      })
+      .catch(() => {
+        if (alive) setAnalyzing(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [currentRelPath, onStatus])
+
+  // 再生中は requestAnimationFrame で拍を追う。
+  // 状態は「拍が変わったとき」だけ更新するので、再描画は毎秒 2〜3 回に収まる。
+  useEffect(() => {
+    if (!beat || !beat.beats.length || !playing) return
+    let raf = 0
+    const tick = (): void => {
+      const a = audioRef.current
+      if (a) {
+        const i = beatIndexAt(beat.beats, a.currentTime)
+        if (i >= 0) {
+          const rel = i - beat.barPhase
+          const bar = Math.floor(rel / beat.beatsPerBar) + 1
+          const b = (((rel % beat.beatsPerBar) + beat.beatsPerBar) % beat.beatsPerBar) + 1
+          const lit = a.currentTime - beat.beats[i] < BEAT_FLASH_SEC
+          setBeatPos((p) =>
+            p && p.bar === bar && p.beat === b && p.lit === lit ? p : { bar, beat: b, lit }
+          )
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [beat, playing])
+
+  /** タップテンポ。直近の打点の間隔の中央値から BPM を出す（間が空いたら打ち直し）。 */
+  const tap = (): void => {
+    const now = performance.now() / 1000
+    const taps = tapsRef.current
+    if (taps.length && now - taps[taps.length - 1] > TAP_RESET_SEC) taps.length = 0
+    taps.push(now)
+    if (taps.length > 8) taps.shift()
+    if (taps.length < 2) return
+    const ivals: number[] = []
+    for (let i = 1; i < taps.length; i++) ivals.push(taps[i] - taps[i - 1])
+    ivals.sort((a, b) => a - b)
+    setTapBpm(60 / ivals[ivals.length >> 1])
+  }
 
   const seek = (t: number) => {
     const a = audioRef.current
@@ -287,6 +382,55 @@ export const BgmPlayer = memo(function BgmPlayer({
             />
           </div>
           {current && <div className="bgm-now">♪ {current.name}</div>}
+
+          {/* ビート表示（Phase 2.6c 段階 1）。拍で点灯し、小節頭はアクセント色にする。 */}
+          {current && (analyzing || beat) && (
+            <>
+              <div className="bgm-beat">
+                {analyzing ? (
+                  <span className="bgm-beat-idle">ビート解析中…</span>
+                ) : (
+                  beat && (
+                    <>
+                      <span
+                        className={`bgm-beat-dot${beatPos?.lit ? ' lit' : ''}${
+                          beatPos?.beat === 1 ? ' bar' : ''
+                        }`}
+                      />
+                      <span
+                        className="bgm-beat-bpm"
+                        title={`平均ズレ ${beat.meanDeviationMs.toFixed(0)}ms / テンポ変動 ${beat.tempoVariationPct.toFixed(0)}% / ${
+                          beat.uniform ? '等間隔グリッド' : '拍ごとに追従'
+                        }`}
+                      >
+                        {(tapBpm ?? beat.bpm).toFixed(1)} BPM
+                      </span>
+                      <span className="bgm-beat-meter">{beat.beatsPerBar}/4</span>
+                      <span className="bgm-beat-pos">
+                        {beatPos ? `${beatPos.bar}.${beatPos.beat}` : '–.–'}
+                      </span>
+                      <button className="bgm-beat-btn" onClick={tap} title="拍に合わせて叩く">
+                        TAP
+                      </button>
+                      {tapBpm != null && (
+                        <button
+                          className="bgm-beat-btn"
+                          onClick={() => {
+                            setTapBpm(null)
+                            tapsRef.current = []
+                          }}
+                          title="自動検出の BPM に戻す"
+                        >
+                          自動
+                        </button>
+                      )}
+                    </>
+                  )
+                )}
+              </div>
+              {beat?.warning && <div className="bgm-beat-warn">{beat.warning}</div>}
+            </>
+          )}
           <audio
             ref={audioRef}
             src={current ? api.bgmUrl(current.relPath) : undefined}

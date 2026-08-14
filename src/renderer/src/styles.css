@@ -707,6 +707,66 @@ body.resizing {
   font-variant-numeric: tabular-nums;
 }
 
+/* ビート表示（Phase 2.6c 段階 1）: BPM・拍子・現在の 小節.拍・タップテンポ */
+.bgm-beat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 14px 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bgm-beat-idle {
+  color: var(--faint);
+}
+/* 拍のインジケータ。消灯は境界線色、拍で --muted、小節頭だけアクセント色にする */
+.bgm-beat-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+.bgm-beat-dot.lit {
+  background: var(--muted);
+}
+.bgm-beat-dot.lit.bar {
+  background: var(--accent);
+}
+.bgm-beat-bpm {
+  color: var(--text);
+}
+.bgm-beat-meter {
+  color: var(--faint);
+}
+/* 小節.拍。TAP ボタンを右端へ寄せる */
+.bgm-beat-pos {
+  margin-right: auto;
+  color: var(--faint);
+}
+.bgm-beat-btn {
+  flex: none;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-s);
+  padding: 1px 6px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.bgm-beat-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.bgm-beat-warn {
+  padding: 0 14px 6px;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
 /* ============================================================
    プレイヤー
    ============================================================ */

@@ -68,6 +68,7 @@ const api: DcmApi = {
   renameBgmTrack: (relPath, newName) => ipcRenderer.invoke('bgm:rename', relPath, newName),
   deleteBgmTrack: (relPath) => ipcRenderer.invoke('bgm:delete', relPath),
   showBgmInFolder: (relPath) => ipcRenderer.invoke('bgm:showInFolder', relPath),
+  analyzeBgmBeats: (relPath) => ipcRenderer.invoke('bgm:analyzeBeats', relPath),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),
   exportSegments: (jobs: ExportJob[], options: ExportOptions) =>
     ipcRenderer.invoke('export:run', jobs, options),
