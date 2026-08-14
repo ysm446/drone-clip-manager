@@ -925,8 +925,16 @@ export function App() {
           // 曲は止めずに鳴らし続け、届いたら読み込む。
           const bgm = seqBgmRef.current
           const audio = seqAudioRef.current
-          const want = bgm ? songPosAt(seqQueueRef.current, next, bgm.startOffsetSec) : 0
-          if (bgm && audio && want - audio.currentTime > GAP_HOLD_MIN_SEC) {
+          const q = seqQueueRef.current
+          const want = bgm ? songPosAt(q, next, bgm.startOffsetSec) : 0
+          // **隙間があるかどうかは配置から決める。** 曲の時計との差で見ると、
+          // 隙間が無くても「映像が曲より先行しているだけ」を隙間と誤判定して、
+          // 境目で黒が一瞬入る（送りは out の 0.05 秒手前で掛かるので、境目ごとに先行が積もる）。
+          const gapSec = bgm
+            ? want - (songPosAt(q, seqIndexRef.current, bgm.startOffsetSec) + Math.max(0, out - inSec))
+            : 0
+          // 曲がもう隙間を通り過ぎているなら待たない（読み込み待ちで映像が遅れた場合）
+          if (bgm && audio && gapSec > GAP_HOLD_MIN_SEC && audio.currentTime + 0.02 < want) {
             holdForGap(next, want)
             return
           }
