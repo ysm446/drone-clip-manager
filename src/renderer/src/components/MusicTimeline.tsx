@@ -7,7 +7,7 @@ import type {
   SequenceNode,
   Waveform
 } from '../../../shared/types'
-import type { SeqPlayItem } from './SequenceView'
+import type { MusicQueueGetter, SeqPlayBgm, SeqPlayItem } from './SequenceView'
 import { colorForIndex, fmtSec } from '../util'
 import { ContextMenu } from './ContextMenu'
 
@@ -113,24 +113,17 @@ interface Props {
   onNodesChanged?: () => void
   /** クリップパレットからのドロップ配置（順路の insertAt 番目へ挿し込む） */
   onDropClip?: (segmentId: number, insertAt: number) => Promise<void>
-  /** 拍に合わせた尺 + BGM で連続再生する（音楽モードの再生） */
-  onPlay?: (
-    items: { nodeId: number; inSec: number; outSec: number }[],
-    bgm: { relPath: string; startOffsetSec: number }
-  ) => void
+  /**
+   * 上部プレイヤーの再生ボタンから引くための「いまの再生キューを返す関数」の置き場。
+   * ここへ push するのではなく、**押された瞬間に引いてもらう**（常時装填はしない）。
+   * 常時装填だと、尺のドラッグや並べ替えのたびに再生側の状態が差し替わって位置が飛ぶ。
+   */
+  queueRef?: React.MutableRefObject<MusicQueueGetter | null>
   /** タイムラインのクリックで頭出し（ts = シーケンス先頭からの経過秒） */
-  onSeek?: (
-    items: { nodeId: number; inSec: number; outSec: number }[],
-    ts: number,
-    bgm: { relPath: string; startOffsetSec: number }
-  ) => void
+  onSeek?: (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => void
   /** 選択中のクリップを順路から削除する */
   onDeleteClips?: (nodeIds: number[]) => Promise<void>
-  /** 再生の停止 */
-  onStop?: () => void
-  /** 連続再生中か */
-  playing?: boolean
-  /** 拍に合わせた in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
+  /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (
     items: { videoRelPath: string; inSec: number; outSec: number }[],
     bgm: ConcatBgm
@@ -146,11 +139,9 @@ export const MusicTimeline = memo(function MusicTimeline({
   nodes,
   onNodesChanged,
   onDropClip,
-  onPlay,
+  queueRef,
   onSeek,
   onDeleteClips,
-  onStop,
-  playing,
   onExport,
   exporting,
   onStatus
@@ -459,13 +450,32 @@ export const MusicTimeline = memo(function MusicTimeline({
   }, [selected, deleteSelected, onDeleteClips])
 
   /** 再生用の項目（書き出しと違いキーフレーム丸めは不要） */
-  const buildPlayItems = useCallback(() => {
+  const buildPlayItems = useCallback((): SeqPlayItem[] => {
     if (!layout) return []
     return layout.blocks.map((b) => {
       const inSec = (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset
-      return { nodeId: b.key, inSec, outSec: inSec + (b.endSec - b.startSec) }
+      return { nodeId: b.key, clip: b.clip, inSec, outSec: inSec + (b.endSec - b.startSec) }
     })
   }, [layout])
+
+  /**
+   * 上部プレイヤーの再生ボタン用に「いまの再生キューを返す関数」を置く。
+   * 呼ばれるのは再生ボタンが押された瞬間だけなので、ここで状態は一切書き換えない。
+   * 音楽ビューを離れる（このコンポーネントが消える）と登録も外れ、上部ボタンは元の単体再生に戻る。
+   */
+  useEffect(() => {
+    if (!queueRef) return
+    queueRef.current = () => {
+      if (!seqBgm || !layout?.blocks.length) return null
+      return {
+        items: buildPlayItems(),
+        bgm: { relPath: seqBgm.relPath, startOffsetSec: seqBgm.startOffsetSec }
+      }
+    }
+    return () => {
+      queueRef.current = null
+    }
+  }, [queueRef, seqBgm, layout, buildPlayItems])
 
   /** 曲の時刻 → シーケンス先頭からの経過秒（前詰めなので単純な引き算で対応する） */
   const songToSeqSec = useCallback(
@@ -717,30 +727,7 @@ export const MusicTimeline = memo(function MusicTimeline({
           ＋
         </button>
 
-        {onPlay && onStop && (
-          <button
-            className="btn"
-            disabled={!layout?.blocks.length || !seqBgm}
-            onClick={() => {
-              if (playing) {
-                onStop()
-                return
-              }
-              if (!layout || !seqBgm) return
-              // 再生は指定した尺そのままで（書き出しと違いキーフレーム丸めは不要）
-              onPlay(
-                layout.blocks.map((b) => {
-                  const inSec = (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset
-                  return { nodeId: b.key, inSec, outSec: inSec + (b.endSec - b.startSec) }
-                }),
-                { relPath: seqBgm.relPath, startOffsetSec: seqBgm.startOffsetSec }
-              )
-            }}
-            title="曲と一緒に順路を再生する"
-          >
-            {playing ? '停止' : '再生'}
-          </button>
-        )}
+        {/* 再生ボタンは置かない。上部プレイヤーの再生ボタンに一本化している（queueRef 参照） */}
 
         {onExport && (
           <>

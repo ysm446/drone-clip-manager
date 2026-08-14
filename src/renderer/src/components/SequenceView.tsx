@@ -49,6 +49,13 @@ export interface SeqPlayBgm {
   startOffsetSec: number
 }
 
+/**
+ * 音楽ビューの「いまの再生キュー」を返す関数。上部プレイヤーの再生ボタンが
+ * **押された瞬間にだけ**呼ぶ（キューを常時 App へ装填すると、尺のドラッグや並べ替えのたびに
+ * 再生側の状態が差し替わって位置が飛ぶため）。音楽ビューにいないときは null を返す。
+ */
+export type MusicQueueGetter = () => { items: SeqPlayItem[]; bgm: SeqPlayBgm } | null
+
 /** SeqPlayItem の実効 in / out */
 export function itemIn(it: SeqPlayItem): number {
   return it.inSec ?? it.clip.inSnapped ?? it.clip.inTime
@@ -63,6 +70,11 @@ interface Props {
   /** 音楽タイムラインのクリックによる頭出し（ts = シーケンス先頭からの経過秒） */
   onSeekMusic: (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => void
   onStopSequence: () => void
+  /**
+   * 上部プレイヤーの再生ボタンが引く「音楽ビューの再生キュー」の置き場。
+   * 音楽ビューが自分で登録し、離れると外す（App からは押された瞬間だけ引く）。
+   */
+  musicQueueRef?: React.MutableRefObject<MusicQueueGetter | null>
   /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
   onOpenClip: (clip: ClipItem) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
@@ -157,6 +169,7 @@ export const SequenceView = memo(function SequenceView({
   onPlaySequence,
   onSeekMusic,
   onStopSequence,
+  musicQueueRef,
   onOpenClip,
   onEditClip,
   onEditInLibrary,
@@ -821,26 +834,6 @@ export const SequenceView = memo(function SequenceView({
   }, [activeId, reload])
 
   /**
-   * 音楽モードの再生（Phase 2.6c）。拍に合わせた in/out で順路を再生し、BGM も一緒に鳴らす。
-   * 尺はタイムライン側で算出済みのものを受け取る。
-   */
-  const playMusic = useCallback(
-    (
-      music: { nodeId: number; inSec: number; outSec: number }[],
-      bgm: { relPath: string; startOffsetSec: number }
-    ) => {
-      const byNode = new Map(playItemsRef.current.map((it) => [it.nodeId, it]))
-      const items: SeqPlayItem[] = []
-      for (const m of music) {
-        const base = byNode.get(m.nodeId)
-        if (base) items.push({ ...base, inSec: m.inSec, outSec: m.outSec })
-      }
-      if (items.length) onPlaySequence(items, bgm)
-    },
-    [onPlaySequence]
-  )
-
-  /**
    * 音楽タイムラインからのクリップ削除（Phase 2.6c）。
    * ノードを消すとチェーンが切れるので、残りの並びで順路を張り直す。
    */
@@ -858,19 +851,9 @@ export const SequenceView = memo(function SequenceView({
     [graphSnapshot, pushGraphUndo, reload]
   )
 
-  /** 音楽タイムラインのクリックによる頭出し。再生と同じキューを組んでから位置を渡す。 */
+  /** 音楽タイムラインのクリックによる頭出し。キューはタイムライン側で組んだものをそのまま渡す。 */
   const seekMusic = useCallback(
-    (
-      music: { nodeId: number; inSec: number; outSec: number }[],
-      ts: number,
-      bgm: { relPath: string; startOffsetSec: number }
-    ) => {
-      const byNode = new Map(playItemsRef.current.map((it) => [it.nodeId, it]))
-      const items: SeqPlayItem[] = []
-      for (const m of music) {
-        const base = byNode.get(m.nodeId)
-        if (base) items.push({ ...base, inSec: m.inSec, outSec: m.outSec })
-      }
+    (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => {
       if (items.length) onSeekMusic(items, ts, bgm)
     },
     [onSeekMusic]
@@ -1219,15 +1202,20 @@ export const SequenceView = memo(function SequenceView({
             </span>
           )}
           <span className="clips-spacer" />
-          {isPlaying ? (
-            <button className="btn" onClick={onStopSequence}>
-              <IconPause size={13} /> 停止
-            </button>
-          ) : (
-            <button className="btn primary" disabled={playItems.length === 0} onClick={play}>
-              <IconPlay size={13} /> 再生
-            </button>
-          )}
+          {/*
+            再生ボタンはノードグラフ側だけに置く。音楽モードでは上部プレイヤーへ一本化した
+            （このボタンは BGM 無し・区間そのままの尺で鳴らすので、音楽モードでは意味が違う）。
+          */}
+          {mode === 'graph' &&
+            (isPlaying ? (
+              <button className="btn" onClick={onStopSequence}>
+                <IconPause size={13} /> 停止
+              </button>
+            ) : (
+              <button className="btn primary" disabled={playItems.length === 0} onClick={play}>
+                <IconPlay size={13} /> 再生
+              </button>
+            ))}
           <button
             className="btn"
             disabled={playItems.length === 0 || exporting != null}
@@ -1253,11 +1241,9 @@ export const SequenceView = memo(function SequenceView({
             nodes={nodes}
             onNodesChanged={reloadActive}
             onDropClip={dropClipIntoOrder}
-            onPlay={playMusic}
+            queueRef={musicQueueRef}
             onSeek={seekMusic}
             onDeleteClips={removeMusicClips}
-            onStop={onStopSequence}
-            playing={isPlaying}
             onExport={runMusicExport}
             exporting={exporting != null}
           />

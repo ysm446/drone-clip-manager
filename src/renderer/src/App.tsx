@@ -13,6 +13,7 @@ import {
   SequenceView,
   itemIn,
   itemOut,
+  type MusicQueueGetter,
   type SeqPlayBgm,
   type SeqPlayItem
 } from './components/SequenceView'
@@ -593,12 +594,35 @@ export function App() {
     setCurrentTime(t)
   }, [])
 
+  /**
+   * 音楽ビューの「いまの再生キュー」を引く関数。音楽ビュー側が登録し、離れると外れる。
+   * **押された瞬間にだけ引く**（キューを常時ここへ装填すると、尺のドラッグや並べ替えのたびに
+   * 再生状態が差し替わって位置が飛ぶ）。
+   */
+  const musicQueueRef = useRef<MusicQueueGetter | null>(null)
+  /** playSequence はこの下で定義されるので ref 越しに呼ぶ */
+  const playSequenceRef = useRef<((items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => void) | null>(
+    null
+  )
+
   const togglePlay = useCallback(() => {
-    // 音楽モードで BGM を伴う連続再生中なら、曲も映像と一緒に止め / 再開する
-    // （上部の再生ボタンだけで映像を止めても音が鳴り続けるのを防ぐ）。
     const bgm = seqBgmRef.current
     const audio = seqAudioRef.current
     const willPlay = mpvModeRef.current ? mpvPausedRef.current : !!videoRef.current?.paused
+
+    // これから再生する場面で音楽ビューにいるなら、最新のキューを引き直して再生を始める。
+    // 尺を変えた直後でもその場で反映され、同じ並びなら playSequence 側が現在位置から再開する。
+    // パレットのプレビュー再生中は横取りしない（そのクリップの再生/停止のままにする）。
+    if (willPlay && !clipPlayRef.current) {
+      const q = musicQueueRef.current?.()
+      if (q && q.items.length) {
+        playSequenceRef.current?.(q.items, q.bgm)
+        return
+      }
+    }
+
+    // 音楽モードで BGM を伴う連続再生中なら、曲も映像と一緒に止め / 再開する
+    // （上部の再生ボタンだけで映像を止めても音が鳴り続けるのを防ぐ）。
     if (bgm && audio && seqQueueRef.current.length > 0) {
       if (willPlay) {
         // 再開位置に曲を合わせる（それまでのクリップ尺の合計 + 現クリップ内の経過）
@@ -861,6 +885,8 @@ export function App() {
     },
     [loadSeqIndex, resumePlay]
   )
+  // togglePlay（上で定義）から呼べるようにする
+  playSequenceRef.current = playSequence
 
   /**
    * ノードのクリック（シーケンス画面）: そのノードの開始位置へ頭出しする。
@@ -2053,6 +2079,7 @@ export function App() {
               onPlaySequence={playSequence}
               onSeekMusic={seekMusic}
               onStopSequence={stopSequence}
+              musicQueueRef={musicQueueRef}
               onOpenClip={openClip}
               onEditClip={editAsClip}
               onEditInLibrary={editInLibrary}
