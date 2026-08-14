@@ -96,6 +96,11 @@ export function App() {
   const [view, setView] = useState<'library' | 'clips' | 'sequence'>('library')
   /** シーケンス連続再生中のノード id（停止中は null / Phase 2.6） */
   const [playingNodeId, setPlayingNodeId] = useState<number | null>(null)
+  /**
+   * シーケンスを実際に再生中か。playingNodeId は「現在位置のノード」であって
+   * 再生中かどうかではない（頭出しだけでも入る）ため、再生 / 停止ボタンはこちらで判定する。
+   */
+  const [seqPlaying, setSeqPlaying] = useState(false)
   /** 名前変更などでライブラリ内容が変わった回数。クリップ / シーケンス画面の再取得キーに使う。 */
   const [libVersion, setLibVersion] = useState(0)
   /** パネルサイズ（サイドバー幅 / プレイヤー高さ）。ドラッグで変更し localStorage に保存。 */
@@ -675,6 +680,7 @@ export function App() {
     seqArmedRef.current = false
     autoPlayNextRef.current = false
     setPlayingNodeId(null)
+    setSeqPlaying(false)
     seqAudioRef.current?.pause()
     if (mpvModeRef.current) {
       api.mpvPause()
@@ -789,6 +795,7 @@ export function App() {
       clipPlayRef.current = null
       setClipPlay(null)
       setSeqQueue(items)
+      setSeqPlaying(true)
       // BGM は曲の使い始め位置から流し始め、以降は止めない（音が主）
       seqBgmRef.current = bgm ?? null
       const audio = seqAudioRef.current
@@ -2001,6 +2008,7 @@ export function App() {
               onJumpToNode={jumpToNode}
               onModalOpenChange={setSeqModalOpen}
               playingNodeId={playingNodeId}
+              sequencePlaying={seqPlaying}
               segmentPatch={segPatch}
             />
           ) : (

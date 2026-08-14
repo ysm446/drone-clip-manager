@@ -78,8 +78,10 @@ interface Props {
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
   onModalOpenChange: (open: boolean) => void
-  /** 連続再生中のノード id（App から通知）。null で停止中。 */
+  /** 連続再生中のノード id（App から通知）。頭出しだけでも入るので「再生中」の判定には使わない。 */
   playingNodeId: number | null
+  /** シーケンスを実際に再生中か（再生 / 停止ボタンの表示に使う） */
+  sequencePlaying: boolean
   /** プレイヤー側での in/out 調整をパレット / ノード表示へその場で反映するためのパッチ */
   segmentPatch?: {
     id: number
@@ -162,6 +164,7 @@ export const SequenceView = memo(function SequenceView({
   onJumpToNode,
   onModalOpenChange,
   playingNodeId,
+  sequencePlaying,
   segmentPatch
 }: Props) {
   const [sequences, setSequences] = useState<Sequence[]>([])
@@ -1015,7 +1018,7 @@ export const SequenceView = memo(function SequenceView({
   }
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
-  const isPlaying = playingNodeId != null
+  const isPlaying = sequencePlaying
 
   // クリックは単独選択（同じタグだけが選択済みなら解除）、Ctrl / Shift +クリックはトグルで複数選択
   const clickTagFilter = (tag: string, additive: boolean) =>

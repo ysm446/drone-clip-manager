@@ -82,6 +82,26 @@ function largestUnitWithin(dur: number, beatSec: number, snap: number): number {
   return Math.max(1, n) * snap
 }
 
+/** 時刻 t に最も近い拍の時刻を返す（頭出しの吸着に使う。拍は昇順なので二分探索）。 */
+function nearestBeat(beats: number[], t: number): number {
+  if (!beats.length) return t
+  let lo = 0
+  let hi = beats.length - 1
+  let prev = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (beats[mid] <= t) {
+      prev = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (prev < 0) return beats[0]
+  if (prev + 1 >= beats.length) return beats[prev]
+  return t - beats[prev] <= beats[prev + 1] - t ? beats[prev] : beats[prev + 1]
+}
+
 const RULER_H = 22 // 小節番号ルーラー
 const TRACK_H = 56 // 曲トラック / クリップ列
 const MIN_PPS = 6 // 最小ズーム（px / 秒）
@@ -831,7 +851,9 @@ export const MusicTimeline = memo(function MusicTimeline({
               onClick={(e) => {
                 if (!onSeek || !seqBgm || !layout?.blocks.length) return
                 const rect = e.currentTarget.getBoundingClientRect()
-                const songSec = (e.clientX - rect.left) / effPps
+                const clicked = (e.clientX - rect.left) / effPps
+                // 頭出しは拍にスナップする（拍の頭から聴き直せるようにするため）
+                const songSec = beat ? nearestBeat(beat.beats, clicked) : clicked
                 const ts = songToSeqSec(songSec)
                 if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
                 onSeek(buildPlayItems(), ts, {
