@@ -23,6 +23,13 @@ const api = window.dcm
 
 // シーケンスビュー（Phase 2.6）: クリップをノードとして配置し、一本道につないで連続再生する。
 
+/**
+ * ノードのコピー用クリップボード（segment id の配列 / 順路順）。
+ * シーケンスを開き直しても残るよう、コンポーネントの外に置く。
+ * ノードは「区間への参照」なので、実体を複製せず id を控えるだけでよい。
+ */
+let nodeClipboard: number[] = []
+
 /** 連続再生に渡す 1 件（再生中ノードのハイライト用に nodeId も持つ） */
 export interface SeqPlayItem {
   nodeId: number
@@ -490,11 +497,69 @@ export const SequenceView = memo(function SequenceView({
     [graphSnapshot, pushGraphUndo]
   )
 
+  /**
+   * 選択中のノードをコピーする（Phase 2.6 / 2026-08-15）。
+   * 控えるのは segment id だけで、順路の順に並べ直してから持つ
+   * （矩形選択では飛び飛びに選べるため、貼り付け先で元の並びを保てるようにする）。
+   * 音楽タイムラインの尺（units）は持っていかない。曲が違えば拍の長さも違うため、
+   * 貼り付け先では「自動」（収まる最大の単位）から始める。
+   */
+  const copySelectedNodes = useCallback(() => {
+    const order = nodeOrderFromEdges(
+      nodesRef.current.map((n) => n.id),
+      edgesRef.current
+    )
+    const rank = new Map(order.map((id, i) => [id, i]))
+    const picked = nodesRef.current
+      .filter((n) => selectedIds.has(n.id))
+      .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
+    nodeClipboard = picked.map((n) => n.segmentId)
+  }, [selectedIds])
+
+  /** コピーしたノードを、いま開いているシーケンスの順路の末尾へ貼り付ける。 */
+  const pasteNodes = useCallback(async () => {
+    const seqId = activeIdRef.current
+    if (seqId == null || nodeClipboard.length === 0) return
+    const before = graphSnapshot()
+    const order = playItemsRef.current.map((it) => it.nodeId)
+    const last = nodesRef.current.find((n) => n.id === order[order.length - 1])
+    // ノードグラフ上は既存と重ならないよう、順路の末尾から右へ並べる
+    let x = Math.round((last?.x ?? 0) + NODE_W + 40)
+    const y = Math.round(last?.y ?? 0)
+    const newIds: number[] = []
+    for (const segmentId of nodeClipboard) {
+      const node = await api.addSequenceNode(seqId, segmentId, x, y)
+      newIds.push(node.id)
+      x += NODE_W + 40
+    }
+    await api.setSequenceOrder(seqId, [...order, ...newIds])
+    await reload(seqId)
+    setSelectedIds(new Set(newIds))
+    await pushGraphUndo(
+      newIds.length > 1 ? `${newIds.length} ノードの貼り付け` : 'ノードの貼り付け',
+      before
+    )
+  }, [graphSnapshot, pushGraphUndo, reload])
+
   // キーボード操作（入力欄フォーカス中は無効）:
   //   Delete = 選択ノードを一括削除 / A = 全体表示 / F = 選択ノードへフォーカス
+  //   Ctrl+C / Ctrl+V = 選択ノードのコピー / 貼り付け（シーケンスを跨げる）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const t0 = document.activeElement as HTMLElement | null
+      if (t0 && (t0.tagName === 'INPUT' || t0.tagName === 'TEXTAREA' || t0.isContentEditable)) return
+      if (e.ctrlKey || e.metaKey) {
+        const ck = e.key.toLowerCase()
+        if (ck === 'c' && selectedIds.size > 0) {
+          e.preventDefault()
+          copySelectedNodes()
+        } else if (ck === 'v' && nodeClipboard.length > 0) {
+          e.preventDefault()
+          void pasteNodes()
+        }
+        return
+      }
+      if (e.altKey) return
       const t = document.activeElement as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const k = e.key.toLowerCase()
@@ -510,7 +575,7 @@ export const SequenceView = memo(function SequenceView({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedIds, removeNodes, fitToNodes, mode])
+  }, [selectedIds, removeNodes, fitToNodes, mode, copySelectedNodes, pasteNodes])
 
   const removeEdge = async (edgeId: number) => {
     const before = graphSnapshot()
