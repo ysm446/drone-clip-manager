@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/types'
 import type { SeqPlayItem } from './SequenceView'
 import { colorForIndex, fmtSec } from '../util'
+import { ContextMenu } from './ContextMenu'
 
 const api = window.dcm
 
@@ -32,6 +33,35 @@ const SNAP_UNITS = [
   { label: '4小節', beats: 16 }
 ]
 const SNAP_KEY = 'dcm.mtl.snapBeats'
+const THUMB_KEY = 'dcm.mtl.showThumbs'
+/** サムネイルを出す最小のブロック幅（px）。これより狭いと絵が潰れて役に立たない。 */
+const THUMB_MIN_W = 64
+/** 尺（秒）を出す最小のブロック幅 */
+const DUR_MIN_W = 52
+/** 元の長さを併記する最小のブロック幅 */
+const SRCDUR_MIN_W = 120
+
+/**
+ * ブロックのサムネイル。使用開始位置（src_offset）を反映した時刻の絵を出すので、
+ * Alt ドラッグで使う範囲をずらすと絵も変わる。
+ * ffmpeg の呼び出しを増やしすぎないよう、時刻は 0.5 秒に量子化してキャッシュを効かせる。
+ */
+function BlockThumb({ relPath, timeSec }: { relPath: string; timeSec: number }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const qt = Math.max(0, Math.round(timeSec * 2) / 2)
+  useEffect(() => {
+    let alive = true
+    setUrl(null)
+    api
+      .ensureThumb(relPath, qt)
+      .then((name) => alive && setUrl(api.thumbUrl(name)))
+      .catch(() => void 0)
+    return () => {
+      alive = false
+    }
+  }, [relPath, qt])
+  return url ? <img className="mtl-clip-thumb" src={url} alt="" draggable={false} /> : null
+}
 
 /** 尺の表示名（例: 12 → 3小節 / 6 → 1小節2拍 / 2 → 2拍） */
 function unitLabel(beats: number): string {
@@ -80,6 +110,8 @@ interface Props {
     ts: number,
     bgm: { relPath: string; startOffsetSec: number }
   ) => void
+  /** 選択中のクリップを順路から削除する */
+  onDeleteClips?: (nodeIds: number[]) => Promise<void>
   /** 再生の停止 */
   onStop?: () => void
   /** 連続再生中か */
@@ -102,6 +134,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   onDropClip,
   onPlay,
   onSeek,
+  onDeleteClips,
   onStop,
   playing,
   onExport,
@@ -150,6 +183,14 @@ export const MusicTimeline = memo(function MusicTimeline({
   } | null>(null)
   /** パレットからのドロップ位置（挿入先インデックス）。null で非表示。 */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  /** 選択中のクリップ（ノード id）。Delete キー / 右クリックメニューの対象。 */
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  /** クリップの右クリックメニュー */
+  const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
+  /** ブロックにサムネイルを出すか（幅が足りないブロックは自動で省く） */
+  const [showThumbs, setShowThumbs] = useState<boolean>(
+    () => localStorage.getItem(THUMB_KEY) !== '0'
+  )
 
   useEffect(() => {
     api.getBgm().then(setBgmInfo)
@@ -403,7 +444,12 @@ export const MusicTimeline = memo(function MusicTimeline({
       const d = drag
       setDrag(null)
       if (d.kind === 'move') {
-        if (!d.moved || sequenceId == null) return
+        // 動かさずに離した = クリック: そのクリップを選択する
+        if (!d.moved) {
+          setSelected(new Set([d.nodeId]))
+          return
+        }
+        if (sequenceId == null) return
         const from = orderIds.indexOf(d.nodeId)
         // 自分を抜いた並びに挿入するので、後ろへ動かすときは 1 つ詰める
         const to = d.insertAt > from ? d.insertAt - 1 : d.insertAt
@@ -428,6 +474,33 @@ export const MusicTimeline = memo(function MusicTimeline({
       window.removeEventListener('mouseup', onUp)
     }
   }, [drag, beat, beatSec, effPps, insertIndexAtX, onNodesChanged, orderIds, sequenceId, snapBeats])
+
+  /** 選択中のクリップを削除する */
+  const deleteSelected = useCallback(
+    (ids: number[]): void => {
+      if (!onDeleteClips || ids.length === 0) return
+      setSelected(new Set())
+      setMenu(null)
+      void onDeleteClips(ids)
+    },
+    [onDeleteClips]
+  )
+
+  // Delete / Backspace で選択中のクリップを削除（入力欄にフォーカスがあるときは無効）
+  useEffect(() => {
+    if (!onDeleteClips) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      const t = document.activeElement as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return
+      if (selected.size === 0) return
+      e.preventDefault()
+      deleteSelected([...selected])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, deleteSelected, onDeleteClips])
 
   /** 再生用の項目（拍に合わせた in/out。書き出しと違いキーフレーム丸めは不要） */
   const buildPlayItems = useCallback(() => {
@@ -624,6 +697,18 @@ export const MusicTimeline = memo(function MusicTimeline({
           </>
         )}
 
+        <button
+          className={`mtl-zoom${showThumbs ? ' on' : ''}`}
+          onClick={() => {
+            const v = !showThumbs
+            setShowThumbs(v)
+            localStorage.setItem(THUMB_KEY, v ? '1' : '0')
+          }}
+          title="クリップにサムネイルを表示する（狭いブロックでは自動的に省かれます）"
+        >
+          サムネ
+        </button>
+
         {/* 吸着単位。尺はこの整数倍になる（1小節を選べば 3小節・5小節も作れる） */}
         <label className="mtl-snap" title="クリップの尺を吸着させる単位">
           吸着
@@ -804,10 +889,13 @@ export const MusicTimeline = memo(function MusicTimeline({
                   b.overflow ? 'over' : '',
                   b.short ? 'short' : '',
                   b.autoShrunk ? 'shrunk' : '',
+                  selected.has(b.key) ? 'selected' : '',
                   drag?.nodeId === b.key ? 'dragging' : ''
                 ]
                   .filter(Boolean)
                   .join(' ')
+                const arranged = b.endSec - b.startSec
+                const srcDur = clipDuration(b.clip)
                 return (
                   <div
                     key={b.key}
@@ -815,6 +903,11 @@ export const MusicTimeline = memo(function MusicTimeline({
                     style={{ left, width: w, background: colorForIndex(b.index) }}
                     onMouseDown={(e) => startDrag(e, b)}
                     onDoubleClick={() => resetUnits(b.key)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setSelected(new Set([b.key]))
+                      setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
+                    }}
                     title={[
                       b.clip.label ?? `区間 #${b.clip.id}`,
                       `${unitLabel(b.units)}（${fmtSec(b.endSec - b.startSec)}）${
@@ -834,10 +927,24 @@ export const MusicTimeline = memo(function MusicTimeline({
                       .filter(Boolean)
                       .join('\n')}
                   >
-                    <span className="mtl-clip-label">{b.clip.label ?? `#${b.clip.id}`}</span>
-                    <span className="mtl-clip-unit">
-                      {unitLabel(b.units)}
-                      {b.autoShrunk ? ' ⚠' : ''}
+                    {/* サムネイル。狭いブロックでは絵が潰れるので幅で自動的に省く */}
+                    {showThumbs && w >= THUMB_MIN_W && (
+                      <BlockThumb
+                        relPath={b.clip.videoRelPath}
+                        timeSec={(b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset}
+                      />
+                    )}
+                    <span className="mtl-clip-text">
+                      <span className="mtl-clip-label">{b.clip.label ?? `#${b.clip.id}`}</span>
+                      <span className="mtl-clip-unit">
+                        {unitLabel(b.units)}
+                        {w >= DUR_MIN_W ? ` ${fmtSec(arranged)}` : ''}
+                        {/* 元の長さも併記（縮めている / 伸ばしている量が分かる） */}
+                        {w >= SRCDUR_MIN_W && Math.abs(srcDur - arranged) > 0.05
+                          ? ` / 元${fmtSec(srcDur)}`
+                          : ''}
+                        {b.autoShrunk ? ' ⚠' : ''}
+                      </span>
                     </span>
                     {/* 右端の伸縮ハンドル（見た目は出さず、当たり判定だけ広げる） */}
                     <span className="mtl-clip-handle" />
@@ -847,6 +954,22 @@ export const MusicTimeline = memo(function MusicTimeline({
             </div>
           </div>
         </div>
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: '尺を自動に戻す', onClick: () => resetUnits(menu.nodeId) },
+            {
+              label: '順路から削除',
+              danger: true,
+              onClick: () => deleteSelected([menu.nodeId])
+            }
+          ]}
+        />
       )}
     </div>
   )

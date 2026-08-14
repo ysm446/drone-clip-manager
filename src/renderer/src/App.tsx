@@ -851,6 +851,16 @@ export function App() {
       if (!loc) return
       // 再生終了（停止）後にバーから触った場合も連続再生の追従へ復帰させる
       seqActiveRef.current = true
+      // 音楽モードなら BGM も同じ位置へ合わせる。
+      // 位置を動かすだけで鳴り出さないよう、再生 / 停止の状態は変えない。
+      const bgm = seqBgmRef.current
+      const audio = seqAudioRef.current
+      if (bgm && audio) {
+        const playingNow = !!videoRef.current && !videoRef.current.paused
+        audio.currentTime = bgm.startOffsetSec + Math.max(0, ts)
+        if (playingNow) audio.play().catch(() => void 0)
+        else audio.pause()
+      }
       if (loc.idx === seqIndexRef.current) {
         seqArmedRef.current = false // out 付近から戻った場合に備えて再アーム
         setPlayingNodeId(seqQueueRef.current[loc.idx]?.nodeId ?? null)
@@ -870,6 +880,11 @@ export function App() {
   const seekMusic = useCallback(
     (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => {
       if (items.length === 0) return
+      // 頭出しは位置を変えるだけで、再生 / 停止の状態は変えない
+      // （停止中に触ったときに鳴り出さないようにする）。jumpToNode と同じ判定。
+      const wasPlaying = mpvModeRef.current
+        ? !mpvPausedRef.current
+        : !!videoRef.current && !videoRef.current.paused
       seqQueueRef.current = items
       seqActiveRef.current = true
       clipPlayRef.current = null
@@ -882,11 +897,20 @@ export function App() {
         if (audio.src !== url) audio.src = url
         audio.volume = 0.7
         audio.currentTime = bgm.startOffsetSec + Math.max(0, ts)
-        audio.play().catch(() => void 0)
+        if (wasPlaying) audio.play().catch(() => void 0)
+        else audio.pause()
       }
-      seekSequence(ts)
+      const loc = seqLocate(ts)
+      if (!loc) return
+      if (loc.idx === seqIndexRef.current) {
+        seqArmedRef.current = false // out 付近から戻った場合に備えて再アーム
+        setPlayingNodeId(items[loc.idx]?.nodeId ?? null)
+        seek(loc.sec)
+      } else {
+        loadSeqIndex(loc.idx, loc.sec, wasPlaying)
+      }
     },
-    [seekSequence]
+    [seqLocate, seek, loadSeqIndex]
   )
 
   // シーケンスバーのホバーサムネイル: シーケンス時間 → 該当クリップの動画・時刻で生成

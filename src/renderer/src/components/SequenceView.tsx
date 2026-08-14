@@ -506,6 +506,8 @@ export const SequenceView = memo(function SequenceView({
       const t = document.activeElement as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const k = e.key.toLowerCase()
+      // 音楽ビューのときは、キー操作はタイムライン側（選択中のクリップ）に任せる
+      if (mode === 'music') return
       if (e.key === 'Delete') {
         removeNodes([...selectedIds])
       } else if (k === 'a') {
@@ -516,7 +518,7 @@ export const SequenceView = memo(function SequenceView({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedIds, removeNodes, fitToNodes])
+  }, [selectedIds, removeNodes, fitToNodes, mode])
 
   const removeEdge = async (edgeId: number) => {
     const before = graphSnapshot()
@@ -779,6 +781,24 @@ export const SequenceView = memo(function SequenceView({
       if (items.length) onPlaySequence(items, bgm)
     },
     [onPlaySequence]
+  )
+
+  /**
+   * 音楽タイムラインからのクリップ削除（Phase 2.6c）。
+   * ノードを消すとチェーンが切れるので、残りの並びで順路を張り直す。
+   */
+  const removeMusicClips = useCallback(
+    async (ids: number[]): Promise<void> => {
+      if (ids.length === 0 || activeIdRef.current == null) return
+      const seqId = activeIdRef.current
+      const before = graphSnapshot()
+      const rest = playItemsRef.current.map((it) => it.nodeId).filter((id) => !ids.includes(id))
+      for (const id of ids) await api.removeSequenceNode(id)
+      await api.setSequenceOrder(seqId, rest)
+      await reload(seqId)
+      await pushGraphUndo(ids.length > 1 ? `${ids.length} クリップの削除` : 'クリップの削除', before)
+    },
+    [graphSnapshot, pushGraphUndo, reload]
   )
 
   /** 音楽タイムラインのクリックによる頭出し。再生と同じキューを組んでから位置を渡す。 */
@@ -1184,6 +1204,7 @@ export const SequenceView = memo(function SequenceView({
             onDropClip={dropClipIntoOrder}
             onPlay={playMusic}
             onSeek={seekMusic}
+            onDeleteClips={removeMusicClips}
             onStop={onStopSequence}
             playing={isPlaying}
             onExport={runMusicExport}
