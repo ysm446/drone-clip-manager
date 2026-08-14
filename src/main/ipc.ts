@@ -47,7 +47,8 @@ import {
   getSequenceBgm,
   setSequenceBgm,
   setSequenceOrder,
-  updateSequenceNodeMusic
+  updateSequenceNodeMusic,
+  updateSequenceNodeMusicMany
 } from './services/db'
 import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
@@ -377,11 +378,18 @@ export function registerIpc(): void {
       setSequenceBgm(sequenceId, relPath, startOffsetSec)
   )
 
-  // 音楽タイムラインでの尺（秒）と使用開始位置（Phase 2.6c 段階 3）
+  // 音楽タイムラインでの配置（開始位置・尺・使用開始位置 / Phase 2.6c 段階 3）
   ipcMain.handle(
     'seq:updateNodeMusic',
-    (_e, nodeId: number, durSec: number | null, srcOffset: number): void =>
-      updateSequenceNodeMusic(nodeId, durSec, srcOffset)
+    (_e, nodeId: number, startSec: number | null, durSec: number | null, srcOffset: number): void =>
+      updateSequenceNodeMusic(nodeId, startSec, durSec, srcOffset)
+  )
+  ipcMain.handle(
+    'seq:updateNodeMusicMany',
+    (
+      _e,
+      rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
+    ): void => updateSequenceNodeMusicMany(rows)
   )
   // 音楽タイムラインでの並べ替え（順路を与えられた並びの一本道に置き換える）
   ipcMain.handle('seq:setOrder', (_e, sequenceId: number, nodeIds: number[]): void =>

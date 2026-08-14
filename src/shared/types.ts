@@ -87,6 +87,11 @@ export interface SequenceNode {
   x: number
   y: number
   /**
+   * 音楽タイムラインでの開始位置（秒 / Phase 2.6c）。曲の先頭からの絶対位置。
+   * null は「未配置」で、音楽ビューを開いたときに前詰めの位置を書き込んで確定させる。
+   */
+  startSec: number | null
+  /**
    * 音楽タイムラインでの尺（秒 / Phase 2.6c）。
    * null なら「元の区間の残り（srcOffset 以降）をそのまま使う」。
    */
@@ -114,14 +119,15 @@ export interface SequenceGraph {
 
 /**
  * Undo 用のグラフスナップショット行（ノード）。
- * 音楽タイムラインの尺（durSec / srcOffset）も含める。
- * 含めないと、グラフ操作を undo したときに尺の指定が既定値へ戻ってしまう。
+ * 音楽タイムラインの配置（startSec / durSec / srcOffset）も含める。
+ * 含めないと、グラフ操作を undo したときに配置が既定値へ戻ってしまう。
  */
 export interface GraphNodeSnap {
   id: number
   segmentId: number
   x: number
   y: number
+  startSec: number | null
   durSec: number | null
   srcOffset: number
 }
@@ -506,11 +512,16 @@ export interface DcmApi {
     relPath: string | null,
     startOffsetSec?: number
   ) => Promise<SequenceBgm | null>
-  /** 音楽タイムラインでのノードの尺（秒）と使用開始位置を更新（元 segment は変更しない） */
+  /** 音楽タイムラインでのノードの配置（開始位置・尺・使用開始位置）を更新（元 segment は変更しない） */
   updateSequenceNodeMusic: (
     nodeId: number,
+    startSec: number | null,
     durSec: number | null,
     srcOffset: number
+  ) => Promise<void>
+  /** 押し出しや前詰めの確定など、複数ノードの配置をまとめて更新する */
+  updateSequenceNodeMusicMany: (
+    rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
   ) => Promise<void>
   /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */
   setSequenceOrder: (sequenceId: number, nodeIds: number[]) => Promise<void>

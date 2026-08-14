@@ -13,6 +13,7 @@ import {
   SequenceView,
   itemIn,
   itemOut,
+  songPosAt,
   type MusicQueueGetter,
   type SeqPlayBgm,
   type SeqPlayItem
@@ -26,6 +27,13 @@ import { ContextMenu } from './components/ContextMenu'
 import { colorForIndex, fmtSec, fmtSize, fmtTime, keyframeAfter, keyframeBefore } from './util'
 
 const api = window.dcm
+
+/**
+ * 連続再生中、曲と映像の食い違いがこれ（秒）を超えたら曲のほうを合わせ直す。
+ * 音楽ビューでクリップの間に隙間を空けると、映像は隙間を飛ばすので曲だけが取り残される。
+ * これ未満のズレは、従来どおり映像側で追いつく（曲を触ると音が飛んで聞こえるため）。
+ */
+const SONG_RESYNC_SEC = 0.25
 
 /** ツリーで複数選択した動画への一括タグ付けバー（サイドバー下部） */
 function BulkTagBar({
@@ -625,14 +633,12 @@ export function App() {
     // （上部の再生ボタンだけで映像を止めても音が鳴り続けるのを防ぐ）。
     if (bgm && audio && seqQueueRef.current.length > 0) {
       if (willPlay) {
-        // 再開位置に曲を合わせる（それまでのクリップ尺の合計 + 現クリップ内の経過）
+        // 再開位置に曲を合わせる（そのクリップが曲のどこにいるか + クリップ内の経過）
         const q = seqQueueRef.current
         const idx = Math.max(0, Math.min(seqIndexRef.current, q.length - 1))
-        let elapsed = 0
-        for (let k = 0; k < idx; k++) elapsed += Math.max(0, itemOut(q[k]) - itemIn(q[k]))
         const v = videoRef.current
-        if (v) elapsed += Math.max(0, v.currentTime - itemIn(q[idx]))
-        audio.currentTime = bgm.startOffsetSec + elapsed
+        const into = v ? Math.max(0, v.currentTime - itemIn(q[idx])) : 0
+        audio.currentTime = songPosAt(q, idx, bgm.startOffsetSec) + into
         audio.play().catch(() => void 0)
       } else {
         audio.pause()
@@ -771,12 +777,17 @@ export function App() {
       const audio = seqAudioRef.current
       if (bgm && audio && atSec == null && autoplay) {
         const q = seqQueueRef.current
-        let elapsed = 0
-        for (let k = 0; k < i; k++) elapsed += Math.max(0, itemOut(q[k]) - itemIn(q[k]))
-        const drift = audio.currentTime - bgm.startOffsetSec - elapsed
+        const want = songPosAt(q, i, bgm.startOffsetSec)
+        const drift = audio.currentTime - want
         const dur = Math.max(0, itemOut(item) - itemIn(item))
-        // 1 クリップぶんを超える遅れは追いつけないので諦める（音側を戻さない方針）
-        if (drift > 0.05) catchUp = Math.min(drift, Math.max(0, dur - 0.2))
+        if (Math.abs(drift) > SONG_RESYNC_SEC) {
+          // 大きく食い違うとき（音楽ビューでクリップの間に隙間を空けた場合など）は
+          // 曲のほうを合わせ直す。映像が隙間を飛ばすので、曲も一緒に飛ばす。
+          audio.currentTime = want
+        } else if (drift > 0.05) {
+          // 1 クリップぶんを超える遅れは追いつけないので諦める（音側を戻さない方針）
+          catchUp = Math.min(drift, Math.max(0, dur - 0.2))
+        }
       }
       const startSec = atSec ?? itemIn(item) + catchUp
       const rel = item.clip.videoRelPath
@@ -864,13 +875,13 @@ export function App() {
           if (audio.src !== url) audio.src = url
           audio.volume = 0.7 // BGM プレイヤーの既定音量に合わせる
           // 再開時は「いまの映像位置」に曲を合わせる（先頭から鳴らし直さない）
-          let elapsed = 0
           if (resuming) {
-            for (let k = 0; k < idx; k++) elapsed += Math.max(0, itemOut(items[k]) - itemIn(items[k]))
             const v = videoRef.current
-            if (v) elapsed += Math.max(0, v.currentTime - itemIn(items[idx]))
+            const into = v ? Math.max(0, v.currentTime - itemIn(items[idx])) : 0
+            audio.currentTime = songPosAt(items, idx, bgm.startOffsetSec) + into
+          } else {
+            audio.currentTime = songPosAt(items, 0, bgm.startOffsetSec)
           }
-          audio.currentTime = bgm.startOffsetSec + elapsed
           audio.play().catch(() => void 0)
         } else {
           audio.pause()

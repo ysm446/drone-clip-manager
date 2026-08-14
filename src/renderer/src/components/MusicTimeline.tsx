@@ -83,6 +83,45 @@ function snapSeconds(t: number, snap: number): number {
   return snap > 0 ? Math.round(t / snap) * snap : t
 }
 
+/** 押し出しの解決対象（開始位置の昇順で渡す） */
+interface Placed {
+  id: number
+  start: number
+  dur: number
+}
+
+/**
+ * 1 枚を望みの位置へ置いたときの、周りの札の寄り方を決める。
+ *
+ * - **挿入位置は中心どうしの比較で決める**（ブロックパズル的。半分以上乗り越えたら順番が入れ替わる）
+ * - **手前側は動かさない。** 重なるなら動かした側を手前の終端まで押し戻す（左は壁）。
+ *   手前も押すと、端まで詰まったときに動かせなくなり、挙動が読めなくなるため。
+ * - **後ろ側は右へ押し出すが、隙間があればそこで吸収して止める。**
+ *   末尾まで伝播させると、せっかく曲に合わせた後半のカット位置が全部ずれてしまう。
+ */
+function resolvePush(
+  others: Placed[],
+  movedDur: number,
+  wantStart: number,
+  floor: number
+): { start: number; moves: Map<number, number> } {
+  const mid = wantStart + movedDur / 2
+  let idx = others.findIndex((o) => mid < o.start + o.dur / 2)
+  if (idx < 0) idx = others.length
+  const prevEnd = idx > 0 ? others[idx - 1].start + others[idx - 1].dur : floor
+  const start = Math.max(floor, prevEnd, wantStart)
+
+  const moves = new Map<number, number>()
+  let cursor = start + movedDur
+  for (let i = idx; i < others.length; i++) {
+    const o = others[i]
+    if (o.start >= cursor - 1e-6) break // 隙間が吸収した: これ以降は動かさない
+    moves.set(o.id, cursor)
+    cursor += o.dur
+  }
+  return { start, moves }
+}
+
 /** ルーラーの目盛り間隔（秒）。1 目盛りが最低 RULER_TICK_MIN_PX になるものを選ぶ。 */
 function rulerStep(pps: number): number {
   return RULER_STEPS.find((s) => s * pps >= RULER_TICK_MIN_PX) ?? RULER_STEPS[RULER_STEPS.length - 1]
@@ -111,8 +150,8 @@ interface Props {
   nodes: SequenceNode[]
   /** 尺を変更したあとにグラフを読み直してもらう */
   onNodesChanged?: () => void
-  /** クリップパレットからのドロップ配置（順路の insertAt 番目へ挿し込む） */
-  onDropClip?: (segmentId: number, insertAt: number) => Promise<void>
+  /** クリップパレットからのドロップ配置（曲の startSec の位置へ置く） */
+  onDropClip?: (segmentId: number, startSec: number) => Promise<void>
   /**
    * 上部プレイヤーの再生ボタンから引くための「いまの再生キューを返す関数」の置き場。
    * ここへ push するのではなく、**押された瞬間に引いてもらう**（常時装填はしない）。
@@ -123,6 +162,8 @@ interface Props {
   onSeek?: (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => void
   /** 選択中のクリップを順路から削除する */
   onDeleteClips?: (nodeIds: number[]) => Promise<void>
+  /** 連続再生中か。スクラブ音を鳴らすかどうかの判断に使う（再生中は App 側が鳴らしている） */
+  playing?: boolean
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (
     items: { videoRelPath: string; inSec: number; outSec: number }[],
@@ -142,6 +183,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   queueRef,
   onSeek,
   onDeleteClips,
+  playing,
   onExport,
   exporting,
   onStatus
@@ -178,25 +220,38 @@ export const MusicTimeline = memo(function MusicTimeline({
   const headSecRef = useRef<number | null>(null)
   /**
    * 編集中のドラッグ。
-   * - dur  : 右端を引いて尺（秒）を変える。吸着単位に丸める
+   * - move : カード本体を掴んで置く位置を変える。重なった札は押し出される
+   * - dur  : 右端を引いて尺（秒）を変える。後ろの札は押し出される
+   * - trimL: 左端を引いてイン点をトリムする。タイムライン上の右端は動かさない
    * - slip : Alt + 中身ドラッグで「元の区間のどこを使うか」をずらす（Resolve のスリップ編集）
    */
   const [drag, setDrag] = useState<{
-    kind: 'dur' | 'slip' | 'move'
+    kind: 'move' | 'dur' | 'trimL' | 'slip'
     nodeId: number
     startX: number
+    baseStart: number
     baseDur: number
     baseOffset: number
     maxOffsetBase: number
+    /** この札より手前にある札の終端（左の壁）。trimL の下限に使う */
+    prevEnd: number
+    startSec: number
     durSec: number
     offset: number
-    /** move のときの挿入先（順路内のインデックス） */
-    insertAt: number
-    /** move が実際にドラッグされたか（クリックと区別する） */
+    /** 実際にドラッグされたか（クリックと区別する） */
     moved: boolean
   } | null>(null)
-  /** パレットからのドロップ位置（挿入先インデックス）。null で非表示。 */
+  /** パレットからのドロップ位置（曲の時刻・秒）。null で非表示。 */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  /**
+   * ドラッグを離した直後の配置（nodeId → 開始位置・尺・使用開始位置）。
+   * 保存 → グラフ再読み込みが返るまで `nodes` は古い値のままなので、これが無いと
+   * **一瞬だけ元の位置へ戻ってから新しい位置へ飛ぶ**。反映が届いたら捨てる。
+   */
+  const [pending, setPending] = useState<Map<
+    number,
+    { startSec: number; durSec: number | null; srcOffset: number }
+  > | null>(null)
   /** 選択中のクリップ（ノード id）。Delete キー / 右クリックメニューの対象。 */
   const [selected, setSelected] = useState<Set<number>>(new Set())
   /** クリップの右クリックメニュー */
@@ -264,49 +319,151 @@ export const MusicTimeline = memo(function MusicTimeline({
   /** 曲の長さ（秒）。波形の解析結果から取る。 */
   const songDurationSec = wave?.durationSec ?? 0
 
+  /** クリップを置ける最も手前の位置（曲の使い始め） */
+  const floorSec = seqBgm?.startOffsetSec ?? 0
+
   /**
-   * 前詰めのレイアウト。曲の開始オフセットから順に、各クリップの尺（秒）を積み上げるだけ。
+   * レイアウト。各クリップは `start_sec` の絶対位置に置く（前詰めではない = 隙間を作れる）。
    * 尺の指定が無いクリップは「元の区間の残り（srcOffset 以降）をそのまま使う」。
+   *
+   * `start_sec` が未設定のノード（移行前 / 追加直後）は、それまでの並びの終端に置く。
+   * その位置は下の効果で DB へ書き戻して確定させる。
    */
   const layout = useMemo(() => {
     if (!wave) return null
-    const startAt = seqBgm?.startOffsetSec ?? 0
-    let cursor = startAt
-    const blocks = items.map((it, i) => {
+
+    // 1. 各ノードの確定値を作る（ドラッグ中のものはドラッグ値を使う）
+    let cursor = floorSec
+    let needsPlacing = false
+    const base = items.map((it) => {
       const node = nodeById.get(it.nodeId)
+      // 保存待ちの値があればそれを優先する（反映されるまでのちらつき止め）
+      const p = pending?.get(it.nodeId)
+      // 保存待ちがあるなら、その値だけを見る（node の古い値と混ぜない）
+      const eff = p ?? { startSec: node?.startSec ?? null, durSec: node?.durSec ?? null, srcOffset: node?.srcOffset ?? 0 }
       const dragging = drag?.nodeId === it.nodeId
-      const srcOffset = dragging ? drag.offset : (node?.srcOffset ?? 0)
+      const srcOffset = dragging ? drag.offset : eff.srcOffset
       // 元の区間のうち、使用開始位置より後ろに残っている尺
       const avail = clipDuration(it.clip) - srcOffset
-      const durSec = dragging ? drag.durSec : (node?.durSec ?? avail)
-      const startT = cursor
-      cursor += durSec
-      return {
-        key: it.nodeId,
-        clip: it.clip,
-        index: i,
-        durSec,
-        srcOffset,
-        avail,
-        startSec: startT,
-        endSec: cursor,
-        /** 元の区間から捨てる秒数（縮めた分） */
-        trimmedSec: Math.max(0, avail - durSec),
-        /** 元の素材が足りない（区間の外に出ている）。ドラッグでは収まるよう抑えている */
-        short: durSec > avail + 0.001,
-        /** 尺を手で決めているか（false なら自動） */
-        manual: node?.durSec != null,
-        /** 曲の終わりを越えているか */
-        overflow: startT >= songDurationSec
-      }
+      const durSec = dragging ? drag.durSec : (eff.durSec ?? avail)
+      if (eff.startSec == null) needsPlacing = true
+      const startSec = dragging ? drag.startSec : (eff.startSec ?? cursor)
+      cursor = Math.max(cursor, startSec + durSec)
+      return { it, clip: it.clip, key: it.nodeId, srcOffset, avail, durSec, startSec }
     })
+
+    // 2. ドラッグ中なら押し出しを解く（手前は壁 / 後ろは隙間で吸収）
+    const moves = new Map<number, number>()
+    let movedStart: number | null = null
+    const moved = drag ? base.find((b) => b.key === drag.nodeId) : undefined
+    if (drag?.kind === 'move' && moved) {
+      // 移動: 中心の比較で挿入位置が決まる（半分乗り越えたら順番が入れ替わる）
+      const others: Placed[] = base
+        .filter((b) => b.key !== drag.nodeId)
+        .map((b) => ({ id: b.key, start: b.startSec, dur: b.durSec }))
+        .sort((a, b) => a.start - b.start)
+      const r = resolvePush(others, moved.durSec, moved.startSec, floorSec)
+      movedStart = r.start
+      for (const [id, s] of r.moves) moves.set(id, s)
+    } else if (drag?.kind === 'dur' && moved) {
+      // 尺の変更: 開始位置は動かさないので、後ろの札を押し出すだけ。
+      // 中心での挿入判定に掛けると、縮めたときに中心が手前へ寄って順番が入れ替わってしまう。
+      let cursor = moved.startSec + moved.durSec
+      const after = base
+        .filter((b) => b.key !== drag.nodeId && b.startSec >= moved.startSec - 1e-6)
+        .sort((a, b) => a.startSec - b.startSec)
+      for (const o of after) {
+        if (o.startSec >= cursor - 1e-6) break // 隙間が吸収した
+        moves.set(o.key, cursor)
+        cursor += o.durSec
+      }
+    }
+
+    // 3. 位置順に並べ替えてブロックにする（画面の並び = 時刻順）
+    const blocks = base
+      .map((b) => {
+        const startSec = b.key === drag?.nodeId && movedStart != null ? movedStart : (moves.get(b.key) ?? b.startSec)
+        return {
+          key: b.key,
+          clip: b.clip,
+          durSec: b.durSec,
+          srcOffset: b.srcOffset,
+          avail: b.avail,
+          startSec,
+          endSec: startSec + b.durSec,
+          /** 元の区間から捨てる秒数（縮めた分） */
+          trimmedSec: Math.max(0, b.avail - b.durSec),
+          /** 元の素材が足りない（区間の外に出ている）。ドラッグでは収まるよう抑えている */
+          short: b.durSec > b.avail + 0.001,
+          /** 尺を手で決めているか（false なら自動） */
+          manual: (pending?.get(b.key) ?? nodeById.get(b.key))?.durSec != null,
+          /** 曲の終わりを越えているか */
+          overflow: startSec >= songDurationSec
+        }
+      })
+      .sort((a, b) => a.startSec - b.startSec)
+      .map((b, i) => ({ ...b, index: i }))
+
+    const endSec = blocks.reduce((m, b) => Math.max(m, b.endSec), floorSec)
+    // 隙間（手前の終端と次の開始の間）。書き出しの可否判定と表示に使う。
+    const gaps: { startSec: number; endSec: number }[] = []
+    for (let i = 1; i < blocks.length; i++) {
+      const g = blocks[i].startSec - blocks[i - 1].endSec
+      if (g > 0.001) gaps.push({ startSec: blocks[i - 1].endSec, endSec: blocks[i].startSec })
+    }
     return {
       blocks,
-      endSec: cursor,
+      endSec,
+      gaps,
+      needsPlacing,
       /** 曲に対する過不足（正 = 曲が余っている） */
-      slackSec: songDurationSec - cursor
+      slackSec: songDurationSec - endSec
     }
-  }, [wave, items, nodeById, drag, seqBgm?.startOffsetSec, songDurationSec])
+  }, [wave, items, nodeById, pending, drag, floorSec, songDurationSec])
+
+  /**
+   * 保存した値が `nodes` に反映されたら、ちらつき止めの控えを捨てる。
+   *
+   * **3 つの値すべてを突き合わせること。** 開始位置だけを見ていると、尺や使用開始位置だけを
+   * 変えたときに「元から一致している」と誤判定して、保存が届く前に控えを捨ててしまう
+   * （= 一瞬だけ元の形に戻ってから変更後の形になる）。
+   */
+  useEffect(() => {
+    if (!pending) return
+    const same = (a: number | null | undefined, b: number | null): boolean =>
+      b == null ? a == null : a != null && Math.abs(a - b) < 1e-6
+    const settled = [...pending].every(([id, v]) => {
+      const n = nodeById.get(id)
+      return (
+        n != null &&
+        same(n.startSec, v.startSec) &&
+        same(n.durSec, v.durSec) &&
+        same(n.srcOffset, v.srcOffset)
+      )
+    })
+    if (settled) setPending(null)
+  }, [nodeById, pending])
+
+  /**
+   * `start_sec` が未設定のノードへ、いま画面に出ている位置を書き戻して確定させる。
+   * 前詰めから絶対位置への移行と、クリップを足した直後の 1 回だけ走る。
+   */
+  useEffect(() => {
+    if (!layout?.needsPlacing || drag || pending) return
+    const rows = layout.blocks
+      .filter((b) => nodeById.get(b.key)?.startSec == null)
+      .map((b) => ({
+        nodeId: b.key,
+        startSec: b.startSec,
+        durSec: nodeById.get(b.key)?.durSec ?? null,
+        srcOffset: b.srcOffset
+      }))
+    if (!rows.length) return
+    void api.updateSequenceNodeMusicMany(rows).then(() => onNodesChanged?.())
+  }, [layout, nodeById, drag, pending, onNodesChanged])
+
+  /** 画面に出ているブロック（時刻順）。ドラッグ確定時の保存にも使う。 */
+  const layoutBlocks = useMemo(() => layout?.blocks ?? [], [layout])
 
   const totalSec = Math.max(songDurationSec, layout?.endSec ?? 0) + 2
   // canvas は幅 32767px 前後で描画に失敗する（超えると真っ白になる）。
@@ -318,48 +475,45 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   // --- 編集（尺の変更 / 使用範囲のスライド）---
 
-  /** 順路上の並び（ノード id） */
-  const orderIds = useMemo(() => items.map((it) => it.nodeId), [items])
-
-  /**
-   * 画面 X から「何番目に挿入するか」を求める。
-   * 各ブロックの中央より左なら手前、右なら後ろに入れる（ブロックパズル的な挿入）。
-   */
-  const insertIndexAtX = useCallback(
+  /** 画面 X → 曲の時刻（秒） */
+  const secAtX = useCallback(
     (clientX: number): number => {
       const el = clipsRef.current
-      if (!el || !layout) return orderIds.length
-      const x = (clientX - el.getBoundingClientRect().left) / effPps
-      for (let i = 0; i < layout.blocks.length; i++) {
-        const b = layout.blocks[i]
-        if (x < (b.startSec + b.endSec) / 2) return i
-      }
-      return layout.blocks.length
+      if (!el) return 0
+      return (clientX - el.getBoundingClientRect().left) / effPps
     },
-    [layout, effPps, orderIds.length]
+    [effPps]
   )
 
-  const startDrag = (
-    e: React.MouseEvent,
-    b: { key: number; durSec: number; srcOffset: number; clip: ClipItem; endSec: number }
-  ): void => {
+  const startDrag = (e: React.MouseEvent, b: (typeof layoutBlocks)[number]): void => {
     if (!wave || e.button !== 0) return
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const nearRightEdge = rect.right - e.clientX <= EDGE_HIT
-    // Alt = 使用範囲のスライド / 右端 = 尺の変更 / それ以外 = 並べ替え
-    const kind: 'dur' | 'slip' | 'move' = e.altKey ? 'slip' : nearRightEdge ? 'dur' : 'move'
+    const nearRight = rect.right - e.clientX <= EDGE_HIT
+    const nearLeft = e.clientX - rect.left <= EDGE_HIT
+    // Alt = 使用範囲のスライド / 左端 = イン点のトリム / 右端 = 尺の変更 / それ以外 = 移動
+    const kind: 'move' | 'dur' | 'trimL' | 'slip' = e.altKey
+      ? 'slip'
+      : nearLeft
+        ? 'trimL'
+        : nearRight
+          ? 'dur'
+          : 'move'
     e.preventDefault()
     e.stopPropagation()
+    // 手前の札の終端（左の壁）。trimL でこれより左へは出せない。
+    const prev = layoutBlocks.filter((o) => o.key !== b.key && o.endSec <= b.startSec + 0.001).pop()
     setDrag({
       kind,
       nodeId: b.key,
       startX: e.clientX,
+      baseStart: b.startSec,
       baseDur: b.durSec,
       baseOffset: b.srcOffset,
       maxOffsetBase: clipDuration(b.clip),
+      prevEnd: prev ? prev.endSec : floorSec,
+      startSec: b.startSec,
       durSec: b.durSec,
       offset: b.srcOffset,
-      insertAt: orderIds.indexOf(b.key),
       moved: false
     })
   }
@@ -370,9 +524,12 @@ export const MusicTimeline = memo(function MusicTimeline({
     const onMove = (e: MouseEvent): void => {
       const dxSec = (e.clientX - drag.startX) / effPps
       if (drag.kind === 'move') {
-        const at = insertIndexAtX(e.clientX)
+        // 置きたい位置。曲の使い始めより手前へは出さない（実際の当たりは押し出し側で解く）
+        const want = Math.max(floorSec, snapSeconds(drag.baseStart + dxSec, snapSec))
         setDrag((d) =>
-          d && (d.insertAt !== at || !d.moved) ? { ...d, insertAt: at, moved: true } : d
+          d && (Math.abs(d.startSec - want) > 1e-6 || !d.moved)
+            ? { ...d, startSec: want, moved: true }
+            : d
         )
         return
       }
@@ -381,38 +538,69 @@ export const MusicTimeline = memo(function MusicTimeline({
         const avail = drag.maxOffsetBase - drag.offset
         const target = snapSeconds(drag.baseDur + dxSec, snapSec)
         const best = Math.min(avail, Math.max(MIN_DUR_SEC, target))
-        setDrag((d) => (d && Math.abs(d.durSec - best) > 1e-6 ? { ...d, durSec: best } : d))
-      } else {
-        // 使用範囲のスライドは吸着させない（尺は変わらず、どのコマを使うかだけが動くため）。
-        // 元の区間の中には収める。
-        const max = Math.max(0, drag.maxOffsetBase - drag.durSec)
-        const off = Math.min(max, Math.max(0, drag.baseOffset + dxSec))
-        setDrag((d) => (d && Math.abs(d.offset - off) > 1e-6 ? { ...d, offset: off } : d))
+        setDrag((d) =>
+          d && Math.abs(d.durSec - best) > 1e-6 ? { ...d, durSec: best, moved: true } : d
+        )
+        return
       }
+      if (drag.kind === 'trimL') {
+        // イン点のトリム: タイムライン上の右端は動かさず、開始位置・尺・使用開始位置を一緒に動かす。
+        // 手前の素材（srcOffset >= 0）と手前の札（prevEnd）で頭打ちにする。
+        const lo = Math.max(-drag.baseOffset, drag.prevEnd - drag.baseStart)
+        const hi = drag.baseDur - MIN_DUR_SEC
+        const delta = Math.min(hi, Math.max(lo, snapSeconds(drag.baseStart + dxSec, snapSec) - drag.baseStart))
+        const next = {
+          startSec: drag.baseStart + delta,
+          durSec: drag.baseDur - delta,
+          offset: drag.baseOffset + delta
+        }
+        setDrag((d) =>
+          d && Math.abs(d.startSec - next.startSec) > 1e-6 ? { ...d, ...next, moved: true } : d
+        )
+        return
+      }
+      // 使用範囲のスライドは吸着させない（尺は変わらず、どのコマを使うかだけが動くため）。
+      // 元の区間の中には収める。
+      const max = Math.max(0, drag.maxOffsetBase - drag.durSec)
+      const off = Math.min(max, Math.max(0, drag.baseOffset + dxSec))
+      setDrag((d) => (d && Math.abs(d.offset - off) > 1e-6 ? { ...d, offset: off, moved: true } : d))
     }
+
     const onUp = (): void => {
       const d = drag
       setDrag(null)
-      if (d.kind === 'move') {
-        // 動かさずに離した = クリック: そのクリップを選択する
-        if (!d.moved) {
-          setSelected(new Set([d.nodeId]))
-          return
-        }
-        if (sequenceId == null) return
-        const from = orderIds.indexOf(d.nodeId)
-        // 自分を抜いた並びに挿入するので、後ろへ動かすときは 1 つ詰める
-        const to = d.insertAt > from ? d.insertAt - 1 : d.insertAt
-        if (from < 0 || from === to) return
-        const next = orderIds.slice()
-        next.splice(from, 1)
-        next.splice(to, 0, d.nodeId)
-        void api.setSequenceOrder(sequenceId, next).then(() => onNodesChanged?.())
+      // 動かさずに離した = クリック: そのクリップを選択する
+      if (!d.moved) {
+        setSelected(new Set([d.nodeId]))
         return
       }
-      if (d.kind === 'dur' && Math.abs(d.durSec - d.baseDur) < 0.001) return
-      if (d.kind === 'slip' && Math.abs(d.offset - d.baseOffset) < 0.001) return
-      void api.updateSequenceNodeMusic(d.nodeId, d.durSec, d.offset).then(() => onNodesChanged?.())
+      // 押し出しの結果も含めて、いま画面に出ている配置をそのまま保存する。
+      // 押されただけの札は尺に触らない（自動のままのものを固定値に変えてしまわないように）。
+      const rows = layoutBlocks.map((b) => ({
+        nodeId: b.key,
+        startSec: b.startSec,
+        durSec: b.key === d.nodeId ? b.durSec : (nodeById.get(b.key)?.durSec ?? null),
+        srcOffset: b.srcOffset
+      }))
+      // 保存が返るまでは画面をこの配置のまま保つ（戻ってから飛ぶのを防ぐ）
+      setPending(new Map(rows.map((r) => [r.nodeId, r])))
+      void api
+        .updateSequenceNodeMusicMany(rows)
+        .then(async () => {
+          // 順路の並びを時刻順に揃える（ノードグラフ側と食い違わないように）
+          if (sequenceId != null) {
+            await api.setSequenceOrder(
+              sequenceId,
+              layoutBlocks.map((b) => b.key)
+            )
+          }
+          onNodesChanged?.()
+        })
+        .catch(() => {
+          // 保存できなければ控えを捨てて、保存済みの状態を正として描き直す
+          setPending(null)
+          onStatus?.('配置を保存できませんでした', 'err')
+        })
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -420,7 +608,18 @@ export const MusicTimeline = memo(function MusicTimeline({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [drag, wave, effPps, insertIndexAtX, onNodesChanged, orderIds, sequenceId, snapSec])
+  }, [
+    drag,
+    wave,
+    effPps,
+    floorSec,
+    layoutBlocks,
+    nodeById,
+    onNodesChanged,
+    onStatus,
+    sequenceId,
+    snapSec
+  ])
 
   /** 選択中のクリップを削除する */
   const deleteSelected = useCallback(
@@ -454,7 +653,14 @@ export const MusicTimeline = memo(function MusicTimeline({
     if (!layout) return []
     return layout.blocks.map((b) => {
       const inSec = (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset
-      return { nodeId: b.key, clip: b.clip, inSec, outSec: inSec + (b.endSec - b.startSec) }
+      return {
+        nodeId: b.key,
+        clip: b.clip,
+        inSec,
+        outSec: inSec + (b.endSec - b.startSec),
+        // 隙間を飛ばしても曲とズレないように、曲のどこに置いてあるかも渡す
+        songSec: b.startSec
+      }
     })
   }, [layout])
 
@@ -477,18 +683,95 @@ export const MusicTimeline = memo(function MusicTimeline({
     }
   }, [queueRef, seqBgm, layout, buildPlayItems])
 
-  /** 曲の時刻 → シーケンス先頭からの経過秒（前詰めなので単純な引き算で対応する） */
+  /**
+   * 曲の時刻 → シーケンス先頭からの経過秒。
+   * 再生は隙間を飛ばして詰めて鳴るので、手前のクリップの尺を積み上げて換算する
+   * （隙間の中を指したときは、その次のクリップの頭に着地させる）。
+   */
   const songToSeqSec = useCallback(
     (songSec: number): number => {
-      const first = layout?.blocks[0]
-      return first ? songSec - first.startSec : 0
+      let acc = 0
+      for (const b of layoutBlocks) {
+        if (songSec < b.startSec) return acc
+        if (songSec < b.endSec) return acc + (songSec - b.startSec)
+        acc += b.durSec
+      }
+      return acc
     },
-    [layout]
+    [layoutBlocks]
   )
 
-  /** 尺の指定を捨てて自動（元の区間の残り全部）へ戻す */
+  /**
+   * 曲トラックのスクラブ（DaVinci Resolve のスクラブ相当）。
+   *
+   * - ドラッグ中は**再生ヘッドと曲の音だけ**を動かす。映像のシークは重いので離してから 1 回だけ行う。
+   * - **停止中はその位置の曲を鳴らす。** 再生用の `<audio>` は App が持っていて再生状態と結びついて
+   *   いるため、スクラブ専用の `<audio>` を別に持つ（再生中は App 側が鳴らしているので鳴らさない）。
+   */
+  const scrubAudioRef = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    return () => {
+      scrubAudioRef.current?.pause()
+      scrubAudioRef.current = null
+    }
+  }, [])
+
+  const startScrub = (e: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (!seqBgm || !layout?.blocks.length || e.button !== 0) return
+    // canvas は 1px のボーダーを持つので、描画原点はボーダーの内側。
+    // 目盛りと再生ヘッドに合わせるため、その分を引く。
+    const rect = e.currentTarget.getBoundingClientRect()
+    const border = e.currentTarget.clientLeft
+    const at = (clientX: number): number =>
+      Math.max(0, snapSeconds((clientX - rect.left - border) / effPps, snapSec))
+    e.preventDefault()
+
+    // 停止中だけスクラブ音を出す（再生中は App 側の音とぶつかる）
+    let audio: HTMLAudioElement | null = null
+    if (!playing) {
+      audio = scrubAudioRef.current ?? new Audio()
+      scrubAudioRef.current = audio
+      const url = api.bgmUrl(seqBgm.relPath)
+      if (audio.src !== url) audio.src = url
+      audio.volume = 0.7
+    }
+
+    let songSec = at(e.clientX)
+    const apply = (s: number): void => {
+      songSec = s
+      moveHead(s)
+      if (audio) {
+        audio.currentTime = s
+        if (audio.paused) audio.play().catch(() => void 0)
+      }
+    }
+    apply(songSec)
+
+    const onMove = (ev: MouseEvent): void => apply(at(ev.clientX))
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      audio?.pause()
+      const ts = songToSeqSec(songSec)
+      if (ts < 0 || !onSeek) return // シーケンスが始まる前（イントロ部分）は無視する
+      // 指した位置をその場で出し、直後のシーク着地誤差では動かさない
+      seekGuardRef.current = performance.now() + 600
+      moveHead(songSec)
+      onSeek(buildPlayItems(), ts, {
+        relPath: seqBgm.relPath,
+        startOffsetSec: seqBgm.startOffsetSec
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  /** 尺の指定を捨てて自動（元の区間の残り全部）へ戻す。置いてある位置は動かさない。 */
   const resetDur = (nodeId: number): void => {
-    void api.updateSequenceNodeMusic(nodeId, null, 0).then(() => onNodesChanged?.())
+    const b = layoutBlocks.find((x) => x.key === nodeId)
+    void api
+      .updateSequenceNodeMusic(nodeId, b?.startSec ?? null, null, 0)
+      .then(() => onNodesChanged?.())
   }
 
   /**
@@ -720,6 +1003,20 @@ export const MusicTimeline = memo(function MusicTimeline({
               : `曲より ${fmtSec(-layout.slackSec)} 長い`}
           </span>
         )}
+        {/*
+          隙間の警告。いまは隙間を埋める映像を作れないので書き出しを止めている
+          （黒フィラーの挿入は別作業。plan.md の Phase 2.6c を参照）。
+        */}
+        {!!layout?.gaps.length && (
+          <span
+            className="mtl-slack over"
+            title={layout.gaps
+              .map((g) => `${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
+              .join('\n')}
+          >
+            隙間 {layout.gaps.length} か所（書き出せません）
+          </span>
+        )}
         <button className="mtl-zoom" onClick={() => setPps((v) => Math.max(MIN_PPS, v / 1.5))}>
           −
         </button>
@@ -754,9 +1051,18 @@ export const MusicTimeline = memo(function MusicTimeline({
             </label>
             <button
               className="btn primary"
-              disabled={!wave || !layout?.blocks.length || !seqBgm || exporting}
+              disabled={
+                !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout?.gaps.length
+              }
               onClick={() => {
-                if (!seqBgm) return
+                if (!seqBgm || !layout) return
+                if (layout.gaps.length) {
+                  onStatus?.(
+                    `クリップの間に隙間が ${layout.gaps.length} か所あります（最初は ${fmtSec(layout.gaps[0].startSec)}）。隙間を埋める映像をまだ作れないため書き出せません。`,
+                    'err'
+                  )
+                  return
+                }
                 void buildExportItems().then((exportItems) =>
                   onExport(exportItems, {
                     relPath: seqBgm.relPath,
@@ -766,7 +1072,11 @@ export const MusicTimeline = memo(function MusicTimeline({
                   })
                 )
               }}
-              title="指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す"
+              title={
+                layout?.gaps.length
+                  ? 'クリップの間に隙間があるため書き出せません（隙間を詰めてください）'
+                  : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
+              }
             >
               書き出し…
             </button>
@@ -782,37 +1092,15 @@ export const MusicTimeline = memo(function MusicTimeline({
       ) : (
         <div className="mtl-scroll">
           <div className="mtl-inner" style={{ width: contentW }}>
-            {/* 曲トラック（上）: ルーラー + 波形。クリックで頭出しする */}
-            <canvas
-              ref={canvasRef}
-              className="mtl-canvas"
-              onClick={(e) => {
-                if (!onSeek || !seqBgm || !layout?.blocks.length) return
-                // canvas は 1px のボーダーを持つので、描画原点はボーダーの内側。
-                // 目盛りと再生ヘッドに合わせるため、その分を引く。
-                const rect = e.currentTarget.getBoundingClientRect()
-                const border = e.currentTarget.clientLeft
-                const clicked = (e.clientX - rect.left - border) / effPps
-                // 頭出しも「吸着」単位に丸める（「なし」なら指した位置そのまま）
-                const songSec = snapSeconds(clicked, snapSec)
-                const ts = songToSeqSec(songSec)
-                if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
-                // 吸着位置をその場で出し、直後のシーク着地誤差では動かさない
-                seekGuardRef.current = performance.now() + 600
-                moveHead(songSec)
-                onSeek(buildPlayItems(), ts, {
-                  relPath: seqBgm.relPath,
-                  startOffsetSec: seqBgm.startOffsetSec
-                })
-              }}
-            />
+            {/* 曲トラック（上）: ルーラー + 波形。ドラッグでスクラブ、離した位置で頭出しする */}
+            <canvas ref={canvasRef} className="mtl-canvas" onMouseDown={startScrub} />
 
             {/* 再生ヘッド（シルバー。アクセント色とは別系統 / style-guide 1.2） */}
             <div ref={headRef} className="mtl-head-line" style={{ display: 'none' }}>
               <span className="mtl-head-marker" />
             </div>
 
-            {/* クリップ列（下）: 前詰め */}
+            {/* クリップ列（下）: 絶対位置。隙間を空けられる */}
             <div
               className={`mtl-clips${dropAt != null ? ' dropping' : ''}`}
               style={{ height: TRACK_H }}
@@ -821,31 +1109,22 @@ export const MusicTimeline = memo(function MusicTimeline({
                 if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'copy'
-                setDropAt(insertIndexAtX(e.clientX))
+                setDropAt(Math.max(floorSec, snapSeconds(secAtX(e.clientX), snapSec)))
               }}
               onDragLeave={() => setDropAt(null)}
               onDrop={(e) => {
                 const idStr = e.dataTransfer.getData('application/x-dcm-clip')
-                const at = dropAt ?? insertIndexAtX(e.clientX)
+                const at = dropAt ?? Math.max(floorSec, snapSeconds(secAtX(e.clientX), snapSec))
                 setDropAt(null)
                 if (!idStr || !onDropClip) return
                 e.preventDefault()
                 void onDropClip(Number(idStr), at)
               }}
             >
-              {/* 挿入位置のインジケータ（並べ替え中 / パレットからのドロップ中） */}
-              {(() => {
-                const at = dropAt ?? (drag?.kind === 'move' && drag.moved ? drag.insertAt : null)
-                if (at == null || !layout) return null
-                const blocks = layout.blocks
-                const sec =
-                  at <= 0
-                    ? (blocks[0]?.startSec ?? 0)
-                    : at >= blocks.length
-                      ? (blocks[blocks.length - 1]?.endSec ?? 0)
-                      : blocks[at].startSec
-                return <div className="mtl-insert" style={{ left: Math.round(sec * effPps) }} />
-              })()}
+              {/* ドロップ位置のインジケータ（掴んで動かす札は現物がその場に出るので不要） */}
+              {dropAt != null && (
+                <div className="mtl-insert" style={{ left: Math.round(dropAt * effPps) }} />
+              )}
 
               {layout?.blocks.map((b) => {
                 const left = Math.round(b.startSec * effPps)
@@ -875,7 +1154,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                     }}
                     title={[
                       b.clip.label ?? `区間 #${b.clip.id}`,
-                      `${fmtSec(b.durSec)}${b.manual ? '' : '（自動: 元の長さのまま）'}`,
+                      `${fmtSec(b.startSec)} から ${fmtSec(b.durSec)}${
+                        b.manual ? '' : '（尺は自動: 元の長さのまま）'
+                      }`,
                       `元の長さ ${fmtSec(clipDuration(b.clip))}${
                         b.srcOffset > 0.05 ? ` / ${fmtSec(b.srcOffset)} 目から使用` : ''
                       }`,
@@ -884,7 +1165,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                         : b.trimmedSec > 0.05
                           ? `${fmtSec(b.trimmedSec)} 捨てています`
                           : '',
-                      '右端ドラッグ: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす / ダブルクリック: 自動に戻す'
+                      '本体ドラッグ: 位置を移動（重なった札は押し出される）',
+                      '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
+                      'ダブルクリック: 尺を自動に戻す'
                     ]
                       .filter(Boolean)
                       .join('\n')}
@@ -906,7 +1189,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                           : ''}
                       </span>
                     </span>
-                    {/* 右端の伸縮ハンドル（見た目は出さず、当たり判定だけ広げる） */}
+                    {/* 両端のトリムハンドル（見た目は出さず、カーソルと当たり判定だけ） */}
+                    <span className="mtl-clip-handle left" />
                     <span className="mtl-clip-handle" />
                   </div>
                 )

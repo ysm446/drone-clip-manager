@@ -2639,7 +2639,8 @@ body.resizing {
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
-/* 右端の伸縮ハンドル: 見た目の線は出さず、掴める幅だけ広げる（style-guide 8） */
+/* 両端のトリムハンドル: 見た目の線は出さず、掴める幅だけ広げる（style-guide 8）
+   左 = イン点のトリム / 右 = 尺の変更。中身はカードごとの移動なので grab にする。 */
 .mtl-clip-handle {
   position: absolute;
   top: 0;
@@ -2647,6 +2648,13 @@ body.resizing {
   bottom: 0;
   width: 8px;
   cursor: ew-resize;
+}
+.mtl-clip-handle.left {
+  right: auto;
+  left: 0;
+}
+.mtl-clip {
+  cursor: grab;
 }
 /* Alt を押している間は中身をスライドできる（スリップ編集） */
 .mtl-clip:active {
@@ -2743,8 +2751,9 @@ body.resizing {
   border-radius: var(--radius-s) var(--radius-s) 0 0;
 }
 /* 曲トラックはクリックで頭出しできる */
+/* 曲トラックはドラッグでスクラブする（掴んで動かす操作なので pointer ではなく ew-resize） */
 .mtl-canvas {
-  cursor: pointer;
+  cursor: ew-resize;
 }
 /* クリップの中身: サムネイル + テキスト（狭いときはテキストのみ） */
 .mtl-clip-thumb {

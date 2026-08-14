@@ -41,6 +41,12 @@ export interface SeqPlayItem {
    */
   inSec?: number
   outSec?: number
+  /**
+   * この項目が曲のどこに置かれているか（秒 / 音楽ビューの絶対位置）。
+   * クリップの間に隙間があると「再生した尺の合計」と曲の位置がずれるため、
+   * 曲を合わせ直す基準として渡す。未指定なら尺の合計から求める（従来どおり）。
+   */
+  songSec?: number
 }
 
 /** 連続再生に合わせて鳴らす BGM（音楽モード） */
@@ -62,6 +68,19 @@ export function itemIn(it: SeqPlayItem): number {
 }
 export function itemOut(it: SeqPlayItem): number {
   return it.outSec ?? it.clip.outSnapped ?? it.clip.outTime
+}
+
+/**
+ * 項目 i を頭から再生するとき、曲がいるべき位置（秒）。
+ * `songSec` があればそれを使う（音楽ビューの絶対位置。隙間を飛ばしても曲とズレない）。
+ * 無ければ従来どおり「それまでのクリップ尺の合計」から求める。
+ */
+export function songPosAt(q: SeqPlayItem[], i: number, startOffsetSec: number): number {
+  const it = q[i]
+  if (it?.songSec != null) return it.songSec
+  let elapsed = 0
+  for (let k = 0; k < i && k < q.length; k++) elapsed += Math.max(0, itemOut(q[k]) - itemIn(q[k]))
+  return startOffsetSec + elapsed
 }
 
 interface Props {
@@ -367,6 +386,7 @@ export const SequenceView = memo(function SequenceView({
         segmentId: n.segmentId,
         x: n.x,
         y: n.y,
+        startSec: n.startSec,
         durSec: n.durSec,
         srcOffset: n.srcOffset
       })),
@@ -391,6 +411,7 @@ export const SequenceView = memo(function SequenceView({
           segmentId: n.segmentId,
           x: n.x,
           y: n.y,
+          startSec: n.startSec,
           durSec: n.durSec,
           srcOffset: n.srcOffset
         })),
@@ -635,6 +656,7 @@ export const SequenceView = memo(function SequenceView({
             segmentId: n.segmentId,
             x: o?.x ?? n.x,
             y: o?.y ?? n.y,
+            startSec: n.startSec,
             durSec: n.durSec,
             srcOffset: n.srcOffset
           }
@@ -807,10 +829,10 @@ export const SequenceView = memo(function SequenceView({
 
   /**
    * 音楽タイムラインへのドロップ配置（Phase 2.6c 段階 3b）。
-   * ノードを作ってから、順路の指定位置へ挿し込む。
+   * ノードを作って**落とされた時刻へ置き**、順路は時刻順に張り直す。
    * ノードグラフ側の座標は順路の末尾に並べておく（あとで開いても迷子にならないように）。
    */
-  const dropClipIntoOrder = async (segmentId: number, insertAt: number): Promise<void> => {
+  const dropClipIntoOrder = async (segmentId: number, startSec: number): Promise<void> => {
     if (activeId == null) return
     const before = graphSnapshot()
     const order = playItemsRef.current.map((it) => it.nodeId)
@@ -821,8 +843,14 @@ export const SequenceView = memo(function SequenceView({
       Math.round((lastNode?.x ?? 0) + NODE_W + 40),
       Math.round(lastNode?.y ?? 0)
     )
-    const next = order.slice()
-    next.splice(Math.max(0, Math.min(insertAt, next.length)), 0, node.id)
+    // 尺は未指定（元の区間の残り全部）。位置だけ落とされた場所に確定させる。
+    await api.updateSequenceNodeMusic(node.id, startSec, null, 0)
+    // 順路は時刻順。未配置のノード（位置が無いもの）は末尾に回す。
+    const startOf = new Map(nodesRef.current.map((n) => [n.id, n.startSec ?? Number.POSITIVE_INFINITY]))
+    startOf.set(node.id, startSec)
+    const next = [...order, node.id].sort(
+      (a, b) => (startOf.get(a) ?? Infinity) - (startOf.get(b) ?? Infinity)
+    )
     await api.setSequenceOrder(activeId, next)
     await reload(activeId)
     await pushGraphUndo('タイムラインへの配置', before)
@@ -1244,6 +1272,7 @@ export const SequenceView = memo(function SequenceView({
             queueRef={musicQueueRef}
             onSeek={seekMusic}
             onDeleteClips={removeMusicClips}
+            playing={isPlaying}
             onExport={runMusicExport}
             exporting={exporting != null}
           />

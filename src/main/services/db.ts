@@ -127,9 +127,12 @@ export function getDb(): Database.Database {
 
 // 音楽タイムライン用の列を sequence_nodes に足す（Phase 2.6c 段階 3）。
 // CREATE TABLE IF NOT EXISTS では既存 DB に列が増えないため、ここで追加する。
+// - start_sec  : タイムライン上の開始位置（秒）。null は「未配置」で、
+//                音楽ビューを開いたときに前詰めの位置を書き込んで確定させる
 // - dur_sec    : 尺（秒）。null は「元の区間の残り全部を使う」
 // - src_offset : 元の区間のどこから使うか（秒）
 const SEQ_NODE_MUSIC_COLUMNS: [string, string][] = [
+  ['start_sec', 'REAL'],
   ['dur_sec', 'REAL'],
   ['src_offset', 'REAL NOT NULL DEFAULT 0']
 ]
@@ -688,6 +691,7 @@ interface SequenceNodeRow {
   segment_id: number
   x: number
   y: number
+  start_sec: number | null
   dur_sec: number | null
   src_offset: number
 }
@@ -700,6 +704,7 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
     segmentId: r.segment_id,
     x: r.x,
     y: r.y,
+    startSec: r.start_sec ?? null,
     durSec: r.dur_sec ?? null,
     srcOffset: r.src_offset ?? 0,
     clip: clipBySeg.get(r.segment_id) ?? null
@@ -707,17 +712,34 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
 }
 
 /**
- * 音楽タイムラインでの尺（秒）と使用開始位置を更新する（Phase 2.6c 段階 3）。
+ * 音楽タイムラインでの配置（開始位置・尺・使用開始位置）を更新する（Phase 2.6c 段階 3）。
  * 元の segments は書き換えない（ライブラリ側のブックマークは不変）。
  */
 export function updateSequenceNodeMusic(
   nodeId: number,
+  startSec: number | null,
   durSec: number | null,
   srcOffset: number
 ): void {
   getDb()
-    .prepare('UPDATE sequence_nodes SET dur_sec = ?, src_offset = ? WHERE id = ?')
-    .run(durSec, srcOffset, nodeId)
+    .prepare('UPDATE sequence_nodes SET start_sec = ?, dur_sec = ?, src_offset = ? WHERE id = ?')
+    .run(startSec, durSec, srcOffset, nodeId)
+}
+
+/**
+ * 複数ノードの配置をまとめて更新する。
+ * 押し出し（1 枚動かすと後続が連鎖して動く）と、未配置ノードへの前詰め位置の書き込みで使う。
+ */
+export function updateSequenceNodeMusicMany(
+  rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
+): void {
+  const d = getDb()
+  const upd = d.prepare(
+    'UPDATE sequence_nodes SET start_sec = ?, dur_sec = ?, src_offset = ? WHERE id = ?'
+  )
+  d.transaction(() => {
+    for (const r of rows) upd.run(r.startSec, r.durSec, r.srcOffset, r.nodeId)
+  })()
 }
 
 /**
@@ -871,6 +893,7 @@ export function restoreSequenceGraph(
     segmentId: number
     x: number
     y: number
+    startSec?: number | null
     durSec?: number | null
     srcOffset?: number
   }[],
@@ -880,13 +903,22 @@ export function restoreSequenceGraph(
   const tx = d.transaction(() => {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(sequenceId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
-    // 音楽タイムラインの尺も一緒に戻す（落とすと undo で尺の指定が消える）
+    // 音楽タイムラインの配置も一緒に戻す（落とすと undo で配置が消える）
     const insN = d.prepare(
-      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, dur_sec, src_offset)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const n of nodes) {
-      insN.run(n.id, sequenceId, n.segmentId, n.x, n.y, n.durSec ?? null, n.srcOffset ?? 0)
+      insN.run(
+        n.id,
+        sequenceId,
+        n.segmentId,
+        n.x,
+        n.y,
+        n.startSec ?? null,
+        n.durSec ?? null,
+        n.srcOffset ?? 0
+      )
     }
     const insE = d.prepare(
       'INSERT INTO sequence_edges (id, sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?, ?)'
