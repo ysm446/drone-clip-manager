@@ -96,6 +96,11 @@ interface Props {
   musicQueueRef?: React.MutableRefObject<MusicQueueGetter | null>
   /** パレットのクリップを上部プレイヤーで再生する（ClipsView と同じ経路） */
   onOpenClip: (clip: ClipItem) => void
+  /**
+   * 音楽タイムラインでクリップを選んだときの通知。
+   * 上部プレイヤーの in/out ナッジの対象を、選んだクリップへ切り替えるために使う。
+   */
+  onSelectClip?: (clip: ClipItem) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
   onEditClip: (clip: ClipItem) => void
   /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
@@ -190,6 +195,7 @@ export const SequenceView = memo(function SequenceView({
   onStopSequence,
   musicQueueRef,
   onOpenClip,
+  onSelectClip,
   onEditClip,
   onEditInLibrary,
   onExport,
@@ -1273,6 +1279,7 @@ export const SequenceView = memo(function SequenceView({
             onSeek={seekMusic}
             onDeleteClips={removeMusicClips}
             playing={isPlaying}
+            onSelectClip={onSelectClip}
             onExport={runMusicExport}
             exporting={exporting != null}
           />

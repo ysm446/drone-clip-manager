@@ -164,6 +164,11 @@ interface Props {
   onDeleteClips?: (nodeIds: number[]) => Promise<void>
   /** 連続再生中か。スクラブ音を鳴らすかどうかの判断に使う（再生中は App 側が鳴らしている） */
   playing?: boolean
+  /**
+   * クリップを選んだときの通知。上部プレイヤーの in/out ナッジの対象を、
+   * 再生中のクリップではなく**選んだクリップ**にするために使う。
+   */
+  onSelectClip?: (clip: ClipItem) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (
     items: { videoRelPath: string; inSec: number; outSec: number }[],
@@ -184,6 +189,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   onSeek,
   onDeleteClips,
   playing,
+  onSelectClip,
   onExport,
   exporting,
   onStatus
@@ -204,6 +210,10 @@ export const MusicTimeline = memo(function MusicTimeline({
     return SNAP_SECS.some((u) => u.sec === saved) ? saved : 0.5
   })
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  /** 横スクロールの器。再生ヘッドが画面外へ出たときの追従に使う。 */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  /** スクラブ中は自動追従を止める（見る場所は本人が決めているため） */
+  const scrubbingRef = useRef(false)
   const clipsRef = useRef<HTMLDivElement>(null)
   /**
    * 再生ヘッド。React の再レンダリングを介さず DOM の transform だけを更新する
@@ -475,6 +485,19 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   // --- 編集（尺の変更 / 使用範囲のスライド）---
 
+  /**
+   * クリップを 1 つ選ぶ。選択の見た目だけでなく **in/out ナッジの対象も切り替える**
+   * （そうしないと、選んでいるクリップではなく再生中のクリップが伸び縮みする）。
+   */
+  const selectOne = useCallback(
+    (nodeId: number): void => {
+      setSelected(new Set([nodeId]))
+      const clip = items.find((it) => it.nodeId === nodeId)?.clip
+      if (clip) onSelectClip?.(clip)
+    },
+    [items, onSelectClip]
+  )
+
   /** 画面 X → 曲の時刻（秒） */
   const secAtX = useCallback(
     (clientX: number): number => {
@@ -571,7 +594,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       setDrag(null)
       // 動かさずに離した = クリック: そのクリップを選択する
       if (!d.moved) {
-        setSelected(new Set([d.nodeId]))
+        selectOne(d.nodeId)
         return
       }
       // 押し出しの結果も含めて、いま画面に出ている配置をそのまま保存する。
@@ -736,6 +759,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       audio.volume = 0.7
     }
 
+    scrubbingRef.current = true
     let songSec = at(e.clientX)
     const apply = (s: number): void => {
       songSec = s
@@ -751,6 +775,7 @@ export const MusicTimeline = memo(function MusicTimeline({
     const onUp = (): void => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      scrubbingRef.current = false
       audio?.pause()
       const ts = songToSeqSec(songSec)
       if (ts < 0 || !onSeek) return // シーケンスが始まる前（イントロ部分）は無視する
@@ -833,8 +858,20 @@ export const MusicTimeline = memo(function MusicTimeline({
       headSecRef.current = songSec
       const el = headRef.current
       if (!el) return
-      el.style.transform = `translateX(${Math.round(songSec * effPps)}px)`
+      const x = Math.round(songSec * effPps)
+      el.style.transform = `translateX(${x}px)`
       el.style.display = 'block'
+
+      // 画面の外へ出たら横スクロールを追従させる。
+      // 端に貼り付ける方式だと再生中ずっと右端に張り付いて先が見えないので、
+      // **ヘッドが左から 1/8 の位置へ来るように送る**（ページめくり式）。
+      // スクラブ中は本人が見る場所を決めているので触らない。
+      const sc = scrollRef.current
+      if (!sc || scrubbingRef.current) return
+      const margin = 24
+      if (x < sc.scrollLeft + margin || x > sc.scrollLeft + sc.clientWidth - margin) {
+        sc.scrollLeft = Math.max(0, x - sc.clientWidth / 8)
+      }
     },
     [effPps]
   )
@@ -1090,7 +1127,7 @@ export const MusicTimeline = memo(function MusicTimeline({
           上のプルダウンで曲を選ぶと、波形の上にクリップが並びます。
         </div>
       ) : (
-        <div className="mtl-scroll">
+        <div className="mtl-scroll" ref={scrollRef}>
           <div className="mtl-inner" style={{ width: contentW }}>
             {/* 曲トラック（上）: ルーラー + 波形。ドラッグでスクラブ、離した位置で頭出しする */}
             <canvas ref={canvasRef} className="mtl-canvas" onMouseDown={startScrub} />
@@ -1165,7 +1202,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                     onDoubleClick={() => resetDur(b.key)}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      setSelected(new Set([b.key]))
+                      selectOne(b.key)
                       setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
                     }}
                     title={[

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { RootInfo, Segment, TagCount, TreeNode, VideoMeta } from '../../shared/types'
+import type {
+  ClipItem,
+  RootInfo,
+  Segment,
+  TagCount,
+  TreeNode,
+  VideoMeta
+} from '../../shared/types'
 import { clearUndo, performRedo, performUndo, pushUndo, registerUndoRefresh } from './undo'
 import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
@@ -1209,6 +1216,29 @@ export function App() {
     [selectedSeg, segments, keyframes, duration, meta, updateSegmentTimes, setClipPlayRange, view]
   )
 
+  /**
+   * 音楽タイムラインでクリップを選んだとき: in/out ナッジの対象をそのクリップにする。
+   * これが無いと、`loadSeqIndex` が立てた「再生中のクリップ」が対象のままになり、
+   * 選んでいるクリップではなく再生中のクリップが伸び縮みする。
+   */
+  const selectMusicClip = useCallback(
+    (clip: ClipItem) => {
+      setSelectedSeg(clip.id)
+      // ナッジは「いま開いている動画」のキーフレームと区間を使うので、別動画なら読み込む。
+      // 再生中に映像を切り替えると連続再生が壊れるので、そのときは触らない
+      // （その場合 `nudgeSelectedSeg` は対象の区間を見つけられず何もしない）。
+      const playingNow = mpvModeRef.current
+        ? !mpvPausedRef.current
+        : !!videoRef.current && !videoRef.current.paused
+      if (!playingNow && currentRelRef.current !== clip.videoRelPath) {
+        void selectVideo(clip.videoRelPath).then(() => {
+          if (currentRelRef.current === clip.videoRelPath) setSelectedSeg(clip.id)
+        })
+      }
+    },
+    [selectVideo]
+  )
+
   const deleteSeg = useCallback(
     async (id: number) => {
       const seg = segmentsRef.current.find((s) => s.id === id)
@@ -2114,6 +2144,7 @@ export function App() {
               onSeekMusic={seekMusic}
               onStopSequence={stopSequence}
               musicQueueRef={musicQueueRef}
+              onSelectClip={selectMusicClip}
               onOpenClip={openClip}
               onEditClip={editAsClip}
               onEditInLibrary={editInLibrary}

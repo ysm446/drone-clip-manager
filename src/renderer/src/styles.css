@@ -2788,9 +2788,10 @@ body.resizing {
   min-width: 0;
   overflow: hidden;
 }
-/* 選択中のクリップ（Delete / 右クリックメニューの対象） */
+/* 選択中のクリップ（Delete / 右クリックメニュー / in・out ナッジの対象）。
+   素材色の面に対して 2px では埋もれるので、ここだけ 3px にする（style-guide 5.12）。 */
 .mtl-clip.selected {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 3px var(--accent);
 }
 /* サムネイル表示トグルの ON */
 .mtl-zoom.on {
