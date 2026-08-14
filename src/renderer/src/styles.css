@@ -2668,6 +2668,21 @@ body.resizing {
 .mtl-clip.dragging {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+/* クリップの間の隙間。書き出しを止める状態なので警告色の斜線で示す。
+   数ピクセルでも見えるよう最小幅 2px を JS 側で確保している。 */
+.mtl-gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: auto;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--warn) 26%, transparent) 0 3px,
+    transparent 3px 7px
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent);
+  z-index: 1;
+}
 /* 挿入位置のインジケータ（並べ替え / パレットからのドロップ） */
 .mtl-insert {
   position: absolute;

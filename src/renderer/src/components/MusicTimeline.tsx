@@ -1121,6 +1121,22 @@ export const MusicTimeline = memo(function MusicTimeline({
                 void onDropClip(Number(idStr), at)
               }}
             >
+              {/*
+                クリップの間の隙間。書き出しを止めるうえに、再生では曲だけが飛ぶので、
+                数ピクセルでも気づけるように明示する（縮めた直後は特に見落としやすい）。
+              */}
+              {layout?.gaps.map((g) => (
+                <div
+                  key={g.startSec}
+                  className="mtl-gap"
+                  style={{
+                    left: Math.round(g.startSec * effPps),
+                    width: Math.max(2, Math.round((g.endSec - g.startSec) * effPps))
+                  }}
+                  title={`隙間 ${fmtSec(g.endSec - g.startSec)}（${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}）\nここは書き出せません。再生では曲だけが先へ飛びます。`}
+                />
+              ))}
+
               {/* ドロップ位置のインジケータ（掴んで動かす札は現物がその場に出るので不要） */}
               {dropAt != null && (
                 <div className="mtl-insert" style={{ left: Math.round(dropAt * effPps) }} />

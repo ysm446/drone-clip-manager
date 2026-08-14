@@ -29,9 +29,11 @@ import { colorForIndex, fmtSec, fmtSize, fmtTime, keyframeAfter, keyframeBefore 
 const api = window.dcm
 
 /**
- * 連続再生中、曲と映像の食い違いがこれ（秒）を超えたら曲のほうを合わせ直す。
+ * 連続再生中、**曲が映像より遅れている**幅がこれ（秒）を超えたら曲を前へ送る。
  * 音楽ビューでクリップの間に隙間を空けると、映像は隙間を飛ばすので曲だけが取り残される。
- * これ未満のズレは、従来どおり映像側で追いつく（曲を触ると音が飛んで聞こえるため）。
+ *
+ * 逆向き（曲が先行している）ときは触らない。それはクリップの読み込み待ちで映像が遅れている
+ * だけで、曲を戻すと境目で毎回音が跳ねて聞こえる。そちらは映像側を早送りして追いつく。
  */
 const SONG_RESYNC_SEC = 0.25
 
@@ -633,11 +635,12 @@ export function App() {
     // （上部の再生ボタンだけで映像を止めても音が鳴り続けるのを防ぐ）。
     if (bgm && audio && seqQueueRef.current.length > 0) {
       if (willPlay) {
-        // 再開位置に曲を合わせる（そのクリップが曲のどこにいるか + クリップ内の経過）
+        // 再開位置に曲を合わせる（そのクリップが曲のどこにいるか + クリップ内の経過）。
+        // **クリップ内の経過は `currentTimeRef` から取ること。** `videoRef` は mpv 経路では
+        // null なので、そちらを見ると経過が常に 0 になり、そのクリップの頭から鳴り直す。
         const q = seqQueueRef.current
         const idx = Math.max(0, Math.min(seqIndexRef.current, q.length - 1))
-        const v = videoRef.current
-        const into = v ? Math.max(0, v.currentTime - itemIn(q[idx])) : 0
+        const into = Math.max(0, currentTimeRef.current - itemIn(q[idx]))
         audio.currentTime = songPosAt(q, idx, bgm.startOffsetSec) + into
         audio.play().catch(() => void 0)
       } else {
@@ -780,12 +783,14 @@ export function App() {
         const want = songPosAt(q, i, bgm.startOffsetSec)
         const drift = audio.currentTime - want
         const dur = Math.max(0, itemOut(item) - itemIn(item))
-        if (Math.abs(drift) > SONG_RESYNC_SEC) {
-          // 大きく食い違うとき（音楽ビューでクリップの間に隙間を空けた場合など）は
-          // 曲のほうを合わせ直す。映像が隙間を飛ばすので、曲も一緒に飛ばす。
+        // **符号で扱いを分ける。** 曲を戻すと音が跳ねて聞こえるので、前へ送るときだけ触る。
+        if (drift < -SONG_RESYNC_SEC) {
+          // 曲が置いてきぼり = 映像が隙間を飛び越えた。曲も一緒に前へ送る。
           audio.currentTime = want
         } else if (drift > 0.05) {
-          // 1 クリップぶんを超える遅れは追いつけないので諦める（音側を戻さない方針）
+          // 曲が先行 = クリップの読み込み待ちで映像が遅れただけ。**曲は戻さず映像側で追いつく**
+          // （4K の読み込みは 0.25 秒を超えることがあり、ここで曲を戻すと境目で毎回音が飛ぶ）。
+          // 1 クリップぶんを超える遅れは追いつけないので諦める。
           catchUp = Math.min(drift, Math.max(0, dur - 0.2))
         }
       }
@@ -831,9 +836,15 @@ export function App() {
         const next = seqIndexRef.current + 1
         if (next < seqQueueRef.current.length) loadSeqIndex(next)
         else if (seqLoop) {
-          // ループ ON: 末尾で止めずに先頭へ戻る。BGM も使い始め位置へ巻き戻す。
+          // ループ ON: 末尾で止めずに先頭へ戻る。BGM も先頭クリップの曲位置へ巻き戻す。
           const bgm = seqBgmRef.current
-          if (bgm && seqAudioRef.current) seqAudioRef.current.currentTime = bgm.startOffsetSec
+          if (bgm && seqAudioRef.current) {
+            seqAudioRef.current.currentTime = songPosAt(
+              seqQueueRef.current,
+              0,
+              bgm.startOffsetSec
+            )
+          }
           loadSeqIndex(0)
         } else stopSequence()
       }
@@ -874,10 +885,10 @@ export function App() {
           const url = api.bgmUrl(bgm.relPath)
           if (audio.src !== url) audio.src = url
           audio.volume = 0.7 // BGM プレイヤーの既定音量に合わせる
-          // 再開時は「いまの映像位置」に曲を合わせる（先頭から鳴らし直さない）
+          // 再開時は「いまの映像位置」に曲を合わせる（先頭から鳴らし直さない）。
+          // クリップ内の経過は `currentTimeRef` から取る（`videoRef` は mpv 経路では null）。
           if (resuming) {
-            const v = videoRef.current
-            const into = v ? Math.max(0, v.currentTime - itemIn(items[idx])) : 0
+            const into = Math.max(0, currentTimeRef.current - itemIn(items[idx]))
             audio.currentTime = songPosAt(items, idx, bgm.startOffsetSec) + into
           } else {
             audio.currentTime = songPosAt(items, 0, bgm.startOffsetSec)
@@ -959,7 +970,12 @@ export function App() {
       const audio = seqAudioRef.current
       if (bgm && audio) {
         const playingNow = !!videoRef.current && !videoRef.current.paused
-        audio.currentTime = bgm.startOffsetSec + Math.max(0, ts)
+        // **曲の位置は `songPosAt` から求める**（`seekMusic` と同じ理由）。
+        // シーケンス時間をそのまま曲の位置に使うと、自由配置では合わず、
+        // そのまま再生すると次のクリップの境目で曲が飛ぶ。
+        const q = seqQueueRef.current
+        audio.currentTime =
+          songPosAt(q, loc.idx, bgm.startOffsetSec) + Math.max(0, loc.sec - itemIn(q[loc.idx]))
         if (playingNow) audio.play().catch(() => void 0)
         else audio.pause()
       }
@@ -993,16 +1009,23 @@ export function App() {
       setClipPlay(null)
       setSeqQueue(items)
       seqBgmRef.current = bgm
+      const loc = seqLocate(ts)
       const audio = seqAudioRef.current
       if (audio) {
         const url = api.bgmUrl(bgm.relPath)
         if (audio.src !== url) audio.src = url
         audio.volume = 0.7
-        audio.currentTime = bgm.startOffsetSec + Math.max(0, ts)
+        // **曲の位置は `songPosAt` から求める。** シーケンス時間（尺の累計）をそのまま
+        // 曲の位置として使うと、クリップが 0 秒から前詰めで並んでいる場合しか合わない。
+        // 自由配置では先頭が 0 秒から始まらないことも隙間があることもあり、ずれたまま再生すると
+        // 次のクリップの境目で曲が飛んで聞こえる。
+        audio.currentTime = loc
+          ? songPosAt(items, loc.idx, bgm.startOffsetSec) +
+            Math.max(0, loc.sec - itemIn(items[loc.idx]))
+          : songPosAt(items, 0, bgm.startOffsetSec)
         if (wasPlaying) audio.play().catch(() => void 0)
         else audio.pause()
       }
-      const loc = seqLocate(ts)
       if (!loc) return
       if (loc.idx === seqIndexRef.current) {
         seqArmedRef.current = false // out 付近から戻った場合に備えて再アーム
