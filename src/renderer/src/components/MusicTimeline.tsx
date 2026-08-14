@@ -197,6 +197,14 @@ export const MusicTimeline = memo(function MusicTimeline({
    */
   const headRef = useRef<HTMLDivElement>(null)
   /**
+   * 手動で頭出しした直後は、進捗イベントでヘッドを上書きしない。
+   * 動画のシークは要求位置ちょうどには着地せず（実測で 76〜360ms 後ろ）、
+   * その実測値で上書きするとユーザーが指した拍から外れて見えるため。
+   */
+  const seekGuardRef = useRef(0)
+  /** 再生ヘッドがいま指している曲の時刻（秒）。ズーム変更時の描き直しに使う。 */
+  const headSecRef = useRef<number | null>(null)
+  /**
    * 編集中のドラッグ。
    * - units: 右端を引いて尺（拍数）を変える。単位候補に吸着する
    * - slip : Alt + 中身ドラッグで「元の区間のどこを使うか」をずらす（Resolve のスリップ編集）
@@ -611,29 +619,54 @@ export const MusicTimeline = memo(function MusicTimeline({
     return out
   }, [layout])
 
+  /**
+   * 再生ヘッドを曲の時刻へ動かす。位置は ref にも控える。
+   * ズームを変えたときに描き直せるようにするため（進捗イベント任せだと、
+   * 停止中やズーム変更後に古いピクセル位置のまま取り残される）。
+   */
+  const moveHead = useCallback(
+    (songSec: number): void => {
+      headSecRef.current = songSec
+      const el = headRef.current
+      if (!el) return
+      el.style.transform = `translateX(${Math.round(songSec * effPps)}px)`
+      el.style.display = 'block'
+    },
+    [effPps]
+  )
+
   // 再生ヘッドの追従。App が dispatch する 'dcm:seq-progress'（再生中ノードと進捗率）から
   // 曲の時刻を割り出して縦線を動かす。ブロックの並びは前詰めなので、
   // 「そのブロックの開始 + 尺 × 進捗率」がそのまま曲の時刻になる。
   useEffect(() => {
-    const el = headRef.current
-    if (!el || !layout) return
+    if (!layout) return
     const byNode = new Map(layout.blocks.map((b) => [b.key, b]))
     const onProgress = (e: Event): void => {
       const d = (e as CustomEvent).detail as { nodeId: number; ratio: number }
       const b = byNode.get(d.nodeId)
       if (!b) return
-      const songSec = b.startSec + (b.endSec - b.startSec) * d.ratio
-      el.style.transform = `translateX(${Math.round(songSec * effPps)}px)`
-      el.style.display = 'block'
+      // 手動の頭出し直後は、シークの着地誤差でヘッドを動かさない
+      if (performance.now() < seekGuardRef.current) return
+      moveHead(b.startSec + (b.endSec - b.startSec) * d.ratio)
     }
     window.addEventListener('dcm:seq-progress', onProgress)
     return () => window.removeEventListener('dcm:seq-progress', onProgress)
-  }, [layout, effPps])
+  }, [layout, moveHead])
+
+  // ズームやレイアウトが変わったら、控えてある時刻からヘッドを描き直す
+  useEffect(() => {
+    if (headSecRef.current != null) moveHead(headSecRef.current)
+  }, [effPps, moveHead])
 
   // 波形と小節グリッドは canvas に描く（小節線が数百本になるため DOM では重い）
   useEffect(() => {
     const cv = canvasRef.current
-    if (!cv || !beat) return
+    if (!cv) return
+    if (!beat) {
+      // 曲の差し替え中に前の曲のグリッドが残ると、位置の基準が違って見えるので消す
+      cv.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+      return
+    }
     const dpr = window.devicePixelRatio || 1
     const h = RULER_H + TRACK_H
     cv.width = Math.round(contentW * dpr)
@@ -851,6 +884,7 @@ export const MusicTimeline = memo(function MusicTimeline({
         )}
       </div>
 
+
       {!seqBgm ? (
         <div className="mtl-empty">
           上のプルダウンで曲を選ぶと、波形と小節グリッドの上にクリップが並びます。
@@ -874,6 +908,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                 const songSec = beat ? snapToUnit(beat, clicked, snapBeats) : clicked
                 const ts = songToSeqSec(songSec)
                 if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
+                // 吸着位置をその場で出し、直後のシーク着地誤差では動かさない
+                seekGuardRef.current = performance.now() + 600
+                moveHead(songSec)
                 onSeek(buildPlayItems(), ts, {
                   relPath: seqBgm.relPath,
                   startOffsetSec: seqBgm.startOffsetSec

@@ -896,8 +896,13 @@ export function App() {
       // 音楽モードでは尺が拍に合わせて上書きされるので、実効値を使う
       const inSec = itemIn(q[i])
       const d = Math.max(0, itemOut(q[i]) - inSec)
-      if (ts < acc + d || i === q.length - 1) {
-        return { idx: i, sec: inSec + Math.min(Math.max(0, ts - acc), Math.max(0, d - 0.2)) }
+      // 境界ちょうどを指したときに「1 つ前のクリップの終端」と判定されないよう、
+      // わずかな余裕を見る（拍に吸着した時刻はクリップ境界と一致しやすく、
+      // 浮動小数の誤差でどちらに転ぶか決まらないため）。
+      if (ts < acc + d - 1e-3 || i === q.length - 1) {
+        // 末尾ぎりぎりだと自動送りが再アームできないので少しだけ内側に留める
+        // （maybeAdvance の再アーム条件は out - 0.05）
+        return { idx: i, sec: inSec + Math.min(Math.max(0, ts - acc), Math.max(0, d - 0.1)) }
       }
       acc += d
     }
