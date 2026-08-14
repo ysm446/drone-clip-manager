@@ -72,11 +72,10 @@ const api: DcmApi = {
   analyzeBgmBeats: (relPath) => ipcRenderer.invoke('bgm:analyzeBeats', relPath),
   getBgmWaveform: (relPath) => ipcRenderer.invoke('bgm:waveform', relPath),
   getSequenceBgm: (sequenceId) => ipcRenderer.invoke('seq:getBgm', sequenceId),
-  setSequenceBgm: (sequenceId, relPath, startOffsetSec, beatsPerBar) =>
-    ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec, beatsPerBar),
-  updateSequenceNodeMusic: (nodeId, units, srcOffset, autoShrunk) =>
-    ipcRenderer.invoke('seq:updateNodeMusic', nodeId, units, srcOffset, autoShrunk),
-  updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),
+  setSequenceBgm: (sequenceId, relPath, startOffsetSec) =>
+    ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec),
+  updateSequenceNodeMusic: (nodeId, durSec, srcOffset) =>
+    ipcRenderer.invoke('seq:updateNodeMusic', nodeId, durSec, srcOffset),
   setSequenceOrder: (sequenceId, nodeIds) =>
     ipcRenderer.invoke('seq:setOrder', sequenceId, nodeIds),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),

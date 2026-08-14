@@ -101,14 +101,13 @@ CREATE TABLE IF NOT EXISTS sequence_edges (
 CREATE INDEX IF NOT EXISTS idx_seqnodes_seq ON sequence_nodes(sequence_id);
 CREATE INDEX IF NOT EXISTS idx_seqedges_seq ON sequence_edges(sequence_id);
 
--- シーケンスに紐づく BGM（音楽同期タイムライン / Phase 2.6c）。1 シーケンス 1 曲。
--- 曲の指定と手動補正値だけを持つ。検出したビート列は曲側のキャッシュ（.dcm/beats/）に置く。
+-- シーケンスに紐づく BGM（音楽タイムライン / Phase 2.6c）。1 シーケンス 1 曲。
+-- 曲の指定と、どこから使い始めるかだけを持つ。
+-- 拍・小節のグリッドは 2026-08-15 に廃止した（拍が取れない曲では誤ったグリッドが邪魔になるため）。
 CREATE TABLE IF NOT EXISTS sequence_bgm (
   sequence_id      INTEGER PRIMARY KEY,
   rel_path         TEXT NOT NULL,
-  start_offset_sec REAL NOT NULL DEFAULT 0,
-  -- 拍子の手動指定。NULL なら解析の自動判定に従う（Phase 2.6c）
-  beats_per_bar    INTEGER
+  start_offset_sec REAL NOT NULL DEFAULT 0
 );
 `
 
@@ -121,20 +120,18 @@ export function getDb(): Database.Database {
   db.exec(SCHEMA)
   migrateSegmentColors(db)
   migrateSequenceNodeMusic(db)
-  migrateSequenceBgmMeter(db)
+  migrateDropBeatGrid(db)
   dbPath = target
   return db
 }
 
 // 音楽タイムライン用の列を sequence_nodes に足す（Phase 2.6c 段階 3）。
 // CREATE TABLE IF NOT EXISTS では既存 DB に列が増えないため、ここで追加する。
-// - units      : 尺の意図（拍数）。null は「元の区間に収まる最大の単位」を自動で使う
-// - src_offset : 元の区間のどこから使うか（秒）。縮めたときの逃げ場
-// - auto_shrunk: 曲の差し替えで自動的に単位を下げた印（UI 表示用）
+// - dur_sec    : 尺（秒）。null は「元の区間の残り全部を使う」
+// - src_offset : 元の区間のどこから使うか（秒）
 const SEQ_NODE_MUSIC_COLUMNS: [string, string][] = [
-  ['units', 'INTEGER'],
-  ['src_offset', 'REAL NOT NULL DEFAULT 0'],
-  ['auto_shrunk', 'INTEGER NOT NULL DEFAULT 0']
+  ['dur_sec', 'REAL'],
+  ['src_offset', 'REAL NOT NULL DEFAULT 0']
 ]
 
 function migrateSequenceNodeMusic(d: Database.Database): void {
@@ -146,10 +143,32 @@ function migrateSequenceNodeMusic(d: Database.Database): void {
   }
 }
 
-// 拍子の手動指定を sequence_bgm に足す（Phase 2.6c）。既存 DB には列が無いため。
-function migrateSequenceBgmMeter(d: Database.Database): void {
-  const cols = (d.prepare('PRAGMA table_info(sequence_bgm)').all() as { name: string }[]).map((r) => r.name)
-  if (!cols.includes('beats_per_bar')) d.exec('ALTER TABLE sequence_bgm ADD COLUMN beats_per_bar INTEGER')
+// 拍・小節グリッドの廃止に伴う後始末（2026-08-15）。
+// 拍が取れない曲では誤ったグリッドがかえって編集の邪魔になるため、音楽タイムラインは
+// 秒ベースへ切り替えた。尺は拍数（units）ではなく秒（dur_sec）で持つ。
+// 拍数から秒への正確な変換手段は無い（テンポ自体を捨てるため）ので、旧 units は変換せず捨てる。
+const DROPPED_BEAT_COLUMNS: [string, string][] = [
+  // 尺の意図（拍数）。秒へ変換できないので捨てる
+  ['sequence_nodes', 'units'],
+  // 曲の差し替えで自動的に単位を下げた印。秒モードでは曲を替えても尺が変わらないので不要
+  ['sequence_nodes', 'auto_shrunk'],
+  ['sequence_bgm', 'beats_per_bar'],
+  ['sequence_bgm', 'bar_phase'],
+  ['sequence_bgm', 'tempo_ratio']
+]
+
+function migrateDropBeatGrid(d: Database.Database): void {
+  for (const [table, col] of DROPPED_BEAT_COLUMNS) {
+    const cols = (d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+      (r) => r.name
+    )
+    if (!cols.includes(col)) continue
+    try {
+      d.exec(`ALTER TABLE ${table} DROP COLUMN ${col}`)
+    } catch {
+      // DROP COLUMN 非対応の SQLite では列が残るが、読み書きしないので実害はない
+    }
+  }
 }
 
 // 区間バーの配色を青〜紫パレットへ変更（2026-07-10）した際の、旧パレットで保存済みの色の置き換え。
@@ -594,7 +613,6 @@ interface SequenceBgmRow {
   sequence_id: number
   rel_path: string
   start_offset_sec: number
-  beats_per_bar: number | null
 }
 
 /** シーケンスに紐づく BGM。未設定なら null。 */
@@ -606,8 +624,7 @@ export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
   return {
     sequenceId: r.sequence_id,
     relPath: r.rel_path,
-    startOffsetSec: r.start_offset_sec,
-    beatsPerBar: r.beats_per_bar ?? null
+    startOffsetSec: r.start_offset_sec
   }
 }
 
@@ -615,8 +632,7 @@ export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
 export function setSequenceBgm(
   sequenceId: number,
   relPath: string | null,
-  startOffsetSec = 0,
-  beatsPerBar: number | null = null
+  startOffsetSec = 0
 ): SequenceBgm | null {
   const d = getDb()
   if (relPath == null) {
@@ -624,12 +640,11 @@ export function setSequenceBgm(
     return null
   }
   d.prepare(
-    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec, beats_per_bar)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec)
+     VALUES (?, ?, ?)
      ON CONFLICT(sequence_id) DO UPDATE SET rel_path = excluded.rel_path,
-                                            start_offset_sec = excluded.start_offset_sec,
-                                            beats_per_bar = excluded.beats_per_bar`
-  ).run(sequenceId, relPath, startOffsetSec, beatsPerBar)
+                                            start_offset_sec = excluded.start_offset_sec`
+  ).run(sequenceId, relPath, startOffsetSec)
   return getSequenceBgm(sequenceId)
 }
 
@@ -673,9 +688,8 @@ interface SequenceNodeRow {
   segment_id: number
   x: number
   y: number
-  units: number | null
+  dur_sec: number | null
   src_offset: number
-  auto_shrunk: number
 }
 
 /** ノード行 + そのクリップ（segment × video 結合。無ければ null）を組み立てる。 */
@@ -686,26 +700,24 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
     segmentId: r.segment_id,
     x: r.x,
     y: r.y,
-    units: r.units ?? null,
+    durSec: r.dur_sec ?? null,
     srcOffset: r.src_offset ?? 0,
-    autoShrunk: !!r.auto_shrunk,
     clip: clipBySeg.get(r.segment_id) ?? null
   }
 }
 
 /**
- * 音楽タイムラインでの尺（拍数）と使用開始位置を更新する（Phase 2.6c 段階 3）。
+ * 音楽タイムラインでの尺（秒）と使用開始位置を更新する（Phase 2.6c 段階 3）。
  * 元の segments は書き換えない（ライブラリ側のブックマークは不変）。
  */
 export function updateSequenceNodeMusic(
   nodeId: number,
-  units: number | null,
-  srcOffset: number,
-  autoShrunk = false
+  durSec: number | null,
+  srcOffset: number
 ): void {
   getDb()
-    .prepare('UPDATE sequence_nodes SET units = ?, src_offset = ?, auto_shrunk = ? WHERE id = ?')
-    .run(units, srcOffset, autoShrunk ? 1 : 0, nodeId)
+    .prepare('UPDATE sequence_nodes SET dur_sec = ?, src_offset = ? WHERE id = ?')
+    .run(durSec, srcOffset, nodeId)
 }
 
 /**
@@ -726,19 +738,6 @@ export function setSequenceOrder(sequenceId: number, nodeIds: number[]): void {
     for (let i = 0; i + 1 < nodeIds.length; i++) ins.run(sequenceId, nodeIds[i], nodeIds[i + 1])
   })
   tx()
-}
-
-/** 曲の差し替えなどで複数ノードの尺をまとめて更新する。 */
-export function updateSequenceNodeMusicMany(
-  rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
-): void {
-  const d = getDb()
-  const upd = d.prepare(
-    'UPDATE sequence_nodes SET units = ?, src_offset = ?, auto_shrunk = ? WHERE id = ?'
-  )
-  d.transaction(() => {
-    for (const r of rows) upd.run(r.units, r.srcOffset, r.autoShrunk ? 1 : 0, r.nodeId)
-  })()
 }
 
 interface SequenceEdgeRow {
@@ -872,9 +871,8 @@ export function restoreSequenceGraph(
     segmentId: number
     x: number
     y: number
-    units?: number | null
+    durSec?: number | null
     srcOffset?: number
-    autoShrunk?: boolean
   }[],
   edges: { id: number; srcNodeId: number; dstNodeId: number }[]
 ): void {
@@ -884,20 +882,11 @@ export function restoreSequenceGraph(
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
     // 音楽タイムラインの尺も一緒に戻す（落とすと undo で尺の指定が消える）
     const insN = d.prepare(
-      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, units, src_offset, auto_shrunk)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, dur_sec, src_offset)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
     for (const n of nodes) {
-      insN.run(
-        n.id,
-        sequenceId,
-        n.segmentId,
-        n.x,
-        n.y,
-        n.units ?? null,
-        n.srcOffset ?? 0,
-        n.autoShrunk ? 1 : 0
-      )
+      insN.run(n.id, sequenceId, n.segmentId, n.x, n.y, n.durSec ?? null, n.srcOffset ?? 0)
     }
     const insE = d.prepare(
       'INSERT INTO sequence_edges (id, sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?, ?)'

@@ -87,15 +87,12 @@ export interface SequenceNode {
   x: number
   y: number
   /**
-   * 音楽タイムラインでの尺の意図（拍数 / Phase 2.6c）。
-   * null なら「元の区間に収まる最大の単位」を自動で使う。
-   * 実尺は保存せず、拍数 × ビート列から毎回求める（曲を差し替えても意図が生き残る）。
+   * 音楽タイムラインでの尺（秒 / Phase 2.6c）。
+   * null なら「元の区間の残り（srcOffset 以降）をそのまま使う」。
    */
-  units: number | null
-  /** 元の区間のどこから使うか（秒）。単位に収めて縮めたときの逃げ場 */
+  durSec: number | null
+  /** 元の区間のどこから使うか（秒）。尺を縮めたときの逃げ場 */
   srcOffset: number
-  /** 曲の差し替えで自動的に単位を下げた印（UI 表示用） */
-  autoShrunk: boolean
   /** segment × video の結合（元 segment が消えていれば null） */
   clip: ClipItem | null
 }
@@ -117,7 +114,7 @@ export interface SequenceGraph {
 
 /**
  * Undo 用のグラフスナップショット行（ノード）。
- * 音楽タイムラインの尺（units / srcOffset / autoShrunk）も含める。
+ * 音楽タイムラインの尺（durSec / srcOffset）も含める。
  * 含めないと、グラフ操作を undo したときに尺の指定が既定値へ戻ってしまう。
  */
 export interface GraphNodeSnap {
@@ -125,9 +122,8 @@ export interface GraphNodeSnap {
   segmentId: number
   x: number
   y: number
-  units: number | null
+  durSec: number | null
   srcOffset: number
-  autoShrunk: boolean
 }
 
 /** Undo 用のグラフスナップショット行（エッジ） */
@@ -275,8 +271,6 @@ export interface SequenceBgm {
   relPath: string
   /** 曲のどこから使い始めるか（イントロ飛ばし / サビ合わせ） */
   startOffsetSec: number
-  /** 拍子の手動指定。null なら解析の自動判定に従う */
-  beatsPerBar: number | null
 }
 
 /** エクスプローラでの表示結果 */
@@ -510,19 +504,13 @@ export interface DcmApi {
   setSequenceBgm: (
     sequenceId: number,
     relPath: string | null,
-    startOffsetSec?: number,
-    beatsPerBar?: number | null
+    startOffsetSec?: number
   ) => Promise<SequenceBgm | null>
-  /** 音楽タイムラインでのノードの尺（拍数）と使用開始位置を更新（元 segment は変更しない） */
+  /** 音楽タイムラインでのノードの尺（秒）と使用開始位置を更新（元 segment は変更しない） */
   updateSequenceNodeMusic: (
     nodeId: number,
-    units: number | null,
-    srcOffset: number,
-    autoShrunk?: boolean
-  ) => Promise<void>
-  /** 曲の差し替えなどで複数ノードの尺をまとめて更新 */
-  updateSequenceNodeMusicMany: (
-    rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
+    durSec: number | null,
+    srcOffset: number
   ) => Promise<void>
   /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */
   setSequenceOrder: (sequenceId: number, nodeIds: number[]) => Promise<void>

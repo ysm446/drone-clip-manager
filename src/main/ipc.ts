@@ -47,8 +47,7 @@ import {
   getSequenceBgm,
   setSequenceBgm,
   setSequenceOrder,
-  updateSequenceNodeMusic,
-  updateSequenceNodeMusicMany
+  updateSequenceNodeMusic
 } from './services/db'
 import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
@@ -374,32 +373,19 @@ export function registerIpc(): void {
   )
   ipcMain.handle(
     'seq:setBgm',
-    (
-      _e,
-      sequenceId: number,
-      relPath: string | null,
-      startOffsetSec = 0,
-      beatsPerBar: number | null = null
-    ): SequenceBgm | null => setSequenceBgm(sequenceId, relPath, startOffsetSec, beatsPerBar)
+    (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
+      setSequenceBgm(sequenceId, relPath, startOffsetSec)
   )
 
-  // 音楽タイムラインでの尺（拍数）と使用開始位置（Phase 2.6c 段階 3）
+  // 音楽タイムラインでの尺（秒）と使用開始位置（Phase 2.6c 段階 3）
   ipcMain.handle(
     'seq:updateNodeMusic',
-    (_e, nodeId: number, units: number | null, srcOffset: number, autoShrunk = false): void =>
-      updateSequenceNodeMusic(nodeId, units, srcOffset, autoShrunk)
+    (_e, nodeId: number, durSec: number | null, srcOffset: number): void =>
+      updateSequenceNodeMusic(nodeId, durSec, srcOffset)
   )
   // 音楽タイムラインでの並べ替え（順路を与えられた並びの一本道に置き換える）
   ipcMain.handle('seq:setOrder', (_e, sequenceId: number, nodeIds: number[]): void =>
     setSequenceOrder(sequenceId, nodeIds)
-  )
-
-  ipcMain.handle(
-    'seq:updateNodeMusicMany',
-    (
-      _e,
-      rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
-    ): void => updateSequenceNodeMusicMany(rows)
   )
 
   ipcMain.handle('export:pickDir', async (e): Promise<string | null> => {

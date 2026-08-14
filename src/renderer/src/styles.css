@@ -2551,10 +2551,6 @@ body.resizing {
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
-.mtl-warn {
-  color: var(--warn);
-  font-size: var(--fs-xs);
-}
 /* 曲との過不足。足りない側（曲を越える）は警告色にする */
 .mtl-slack {
   color: var(--muted);
@@ -2659,10 +2655,6 @@ body.resizing {
 /* 素材が足りない（手で伸ばして元の区間の外に出た）: 危険色の枠で示す */
 .mtl-clip.short {
   box-shadow: inset 0 0 0 2px var(--danger);
-}
-/* 曲の差し替えで自動的に縮めた: 確認してほしいので警告色の枠 */
-.mtl-clip.shrunk {
-  box-shadow: inset 0 0 0 2px var(--warn);
 }
 /* ドラッグ中は編集対象であることをアクセントの枠で示す */
 .mtl-clip.dragging {

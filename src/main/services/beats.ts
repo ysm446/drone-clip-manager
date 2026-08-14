@@ -434,8 +434,9 @@ function cachePath(absPath: string): string | null {
     return null
   }
   const key = createHash('md5')
-    // 解析の出力が変わったらキャッシュを作り直す（v2: 拍子候補 meters を追加）
-    .update(`v2|${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
+    // 解析の出力が変わったらキャッシュを作り直す
+    // （v2: 拍子候補 meters を追加 / v5: 代表 BPM を拍間隔の中央値から刈込平均に変更）
+    .update(`v5|${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
     .digest('hex')
     .slice(0, 20)
   const dir = join(metaDir(), 'beats')
@@ -506,13 +507,22 @@ async function run(relPath: string): Promise<BeatAnalysis> {
   const barPhase = picked.barPhase
   const variation = uniform ? 0 : tempoVariationPct(beatFrames)
 
-  // 代表 BPM: 等間隔ならその値、追従なら拍間隔の中央値から求める
+  // 代表 BPM: 等間隔ならその値、追従なら拍間隔の「上下 10% を落とした平均」から求める。
+  //
+  // 中央値だと拍間隔（整数フレーム）のどれか 1 つがそのまま代表値になり、テンポが速いほど
+  // 刻みが粗くなる（150 BPM 付近で 4.5 BPM / 180 BPM 付近で 6.2 BPM）。実測では
+  // `Living Canopy` が真のテンポ 148.9〜150.0 に対して 147.66 と、範囲の外に出ていた。
+  // 平均にすればフレーム量子化の誤差が拍数ぶん均される。上下を落とすのは、
+  // DP が一部で 1 拍飛ばしたときに引きずられないようにするため。
   let bpm = globalBpm
   if (!uniform && beatFrames.length > 2) {
     const iv: number[] = []
     for (let k = 1; k < beatFrames.length; k++) iv.push(beatFrames[k] - beatFrames[k - 1])
     iv.sort((a, b) => a - b)
-    bpm = (60 * FPS) / iv[iv.length >> 1]
+    const cut = Math.floor(iv.length * 0.1)
+    const core = iv.slice(cut, iv.length - cut)
+    const mean = core.reduce((a, b) => a + b, 0) / core.length
+    if (mean > 0) bpm = (60 * FPS) / mean
   }
 
   let warning: string | null = null

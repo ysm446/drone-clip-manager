@@ -354,9 +354,8 @@ export const SequenceView = memo(function SequenceView({
         segmentId: n.segmentId,
         x: n.x,
         y: n.y,
-        units: n.units,
-        srcOffset: n.srcOffset,
-        autoShrunk: n.autoShrunk
+        durSec: n.durSec,
+        srcOffset: n.srcOffset
       })),
       edges: edgesRef.current.map((e) => ({
         id: e.id,
@@ -379,9 +378,8 @@ export const SequenceView = memo(function SequenceView({
           segmentId: n.segmentId,
           x: n.x,
           y: n.y,
-          units: n.units,
-          srcOffset: n.srcOffset,
-          autoShrunk: n.autoShrunk
+          durSec: n.durSec,
+          srcOffset: n.srcOffset
         })),
         edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
       }
@@ -504,8 +502,8 @@ export const SequenceView = memo(function SequenceView({
    * 選択中のノードをコピーする（Phase 2.6 / 2026-08-15）。
    * 控えるのは segment id だけで、順路の順に並べ直してから持つ
    * （矩形選択では飛び飛びに選べるため、貼り付け先で元の並びを保てるようにする）。
-   * 音楽タイムラインの尺（units）は持っていかない。曲が違えば拍の長さも違うため、
-   * 貼り付け先では「自動」（収まる最大の単位）から始める。
+   * 音楽タイムラインの尺（durSec）は持っていかない。
+   * 貼り付け先では「自動」（元の区間の残りをそのまま使う）から始める。
    */
   const copySelectedNodes = useCallback(() => {
     const order = nodeOrderFromEdges(
@@ -624,9 +622,8 @@ export const SequenceView = memo(function SequenceView({
             segmentId: n.segmentId,
             x: o?.x ?? n.x,
             y: o?.y ?? n.y,
-            units: n.units,
-            srcOffset: n.srcOffset,
-            autoShrunk: n.autoShrunk
+            durSec: n.durSec,
+            srcOffset: n.srcOffset
           }
         }),
         edges: edgesRef.current.map((e) => ({
