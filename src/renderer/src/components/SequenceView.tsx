@@ -320,7 +320,15 @@ export const SequenceView = memo(function SequenceView({
   /** 現在のローカル state からグラフのスナップショットを取る */
   const graphSnapshot = useCallback(
     (): { nodes: GraphNodeSnap[]; edges: GraphEdgeSnap[] } => ({
-      nodes: nodesRef.current.map((n) => ({ id: n.id, segmentId: n.segmentId, x: n.x, y: n.y })),
+      nodes: nodesRef.current.map((n) => ({
+        id: n.id,
+        segmentId: n.segmentId,
+        x: n.x,
+        y: n.y,
+        units: n.units,
+        srcOffset: n.srcOffset,
+        autoShrunk: n.autoShrunk
+      })),
       edges: edgesRef.current.map((e) => ({
         id: e.id,
         srcNodeId: e.srcNodeId,
@@ -337,7 +345,15 @@ export const SequenceView = memo(function SequenceView({
       if (seqId == null) return
       const g = await api.getSequenceGraph(seqId)
       const after = {
-        nodes: g.nodes.map((n) => ({ id: n.id, segmentId: n.segmentId, x: n.x, y: n.y })),
+        nodes: g.nodes.map((n) => ({
+          id: n.id,
+          segmentId: n.segmentId,
+          x: n.x,
+          y: n.y,
+          units: n.units,
+          srcOffset: n.srcOffset,
+          autoShrunk: n.autoShrunk
+        })),
         edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
       }
       pushUndo({
@@ -514,7 +530,15 @@ export const SequenceView = memo(function SequenceView({
       const before = {
         nodes: nodesRef.current.map((n) => {
           const o = d.orig.get(n.id)
-          return { id: n.id, segmentId: n.segmentId, x: o?.x ?? n.x, y: o?.y ?? n.y }
+          return {
+            id: n.id,
+            segmentId: n.segmentId,
+            x: o?.x ?? n.x,
+            y: o?.y ?? n.y,
+            units: n.units,
+            srcOffset: n.srcOffset,
+            autoShrunk: n.autoShrunk
+          }
         }),
         edges: edgesRef.current.map((e) => ({
           id: e.id,
@@ -681,6 +705,34 @@ export const SequenceView = memo(function SequenceView({
     setSelectedIds(new Set([node.id]))
     await pushGraphUndo('ノードの追加', before)
   }
+
+  /**
+   * 音楽タイムラインへのドロップ配置（Phase 2.6c 段階 3b）。
+   * ノードを作ってから、順路の指定位置へ挿し込む。
+   * ノードグラフ側の座標は順路の末尾に並べておく（あとで開いても迷子にならないように）。
+   */
+  const dropClipIntoOrder = async (segmentId: number, insertAt: number): Promise<void> => {
+    if (activeId == null) return
+    const before = graphSnapshot()
+    const order = playItemsRef.current.map((it) => it.nodeId)
+    const lastNode = nodesRef.current.find((n) => n.id === order[order.length - 1])
+    const node = await api.addSequenceNode(
+      activeId,
+      segmentId,
+      Math.round((lastNode?.x ?? 0) + NODE_W + 40),
+      Math.round(lastNode?.y ?? 0)
+    )
+    const next = order.slice()
+    next.splice(Math.max(0, Math.min(insertAt, next.length)), 0, node.id)
+    await api.setSequenceOrder(activeId, next)
+    await reload(activeId)
+    await pushGraphUndo('タイムラインへの配置', before)
+  }
+
+  /** 音楽タイムラインでの並べ替え後にグラフを読み直す */
+  const reloadActive = useCallback(() => {
+    if (activeId != null) void reload(activeId)
+  }, [activeId, reload])
 
   // --- エッジの接続（出力ポート → 入力ポート） ---
   const onConnectMove = useCallback(
@@ -1034,7 +1086,8 @@ export const SequenceView = memo(function SequenceView({
             sequenceId={activeId}
             items={playItems}
             nodes={nodes}
-            onNodesChanged={() => activeId != null && reload(activeId)}
+            onNodesChanged={reloadActive}
+            onDropClip={dropClipIntoOrder}
           />
         ) : (
         <div

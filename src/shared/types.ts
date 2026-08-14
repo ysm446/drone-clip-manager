@@ -115,12 +115,19 @@ export interface SequenceGraph {
   edges: SequenceEdge[]
 }
 
-/** Undo 用のグラフスナップショット行（ノード） */
+/**
+ * Undo 用のグラフスナップショット行（ノード）。
+ * 音楽タイムラインの尺（units / srcOffset / autoShrunk）も含める。
+ * 含めないと、グラフ操作を undo したときに尺の指定が既定値へ戻ってしまう。
+ */
 export interface GraphNodeSnap {
   id: number
   segmentId: number
   x: number
   y: number
+  units: number | null
+  srcOffset: number
+  autoShrunk: boolean
 }
 
 /** Undo 用のグラフスナップショット行（エッジ） */
@@ -473,6 +480,8 @@ export interface DcmApi {
   updateSequenceNodeMusicMany: (
     rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
   ) => Promise<void>
+  /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */
+  setSequenceOrder: (sequenceId: number, nodeIds: number[]) => Promise<void>
   // --- 書き出し ---
   pickExportDir: () => Promise<string | null>
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>

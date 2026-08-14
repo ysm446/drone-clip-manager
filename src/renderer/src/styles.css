@@ -2627,7 +2627,8 @@ body.resizing {
   color: #0d0f12;
   overflow: hidden;
   white-space: nowrap;
-  cursor: default;
+  /* 本体をドラッグすると並べ替え（style-guide 8: 移動は grab → grabbing） */
+  cursor: grab;
 }
 /* 曲の終わりを越えたクリップ */
 .mtl-clip.over {
@@ -2668,4 +2669,22 @@ body.resizing {
 /* ドラッグ中は編集対象であることをアクセントの枠で示す */
 .mtl-clip.dragging {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* 挿入位置のインジケータ（並べ替え / パレットからのドロップ） */
+.mtl-insert {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 3;
+}
+/* ドロップ受け先（style-guide 8: 受け先は内側 1px の枠で示す） */
+.mtl-clips.dropping {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* 並べ替え中のブロックは掴んでいることを示す */
+.mtl-clip.dragging {
+  cursor: grabbing;
 }

@@ -53,6 +53,8 @@ interface Props {
   nodes: SequenceNode[]
   /** 尺を変更したあとにグラフを読み直してもらう */
   onNodesChanged?: () => void
+  /** クリップパレットからのドロップ配置（順路の insertAt 番目へ挿し込む） */
+  onDropClip?: (segmentId: number, insertAt: number) => Promise<void>
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
 }
 
@@ -61,6 +63,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   items,
   nodes,
   onNodesChanged,
+  onDropClip,
   onStatus
 }: Props) {
   const [bgmInfo, setBgmInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
@@ -70,13 +73,14 @@ export const MusicTimeline = memo(function MusicTimeline({
   const [loading, setLoading] = useState(false)
   const [pps, setPps] = useState(40) // px / 秒
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const clipsRef = useRef<HTMLDivElement>(null)
   /**
    * 編集中のドラッグ。
    * - units: 右端を引いて尺（拍数）を変える。単位候補に吸着する
    * - slip : Alt + 中身ドラッグで「元の区間のどこを使うか」をずらす（Resolve のスリップ編集）
    */
   const [drag, setDrag] = useState<{
-    kind: 'units' | 'slip'
+    kind: 'units' | 'slip' | 'move'
     nodeId: number
     startX: number
     baseUnits: number
@@ -84,7 +88,13 @@ export const MusicTimeline = memo(function MusicTimeline({
     maxOffsetBase: number
     units: number
     offset: number
+    /** move のときの挿入先（順路内のインデックス） */
+    insertAt: number
+    /** move が実際にドラッグされたか（クリックと区別する） */
+    moved: boolean
   } | null>(null)
+  /** パレットからのドロップ位置（挿入先インデックス）。null で非表示。 */
+  const [dropAt, setDropAt] = useState<number | null>(null)
 
   useEffect(() => {
     api.getBgm().then(setBgmInfo)
@@ -263,6 +273,27 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   const beatSec = beat ? 60 / beat.bpm : 0
 
+  /** 順路上の並び（ノード id） */
+  const orderIds = useMemo(() => items.map((it) => it.nodeId), [items])
+
+  /**
+   * 画面 X から「何番目に挿入するか」を求める。
+   * 各ブロックの中央より左なら手前、右なら後ろに入れる（ブロックパズル的な挿入）。
+   */
+  const insertIndexAtX = useCallback(
+    (clientX: number): number => {
+      const el = clipsRef.current
+      if (!el || !layout) return orderIds.length
+      const x = (clientX - el.getBoundingClientRect().left) / effPps
+      for (let i = 0; i < layout.blocks.length; i++) {
+        const b = layout.blocks[i]
+        if (x < (b.startSec + b.endSec) / 2) return i
+      }
+      return layout.blocks.length
+    },
+    [layout, effPps, orderIds.length]
+  )
+
   const startDrag = (
     e: React.MouseEvent,
     b: { key: number; units: number; srcOffset: number; clip: ClipItem; endSec: number }
@@ -270,8 +301,8 @@ export const MusicTimeline = memo(function MusicTimeline({
     if (!beat || e.button !== 0) return
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const nearRightEdge = rect.right - e.clientX <= EDGE_HIT
-    const kind: 'units' | 'slip' | null = e.altKey ? 'slip' : nearRightEdge ? 'units' : null
-    if (!kind) return
+    // Alt = 使用範囲のスライド / 右端 = 尺の変更 / それ以外 = 並べ替え
+    const kind: 'units' | 'slip' | 'move' = e.altKey ? 'slip' : nearRightEdge ? 'units' : 'move'
     e.preventDefault()
     e.stopPropagation()
     setDrag({
@@ -282,7 +313,9 @@ export const MusicTimeline = memo(function MusicTimeline({
       baseOffset: b.srcOffset,
       maxOffsetBase: clipDuration(b.clip),
       units: b.units,
-      offset: b.srcOffset
+      offset: b.srcOffset,
+      insertAt: orderIds.indexOf(b.key),
+      moved: false
     })
   }
 
@@ -291,6 +324,13 @@ export const MusicTimeline = memo(function MusicTimeline({
     if (!drag || !beat) return
     const onMove = (e: MouseEvent): void => {
       const dxSec = (e.clientX - drag.startX) / effPps
+      if (drag.kind === 'move') {
+        const at = insertIndexAtX(e.clientX)
+        setDrag((d) =>
+          d && (d.insertAt !== at || !d.moved) ? { ...d, insertAt: at, moved: true } : d
+        )
+        return
+      }
       if (drag.kind === 'units') {
         // 引いた先の長さに最も近い単位へ吸着する
         const target = drag.baseUnits * beatSec + dxSec
@@ -309,6 +349,18 @@ export const MusicTimeline = memo(function MusicTimeline({
     const onUp = (): void => {
       const d = drag
       setDrag(null)
+      if (d.kind === 'move') {
+        if (!d.moved || sequenceId == null) return
+        const from = orderIds.indexOf(d.nodeId)
+        // 自分を抜いた並びに挿入するので、後ろへ動かすときは 1 つ詰める
+        const to = d.insertAt > from ? d.insertAt - 1 : d.insertAt
+        if (from < 0 || from === to) return
+        const next = orderIds.slice()
+        next.splice(from, 1)
+        next.splice(to, 0, d.nodeId)
+        void api.setSequenceOrder(sequenceId, next).then(() => onNodesChanged?.())
+        return
+      }
       if (d.kind === 'units' && d.units === d.baseUnits) return
       if (d.kind === 'slip' && Math.abs(d.offset - d.baseOffset) < 0.001) return
       // 手で決めた時点で「自動で縮めた」印は下ろす
@@ -322,7 +374,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [drag, beat, beatSec, effPps, onNodesChanged])
+  }, [drag, beat, beatSec, effPps, insertIndexAtX, onNodesChanged, orderIds, sequenceId])
 
   /** 尺の指定を捨てて自動（収まる最大の単位）へ戻す */
   const resetUnits = (nodeId: number): void => {
@@ -461,7 +513,40 @@ export const MusicTimeline = memo(function MusicTimeline({
             <canvas ref={canvasRef} className="mtl-canvas" />
 
             {/* クリップ列（下）: 前詰め */}
-            <div className="mtl-clips" style={{ height: TRACK_H }}>
+            <div
+              className={`mtl-clips${dropAt != null ? ' dropping' : ''}`}
+              style={{ height: TRACK_H }}
+              ref={clipsRef}
+              onDragOver={(e) => {
+                if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+                setDropAt(insertIndexAtX(e.clientX))
+              }}
+              onDragLeave={() => setDropAt(null)}
+              onDrop={(e) => {
+                const idStr = e.dataTransfer.getData('application/x-dcm-clip')
+                const at = dropAt ?? insertIndexAtX(e.clientX)
+                setDropAt(null)
+                if (!idStr || !onDropClip) return
+                e.preventDefault()
+                void onDropClip(Number(idStr), at)
+              }}
+            >
+              {/* 挿入位置のインジケータ（並べ替え中 / パレットからのドロップ中） */}
+              {(() => {
+                const at = dropAt ?? (drag?.kind === 'move' && drag.moved ? drag.insertAt : null)
+                if (at == null || !layout) return null
+                const blocks = layout.blocks
+                const sec =
+                  at <= 0
+                    ? (blocks[0]?.startSec ?? 0)
+                    : at >= blocks.length
+                      ? (blocks[blocks.length - 1]?.endSec ?? 0)
+                      : blocks[at].startSec
+                return <div className="mtl-insert" style={{ left: Math.round(sec * effPps) }} />
+              })()}
+
               {layout?.blocks.map((b) => {
                 const left = Math.round(b.startSec * effPps)
                 const w = Math.max(2, Math.round((b.endSec - b.startSec) * effPps) - 1)

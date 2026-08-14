@@ -46,6 +46,7 @@ import {
   restoreSequenceGraph,
   getSequenceBgm,
   setSequenceBgm,
+  setSequenceOrder,
   updateSequenceNodeMusic,
   updateSequenceNodeMusicMany
 } from './services/db'
@@ -382,6 +383,11 @@ export function registerIpc(): void {
     (_e, nodeId: number, units: number | null, srcOffset: number, autoShrunk = false): void =>
       updateSequenceNodeMusic(nodeId, units, srcOffset, autoShrunk)
   )
+  // 音楽タイムラインでの並べ替え（順路を与えられた並びの一本道に置き換える）
+  ipcMain.handle('seq:setOrder', (_e, sequenceId: number, nodeIds: number[]): void =>
+    setSequenceOrder(sequenceId, nodeIds)
+  )
+
   ipcMain.handle(
     'seq:updateNodeMusicMany',
     (

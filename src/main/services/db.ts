@@ -690,6 +690,26 @@ export function updateSequenceNodeMusic(
     .run(units, srcOffset, autoShrunk ? 1 : 0, nodeId)
 }
 
+/**
+ * 順路の並び順を、与えられたノード列そのままの一本道に置き換える（Phase 2.6c 段階 3b）。
+ * 音楽タイムラインでの並べ替え用。
+ * 対象ノードに繋がるエッジだけを消してから張り直すので、順路の外にあるノードには触らない。
+ */
+export function setSequenceOrder(sequenceId: number, nodeIds: number[]): void {
+  const d = getDb()
+  const tx = d.transaction(() => {
+    const del = d.prepare(
+      'DELETE FROM sequence_edges WHERE sequence_id = ? AND (src_node_id = ? OR dst_node_id = ?)'
+    )
+    for (const id of nodeIds) del.run(sequenceId, id, id)
+    const ins = d.prepare(
+      'INSERT INTO sequence_edges (sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?)'
+    )
+    for (let i = 0; i + 1 < nodeIds.length; i++) ins.run(sequenceId, nodeIds[i], nodeIds[i + 1])
+  })
+  tx()
+}
+
 /** 曲の差し替えなどで複数ノードの尺をまとめて更新する。 */
 export function updateSequenceNodeMusicMany(
   rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
@@ -829,17 +849,38 @@ export function removeSequenceEdge(edgeId: number): void {
  */
 export function restoreSequenceGraph(
   sequenceId: number,
-  nodes: { id: number; segmentId: number; x: number; y: number }[],
+  nodes: {
+    id: number
+    segmentId: number
+    x: number
+    y: number
+    units?: number | null
+    srcOffset?: number
+    autoShrunk?: boolean
+  }[],
   edges: { id: number; srcNodeId: number; dstNodeId: number }[]
 ): void {
   const d = getDb()
   const tx = d.transaction(() => {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(sequenceId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
+    // 音楽タイムラインの尺も一緒に戻す（落とすと undo で尺の指定が消える）
     const insN = d.prepare(
-      'INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y) VALUES (?, ?, ?, ?, ?)'
+      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, units, src_offset, auto_shrunk)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    for (const n of nodes) insN.run(n.id, sequenceId, n.segmentId, n.x, n.y)
+    for (const n of nodes) {
+      insN.run(
+        n.id,
+        sequenceId,
+        n.segmentId,
+        n.x,
+        n.y,
+        n.units ?? null,
+        n.srcOffset ?? 0,
+        n.autoShrunk ? 1 : 0
+      )
+    }
     const insE = d.prepare(
       'INSERT INTO sequence_edges (id, sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?, ?)'
     )
