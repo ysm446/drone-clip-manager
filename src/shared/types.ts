@@ -266,6 +266,11 @@ export interface ShowInFolderResult {
 
 /** 書き出し対象の1区間 */
 export interface ExportJob {
+  /**
+   * この書き出し 1 行を識別する id（進捗の突き合わせ用）。
+   * 同じクリップを 1 シーケンスに複数回置けるため、segmentId では一意にならない。
+   */
+  jobId: number
   segmentId: number
   videoRelPath: string
   inSec: number
@@ -290,6 +295,8 @@ export interface ExportOptions {
 
 /** 書き出し進捗（main → renderer の逐次イベント） */
 export interface ExportProgress {
+  /** ExportJob.jobId と対応する（行の突き合わせに使う） */
+  jobId: number
   segmentId: number
   index: number
   total: number

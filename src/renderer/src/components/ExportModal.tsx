@@ -38,7 +38,8 @@ export function ExportModal({ items, seqName, onClose }: Props) {
   const [useSubDir, setUseSubDir] = useState<boolean>(
     () => localStorage.getItem(LS_SUBDIR_SEQ) !== '0'
   )
-  const [checked, setChecked] = useState<Set<number>>(() => new Set(items.map((t) => t.segment.id)))
+  // 同じクリップを 1 シーケンスに複数回置けるため、行の識別は segment.id ではなく添字で行う
+  const [checked, setChecked] = useState<Set<number>>(() => new Set(items.map((_t, i) => i)))
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
   const [progress, setProgress] = useState<Record<number, RowState>>({})
@@ -53,13 +54,13 @@ export function ExportModal({ items, seqName, onClose }: Props) {
     return api.onExportProgress((p) => {
       setProgress((prev) => ({
         ...prev,
-        [p.segmentId]: { status: p.status, percent: p.percent, outPath: p.outPath, error: p.error }
+        [p.jobId]: { status: p.status, percent: p.percent, outPath: p.outPath, error: p.error }
       }))
     })
   }, [])
 
   const selectedItems = useMemo(
-    () => items.filter((t) => checked.has(t.segment.id)),
+    () => items.map((t, i) => ({ t, i })).filter(({ i }) => checked.has(i)),
     [items, checked]
   )
 
@@ -85,7 +86,8 @@ export function ExportModal({ items, seqName, onClose }: Props) {
     setRunning(true)
     setFinished(false)
     setProgress({})
-    const jobs: ExportJob[] = selectedItems.map((t, i) => ({
+    const jobs: ExportJob[] = selectedItems.map(({ t, i: rowIndex }, i) => ({
+      jobId: rowIndex,
       segmentId: t.segment.id,
       videoRelPath: t.videoRelPath,
       inSec: t.segment.inSnapped ?? t.segment.inTime,
@@ -171,17 +173,18 @@ export function ExportModal({ items, seqName, onClose }: Props) {
         )}
 
         <div className="modal-list">
-          {items.map((t) => {
+          {items.map((t, rowIndex) => {
             const s = t.segment
             const lo = s.inSnapped ?? s.inTime
             const hi = s.outSnapped ?? s.outTime
-            const st = progress[s.id]
+            // 同じクリップが複数行に並びうるので、行の識別は添字で行う
+            const st = progress[rowIndex]
             return (
-              <div key={s.id} className="modal-item">
+              <div key={rowIndex} className="modal-item">
                 <input
                   type="checkbox"
-                  checked={checked.has(s.id)}
-                  onChange={() => toggle(s.id)}
+                  checked={checked.has(rowIndex)}
+                  onChange={() => toggle(rowIndex)}
                   disabled={running}
                 />
                 <span className="modal-item-name">{s.label ?? `区間 #${s.id}`}</span>

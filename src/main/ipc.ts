@@ -413,7 +413,7 @@ export function registerIpc(): void {
       const results: ExportResult[] = []
       // 逐次実行（ディスク I/O を詰まらせない）。進捗はイベントで逐次通知。
       for (const job of jobs) {
-        const base = { segmentId: job.segmentId, index: job.index, total: jobs.length }
+        const base = { jobId: job.jobId, segmentId: job.segmentId, index: job.index, total: jobs.length }
         e.sender.send('export:progress', { ...base, status: 'running', percent: 0 })
         try {
           const outPath = await exportOne(job, options, (pct) =>
