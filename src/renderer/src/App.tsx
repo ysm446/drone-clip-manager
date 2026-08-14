@@ -44,6 +44,14 @@ const api = window.dcm
  */
 const SONG_RESYNC_SEC = 0.25
 
+/**
+ * 音楽ビューでクリップの間に空けた隙間は、プレビューでも**黒のまま待つ**（書き出しと同じ見え方）。
+ * これ未満の隙間は待たずに次へ送る（1 フレームぶんの端数で映像が途切れるのを避ける）。
+ */
+const GAP_HOLD_MIN_SEC = 0.08
+/** 隙間の待ち合わせを見張る間隔（ms）。曲の時刻を基準にするのでタイマ精度は効かない。 */
+const GAP_TICK_MS = 50
+
 /** ツリーで複数選択した動画への一括タグ付けバー（サイドバー下部） */
 function BulkTagBar({
   count,
@@ -376,11 +384,38 @@ export function App() {
   /** シーケンス画面のモーダル（連結書き出し等）表示中フラグ。mpv を隠すために受け取る */
   const [seqModalOpen, setSeqModalOpen] = useState(false)
 
+  /**
+   * 隙間で黒のまま待っている状態（音楽ビューでクリップの間を空けたとき）。
+   * 映像だけ止め、曲は鳴らし続けて、次のクリップの曲位置に届いたら読み込む。
+   * `gapHold`（state）は mpv を隠す / 黒い覆いを出すために使う。
+   */
+  const [gapHold, setGapHold] = useState(false)
+  const gapTimerRef = useRef<number | null>(null)
+  /** 隙間の待ち合わせから次のクリップを読むための参照（定義順の都合） */
+  const loadSeqIndexRef = useRef<((i: number, atSec?: number, autoplay?: boolean) => void) | null>(
+    null
+  )
+
+  const cancelGapHold = useCallback(() => {
+    if (gapTimerRef.current != null) {
+      window.clearInterval(gapTimerRef.current)
+      gapTimerRef.current = null
+    }
+    setGapHold(false)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (gapTimerRef.current != null) window.clearInterval(gapTimerRef.current)
+    }
+  }, [])
+
   // mpv ウィンドウの表示可否（動画選択中 かつ モーダル非表示なら、ライブラリ/クリップ両方で表示）
   useEffect(() => {
     if (!mpvMode) return
-    api.mpvSetVisible(!!selected && !exportItems && !seqModalOpen)
-  }, [mpvMode, selected, exportItems, seqModalOpen])
+    // 隙間で待っている間は mpv を隠す。mpv はネイティブ最前面で DOM から覆えないため、
+    // 隠して下の `.player-pane`（#000 固定）を見せることで黒にする。
+    api.mpvSetVisible(!!selected && !exportItems && !seqModalOpen && !gapHold)
+  }, [mpvMode, selected, exportItems, seqModalOpen, gapHold])
 
   // クリップから開いた場合の遅延シーク: 動画のロード完了（duration 確定）後に in 点へ飛ぶ
   useEffect(() => {
@@ -625,6 +660,17 @@ export function App() {
   const togglePlay = useCallback(() => {
     const bgm = seqBgmRef.current
     const audio = seqAudioRef.current
+
+    // 隙間で待っている最中は、映像は止まったまま曲だけが進んでいる。
+    // ここでの再生 / 一時停止は**曲の進みだけ**を切り替える（待ちはそのぶん延びる）。
+    // 通常の経路へ落とすと、待ちを飛ばして映像が動き出してしまう。
+    if (gapTimerRef.current != null && audio) {
+      if (audio.paused) audio.play().catch(() => void 0)
+      else audio.pause()
+      setSeqPlaying(!audio.paused)
+      return
+    }
+
     const willPlay = mpvModeRef.current ? mpvPausedRef.current : !!videoRef.current?.paused
 
     // これから再生する場面で音楽ビューにいるなら、最新のキューを引き直して再生を始める。
@@ -737,6 +783,7 @@ export function App() {
 
   // 停止（再生をやめるだけ。シークバーのシーケンス表示は保持する）
   const stopSequence = useCallback(() => {
+    cancelGapHold()
     seqActiveRef.current = false
     seqArmedRef.current = false
     autoPlayNextRef.current = false
@@ -750,7 +797,7 @@ export function App() {
     } else {
       videoRef.current?.pause()
     }
-  }, [])
+  }, [cancelGapHold])
 
   /**
    * シーケンス再生モードを完全に解除する（シークバーも通常表示へ戻す）。
@@ -820,6 +867,38 @@ export function App() {
     [seek, resumePlay, selectVideo, stopSequence]
   )
 
+  /**
+   * 隙間で待つ。映像だけ止めて黒にし、曲が次のクリップの位置へ届いたら読み込む。
+   * 待ち合わせは**曲の時刻**で判定するので、タイマの精度は見え方に影響しない。
+   * 一時停止すると曲も止まるため、そのぶん待ちも自然に延びる。
+   */
+  const holdForGap = useCallback(
+    (nextIdx: number, wantSong: number) => {
+      // 映像だけ止める（曲は鳴らし続ける）
+      if (mpvModeRef.current) {
+        api.mpvPause()
+        mpvPausedRef.current = true
+        setMpvPaused(true)
+      } else {
+        videoRef.current?.pause()
+      }
+      setGapHold(true)
+      if (gapTimerRef.current != null) window.clearInterval(gapTimerRef.current)
+      gapTimerRef.current = window.setInterval(() => {
+        const audio = seqAudioRef.current
+        if (!audio || !seqActiveRef.current) return
+        // 隙間の間も再生ヘッドを進める（曲の位置をそのまま渡す）
+        window.dispatchEvent(
+          new CustomEvent('dcm:seq-gap', { detail: { songSec: audio.currentTime } })
+        )
+        if (audio.currentTime + 0.02 < wantSong) return
+        cancelGapHold()
+        loadSeqIndexRef.current?.(nextIdx)
+      }, GAP_TICK_MS)
+    },
+    [cancelGapHold]
+  )
+
   // mpv/<video> の時刻更新から呼ぶ: 現クリップの out に達したら次へ送る
   const maybeAdvance = useCallback(
     (t: number) => {
@@ -841,7 +920,18 @@ export function App() {
       if (t >= out - 0.05) {
         seqArmedRef.current = false
         const next = seqIndexRef.current + 1
-        if (next < seqQueueRef.current.length) loadSeqIndex(next)
+        if (next < seqQueueRef.current.length) {
+          // 次のクリップが曲の先にあるなら、そこまで黒のまま待つ（書き出しと同じ見え方）。
+          // 曲は止めずに鳴らし続け、届いたら読み込む。
+          const bgm = seqBgmRef.current
+          const audio = seqAudioRef.current
+          const want = bgm ? songPosAt(seqQueueRef.current, next, bgm.startOffsetSec) : 0
+          if (bgm && audio && want - audio.currentTime > GAP_HOLD_MIN_SEC) {
+            holdForGap(next, want)
+            return
+          }
+          loadSeqIndex(next)
+        }
         else if (seqLoop) {
           // ループ ON: 末尾で止めずに先頭へ戻る。BGM も先頭クリップの曲位置へ巻き戻す。
           const bgm = seqBgmRef.current
@@ -856,9 +946,11 @@ export function App() {
         } else stopSequence()
       }
     },
-    [loadSeqIndex, stopSequence, seqLoop]
+    [loadSeqIndex, stopSequence, seqLoop, holdForGap]
   )
   advanceRef.current = maybeAdvance
+  // holdForGap は loadSeqIndex より前に定義されるので ref 越しに呼ぶ
+  loadSeqIndexRef.current = loadSeqIndex
 
   const playSequence = useCallback(
     (items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => {
@@ -924,6 +1016,7 @@ export function App() {
    */
   const jumpToNode = useCallback(
     (items: SeqPlayItem[], nodeId: number) => {
+      cancelGapHold()
       const idx = items.findIndex((it) => it.nodeId === nodeId)
       if (idx < 0) return // 順路に入っていないノード（未接続）は何もしない
       const wasPlaying = mpvModeRef.current
@@ -967,6 +1060,7 @@ export function App() {
   // シーケンスバーからのシーク: 同一クリップ内はシーク、別クリップはそのクリップへジャンプ
   const seekSequence = useCallback(
     (ts: number) => {
+      cancelGapHold()
       const loc = seqLocate(ts)
       if (!loc) return
       // 再生終了（停止）後にバーから触った場合も連続再生の追従へ復帰させる
@@ -1004,6 +1098,7 @@ export function App() {
    */
   const seekMusic = useCallback(
     (items: SeqPlayItem[], ts: number, bgm: SeqPlayBgm) => {
+      cancelGapHold()
       if (items.length === 0) return
       // 頭出しは位置を変えるだけで、再生 / 停止の状態は変えない
       // （停止中に触ったときに鳴り出さないようにする）。jumpToNode と同じ判定。
@@ -1927,6 +2022,11 @@ export function App() {
                   {!selected && (
                     <div className="player-empty">左のツリーから動画を選択してください</div>
                   )}
+                  {/*
+                    隙間で待っている間の黒。mpv 経路では mpv 側を隠して面の #000 を見せるので
+                    これは不要だが、<video> フォールバックでは直前のコマが残るため覆う。
+                  */}
+                  {gapHold && <div className="player-gap" />}
                 </div>
                 <div className="mpv-controls">
                   <button className="mpv-play" onClick={togglePlay} disabled={!selected}>

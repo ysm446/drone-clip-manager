@@ -792,7 +792,17 @@ body.resizing {
   color: var(--bar-faint);
   font-size: var(--fs-sm);
 }
+/* 音楽ビューの隙間で待っている間の黒（書き出しの黒フィラーと同じ見え方にする）。
+   mpv 経路では mpv 側を隠すのでこれは使われないが、<video> では直前のコマが残るため覆う。 */
+.player-gap {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+  z-index: 3;
+}
 .mpv-host {
+  position: relative;
   flex: 1;
   min-height: 0;
   background: #000;

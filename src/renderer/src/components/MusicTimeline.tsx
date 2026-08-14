@@ -927,8 +927,20 @@ export const MusicTimeline = memo(function MusicTimeline({
       if (performance.now() < seekGuardRef.current) return
       moveHead(songSec)
     }
+    // 隙間で黒のまま待っている間は、鳴っているクリップが無いので進捗率が来ない。
+    // App が曲の時刻をそのまま流してくるので、それでヘッドを進める。
+    const onGap = (e: Event): void => {
+      const { songSec } = (e as CustomEvent).detail as { songSec: number }
+      songClockRef.current = { songSec, at: performance.now() }
+      if (performance.now() < seekGuardRef.current) return
+      moveHead(songSec)
+    }
     window.addEventListener('dcm:seq-progress', onProgress)
-    return () => window.removeEventListener('dcm:seq-progress', onProgress)
+    window.addEventListener('dcm:seq-gap', onGap)
+    return () => {
+      window.removeEventListener('dcm:seq-progress', onProgress)
+      window.removeEventListener('dcm:seq-gap', onGap)
+    }
   }, [layout, moveHead])
 
   // ズームやレイアウトが変わったら、控えてある時刻からヘッドを描き直す
