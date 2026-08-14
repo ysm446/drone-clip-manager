@@ -86,6 +86,11 @@ function clipDuration(c: ClipItem): number {
   return (c.outSnapped ?? c.outTime) - (c.inSnapped ?? c.inTime)
 }
 
+/** 値を範囲へ収める */
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v))
+}
+
 /** 秒を吸着単位の倍数へ丸める（snap が 0 なら丸めない）。 */
 function snapSeconds(t: number, snap: number): number {
   return snap > 0 ? Math.round(t / snap) * snap : t
@@ -276,6 +281,13 @@ export const MusicTimeline = memo(function MusicTimeline({
   > | null>(null)
   /** 選択中のクリップ（ノード id）。Delete キー / 右クリックメニューの対象。 */
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  /**
+   * 矩形選択（ラバーバンド）の範囲。クリップ列の左上を原点とした px。null で非表示。
+   * ノードグラフ（SequenceView）と同じ操作感にするための複数選択の入口。
+   */
+  const [marquee, setMarquee] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
+    null
+  )
   /** クリップの右クリックメニュー */
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
   /** ブロックにサムネイルを出すか（幅が足りないブロックは自動で省く） */
@@ -498,16 +510,35 @@ export const MusicTimeline = memo(function MusicTimeline({
   // --- 編集（尺の変更 / 使用範囲のスライド）---
 
   /**
-   * クリップを 1 つ選ぶ。選択の見た目だけでなく **in/out ナッジの対象も切り替える**
+   * 選択を丸ごと差し替える。1 枚だけ選んでいるときは **in/out ナッジの対象も切り替える**
    * （そうしないと、選んでいるクリップではなく再生中のクリップが伸び縮みする）。
+   * 複数選んでいるときはどれが対象か決められないので、ナッジ側には触らない。
    */
-  const selectOne = useCallback(
-    (nodeId: number): void => {
-      setSelected(new Set([nodeId]))
-      const clip = items.find((it) => it.nodeId === nodeId)?.clip
+  const applySelection = useCallback(
+    (ids: Set<number>): void => {
+      setSelected(ids)
+      if (ids.size !== 1) return
+      const [only] = ids
+      const clip = items.find((it) => it.nodeId === only)?.clip
       if (clip) onSelectClip?.(clip)
     },
     [items, onSelectClip]
+  )
+
+  /** クリップを 1 つだけ選ぶ（それまでの選択は捨てる）。 */
+  const selectOne = useCallback(
+    (nodeId: number): void => applySelection(new Set([nodeId])),
+    [applySelection]
+  )
+
+  /** Shift / Ctrl クリック用。選択に足す / 外す。 */
+  const toggleSelect = useCallback(
+    (nodeId: number): void => {
+      const next = new Set(selected)
+      if (!next.delete(nodeId)) next.add(nodeId)
+      applySelection(next)
+    },
+    [selected, applySelection]
   )
 
   /** 画面 X → 曲の時刻（秒） */
@@ -520,8 +551,65 @@ export const MusicTimeline = memo(function MusicTimeline({
     [effPps]
   )
 
+  /**
+   * 矩形選択（ラバーバンド）。**クリップ列の空きから左ドラッグ**で始める
+   * （札の上から始まるドラッグは配置の編集なので、そちらを邪魔しない）。
+   * Shift / Ctrl を押しながらなら、いまの選択に足し込む。
+   */
+  const startMarquee = (e: React.MouseEvent): void => {
+    const lane = clipsRef.current
+    if (!lane || e.button !== 0) return
+    // 空き = 列そのもの、または隙間の表示（見た目だけの帯なので空き扱いにする）
+    const el = e.target as HTMLElement
+    if (el !== lane && !el.classList.contains('mtl-gap')) return
+    e.preventDefault()
+
+    const rect = lane.getBoundingClientRect()
+    const x0 = e.clientX - rect.left
+    const y0 = e.clientY - rect.top
+    // ドラッグ中は並びが変わらないので、当たり判定用の札はここで控えておけばよい
+    const blocks = layoutBlocks
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    const base = additive ? new Set(selected) : new Set<number>()
+    if (!additive) setSelected(base) // 空きのクリックは選択解除から始める
+    setMarquee({ x1: x0, y1: y0, x2: x0, y2: y0 })
+
+    let ids = base
+    const onMove = (ev: MouseEvent): void => {
+      const x = ev.clientX - rect.left
+      const y = ev.clientY - rect.top
+      setMarquee({ x1: x0, y1: y0, x2: x, y2: y })
+      const lox = Math.min(x0, x)
+      const hix = Math.max(x0, x)
+      // 縦の判定はしない。札はどれも 1 行の中で高さいっぱいに並ぶので、
+      // 列の中から引いた矩形は必ず縦に重なる（横だけ引いた高さ 0 の矩形でも選べる）。
+      const next = new Set(base)
+      for (const b of blocks) {
+        if (b.startSec * effPps < hix && b.endSec * effPps > lox) next.add(b.key)
+      }
+      ids = next
+      setSelected(next)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setMarquee(null)
+      // ナッジ対象の通知はここで 1 回だけ（ドラッグ中に毎回流すと上部プレイヤーが暴れる）
+      applySelection(ids)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   const startDrag = (e: React.MouseEvent, b: (typeof layoutBlocks)[number]): void => {
     if (!wave || e.button !== 0) return
+    // Shift / Ctrl クリックは選択の足し引きだけ。配置の編集には入らない
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      toggleSelect(b.key)
+      return
+    }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const nearRight = rect.right - e.clientX <= EDGE_HIT
     const nearLeft = e.clientX - rect.left <= EDGE_HIT
@@ -1020,6 +1108,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     return <div className="mtl-empty">左でシーケンスを選ぶと、曲に合わせた並びを表示します。</div>
   }
 
+  /** 右クリックメニューの削除対象。選択の中を右クリックしたなら選択ぜんぶを消す。 */
+  const menuTargets = menu ? (selected.has(menu.nodeId) ? [...selected] : [menu.nodeId]) : []
+
   return (
     <div className="mtl">
       <div className="mtl-head">
@@ -1176,6 +1267,7 @@ export const MusicTimeline = memo(function MusicTimeline({
               className={`mtl-clips${dropAt != null ? ' dropping' : ''}`}
               style={{ height: TRACK_H }}
               ref={clipsRef}
+              onMouseDown={startMarquee}
               onDragOver={(e) => {
                 if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
                 e.preventDefault()
@@ -1213,6 +1305,24 @@ export const MusicTimeline = memo(function MusicTimeline({
                 <div className="mtl-insert" style={{ left: Math.round(dropAt * effPps) }} />
               )}
 
+              {/* 矩形選択の枠。列の外へはみ出すと波形の上に乗るので、縦は列の中に収める */}
+              {marquee &&
+                (() => {
+                  const top = clamp(Math.min(marquee.y1, marquee.y2), 0, TRACK_H)
+                  const bottom = clamp(Math.max(marquee.y1, marquee.y2), 0, TRACK_H)
+                  return (
+                    <div
+                      className="mtl-marquee"
+                      style={{
+                        left: Math.min(marquee.x1, marquee.x2),
+                        top,
+                        width: Math.abs(marquee.x2 - marquee.x1),
+                        height: bottom - top
+                      }}
+                    />
+                  )
+                })()}
+
               {layout?.blocks.map((b) => {
                 const left = Math.round(b.startSec * effPps)
                 const w = Math.max(2, Math.round((b.endSec - b.startSec) * effPps) - 1)
@@ -1236,7 +1346,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                     onDoubleClick={() => resetDur(b.key)}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      selectOne(b.key)
+                      // 選択の中の 1 枚なら選択を保つ（まとめて削除できるように）
+                      if (!selected.has(b.key)) selectOne(b.key)
                       setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
                     }}
                     title={[
@@ -1254,7 +1365,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                           : '',
                       '本体ドラッグ: 位置を移動（重なった札は押し出される）',
                       '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
-                      'ダブルクリック: 尺を自動に戻す'
+                      'ダブルクリック: 尺を自動に戻す',
+                      'Shift / Ctrl+クリック: 選択に足す・外す / 空きから左ドラッグ: 矩形選択'
                     ]
                       .filter(Boolean)
                       .join('\n')}
@@ -1295,9 +1407,9 @@ export const MusicTimeline = memo(function MusicTimeline({
           items={[
             { label: '尺を自動に戻す', onClick: () => resetDur(menu.nodeId) },
             {
-              label: '順路から削除',
+              label: menuTargets.length > 1 ? `選択した ${menuTargets.length} 件を削除` : '順路から削除',
               danger: true,
-              onClick: () => deleteSelected([menu.nodeId])
+              onClick: () => deleteSelected(menuTargets)
             }
           ]}
         />
