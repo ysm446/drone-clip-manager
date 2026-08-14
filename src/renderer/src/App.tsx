@@ -789,6 +789,20 @@ export function App() {
   const playSequence = useCallback(
     (items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => {
       if (items.length === 0) return
+      // 同じ並び・同じ尺のキューが既にあるなら、頭出しした位置から再開する
+      // （停止 → シーク → 再生 で先頭に戻ってしまわないように）。
+      const prev = seqQueueRef.current
+      const idx = seqIndexRef.current
+      const sameQueue =
+        prev.length === items.length &&
+        prev.every(
+          (p, i) =>
+            p.nodeId === items[i].nodeId &&
+            itemIn(p) === itemIn(items[i]) &&
+            itemOut(p) === itemOut(items[i])
+        )
+      const resuming = sameQueue && idx >= 0 && idx < items.length
+
       seqQueueRef.current = items
       seqActiveRef.current = true
       // パレットのプレビュー再生（クリップのループ範囲）が残っていたら解除
@@ -804,15 +818,27 @@ export function App() {
           const url = api.bgmUrl(bgm.relPath)
           if (audio.src !== url) audio.src = url
           audio.volume = 0.7 // BGM プレイヤーの既定音量に合わせる
-          audio.currentTime = bgm.startOffsetSec
+          // 再開時は「いまの映像位置」に曲を合わせる（先頭から鳴らし直さない）
+          let elapsed = 0
+          if (resuming) {
+            for (let k = 0; k < idx; k++) elapsed += Math.max(0, itemOut(items[k]) - itemIn(items[k]))
+            const v = videoRef.current
+            if (v) elapsed += Math.max(0, v.currentTime - itemIn(items[idx]))
+          }
+          audio.currentTime = bgm.startOffsetSec + elapsed
           audio.play().catch(() => void 0)
         } else {
           audio.pause()
         }
       }
-      loadSeqIndex(0)
+      if (resuming) {
+        seqArmedRef.current = false
+        resumePlay() // 位置はそのまま、映像の再生だけ再開する
+      } else {
+        loadSeqIndex(0)
+      }
     },
-    [loadSeqIndex]
+    [loadSeqIndex, resumePlay]
   )
 
   /**

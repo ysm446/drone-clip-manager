@@ -82,24 +82,38 @@ function largestUnitWithin(dur: number, beatSec: number, snap: number): number {
   return Math.max(1, n) * snap
 }
 
-/** 時刻 t に最も近い拍の時刻を返す（頭出しの吸着に使う。拍は昇順なので二分探索）。 */
-function nearestBeat(beats: number[], t: number): number {
-  if (!beats.length) return t
+/** 時刻 t の直前の拍の番号（拍は昇順なので二分探索）。無ければ -1。 */
+function beatIndexAt(beats: number[], t: number): number {
   let lo = 0
   let hi = beats.length - 1
-  let prev = -1
+  let ans = -1
   while (lo <= hi) {
     const mid = (lo + hi) >> 1
     if (beats[mid] <= t) {
-      prev = mid
+      ans = mid
       lo = mid + 1
     } else {
       hi = mid - 1
     }
   }
-  if (prev < 0) return beats[0]
-  if (prev + 1 >= beats.length) return beats[prev]
-  return t - beats[prev] <= beats[prev + 1] - t ? beats[prev] : beats[prev + 1]
+  return ans
+}
+
+/**
+ * 時刻 t を「吸着単位の整数倍」の位置へ吸着させる（頭出し用）。
+ * 小節頭（barPhase）を基準に数えるので、単位が 1 小節なら小節線に乗る。
+ * 秒ではなく拍の番号で丸めてからビート列を引くため、テンポが流れる曲でも正しく効く。
+ */
+function snapToUnit(beat: BeatAnalysis, t: number, snap: number): number {
+  const beats = beat.beats
+  if (!beats.length) return t
+  const i = beatIndexAt(beats, t)
+  // 直前の拍と次の拍のうち、時刻として近いほうを基準にする
+  const near =
+    i < 0 ? 0 : i + 1 >= beats.length ? i : t - beats[i] <= beats[i + 1] - t ? i : i + 1
+  const steps = Math.round((near - beat.barPhase) / snap)
+  const idx = Math.max(0, Math.min(beats.length - 1, beat.barPhase + steps * snap))
+  return beats[idx]
 }
 
 const RULER_H = 22 // 小節番号ルーラー
@@ -850,10 +864,14 @@ export const MusicTimeline = memo(function MusicTimeline({
               className="mtl-canvas"
               onClick={(e) => {
                 if (!onSeek || !seqBgm || !layout?.blocks.length) return
+                // canvas は 1px のボーダーを持つので、描画原点はボーダーの内側。
+                // グリッドと再生ヘッドに合わせるため、その分を引く。
                 const rect = e.currentTarget.getBoundingClientRect()
-                const clicked = (e.clientX - rect.left) / effPps
-                // 頭出しは拍にスナップする（拍の頭から聴き直せるようにするため）
-                const songSec = beat ? nearestBeat(beat.beats, clicked) : clicked
+                const border = e.currentTarget.clientLeft
+                const clicked = (e.clientX - rect.left - border) / effPps
+                // 頭出しは「吸着」単位（既定 1 小節）に合わせる。
+                // 拍に吸着させると、拍線が見えないズームでは小節線からズレて見えるため。
+                const songSec = beat ? snapToUnit(beat, clicked, snapBeats) : clicked
                 const ts = songToSeqSec(songSec)
                 if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
                 onSeek(buildPlayItems(), ts, {

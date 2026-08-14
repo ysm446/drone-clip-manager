@@ -2733,7 +2733,8 @@ body.resizing {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  /* canvas / クリップ列とも 1px のボーダーの内側が原点なので、それに合わせる */
+  left: 1px;
   width: 2px;
   background: var(--playhead);
   pointer-events: none;
