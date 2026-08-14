@@ -72,8 +72,8 @@ const api: DcmApi = {
   analyzeBgmBeats: (relPath) => ipcRenderer.invoke('bgm:analyzeBeats', relPath),
   getBgmWaveform: (relPath) => ipcRenderer.invoke('bgm:waveform', relPath),
   getSequenceBgm: (sequenceId) => ipcRenderer.invoke('seq:getBgm', sequenceId),
-  setSequenceBgm: (sequenceId, relPath, startOffsetSec) =>
-    ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec),
+  setSequenceBgm: (sequenceId, relPath, startOffsetSec, beatsPerBar) =>
+    ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec, beatsPerBar),
   updateSequenceNodeMusic: (nodeId, units, srcOffset, autoShrunk) =>
     ipcRenderer.invoke('seq:updateNodeMusic', nodeId, units, srcOffset, autoShrunk),
   updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),

@@ -109,15 +109,15 @@ function beatIndexAt(beats: number[], t: number): number {
  * 小節頭（barPhase）を基準に数えるので、単位が 1 小節なら小節線に乗る。
  * 秒ではなく拍の番号で丸めてからビート列を引くため、テンポが流れる曲でも正しく効く。
  */
-function snapToUnit(beat: BeatAnalysis, t: number, snap: number): number {
+function snapToUnit(beat: BeatAnalysis, barPhase: number, t: number, snap: number): number {
   const beats = beat.beats
   if (!beats.length) return t
   const i = beatIndexAt(beats, t)
   // 直前の拍と次の拍のうち、時刻として近いほうを基準にする
   const near =
     i < 0 ? 0 : i + 1 >= beats.length ? i : t - beats[i] <= beats[i + 1] - t ? i : i + 1
-  const steps = Math.round((near - beat.barPhase) / snap)
-  const idx = Math.max(0, Math.min(beats.length - 1, beat.barPhase + steps * snap))
+  const steps = Math.round((near - barPhase) / snap)
+  const idx = Math.max(0, Math.min(beats.length - 1, barPhase + steps * snap))
   return beats[idx]
 }
 
@@ -300,13 +300,34 @@ export const MusicTimeline = memo(function MusicTimeline({
     }
   }, [seqBgm?.relPath, onStatus])
 
+  /**
+   * 実効の拍子と小節頭。曲ごとの手動指定があればそれを、無ければ解析の自動判定を使う。
+   * 自動判定は目安にすぎず耳と食い違う例があるため、手動を常に優先する。
+   */
+  const { beatsPerBar, barPhase } = useMemo(() => {
+    const auto = beat?.beatsPerBar ?? 4
+    const bpb = seqBgm?.beatsPerBar ?? auto
+    const phase =
+      beat?.meters?.find((m) => m.beatsPerBar === bpb)?.barPhase ??
+      (bpb === auto ? (beat?.barPhase ?? 0) : 0)
+    return { beatsPerBar: bpb, barPhase: phase }
+  }, [beat, seqBgm?.beatsPerBar])
+
   /** nodeId → 保存済みの尺・使用開始位置 */
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
   const pickTrack = async (relPath: string): Promise<void> => {
     if (sequenceId == null) return
-    const next = await api.setSequenceBgm(sequenceId, relPath || null, 0)
+    const next = await api.setSequenceBgm(sequenceId, relPath || null, 0, null)
     setSeqBgm(next)
+  }
+
+  /** 拍子の手動指定（null で自動判定に戻す）。 */
+  const setMeter = async (bpb: number | null): Promise<void> => {
+    if (sequenceId == null || !seqBgm) return
+    setSeqBgm(
+      await api.setSequenceBgm(sequenceId, seqBgm.relPath, seqBgm.startOffsetSec, bpb)
+    )
   }
 
   /**
@@ -359,9 +380,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     const beatSec = 60 / beat.bpm
     // 使い始めの拍（曲の開始オフセット以降で最初に来る小節頭）
     const startSec = seqBgm?.startOffsetSec ?? 0
-    let startBeat = beat.barPhase
-    while (startBeat + beat.beatsPerBar < beats.length && beats[startBeat] < startSec) {
-      startBeat += beat.beatsPerBar
+    let startBeat = barPhase
+    while (startBeat + beatsPerBar < beats.length && beats[startBeat] < startSec) {
+      startBeat += beatsPerBar
     }
 
     let cursor = startBeat
@@ -411,9 +432,9 @@ export const MusicTimeline = memo(function MusicTimeline({
       endSec,
       /** 曲に対する過不足（正 = 曲が余っている） */
       slackSec: beat.durationSec - endSec,
-      slackBars: (beat.durationSec - endSec) / (beatSec * beat.beatsPerBar)
+      slackBars: (beat.durationSec - endSec) / (beatSec * beatsPerBar)
     }
-  }, [beat, items, nodeById, drag, snapBeats, seqBgm?.startOffsetSec])
+  }, [beat, items, nodeById, drag, snapBeats, beatsPerBar, barPhase, seqBgm?.startOffsetSec])
 
   const totalSec = Math.max(beat?.durationSec ?? 0, layout?.endSec ?? 0) + 2
   // canvas は幅 32767px 前後で描画に失敗する（超えると真っ白になる）。
@@ -803,19 +824,19 @@ export const MusicTimeline = memo(function MusicTimeline({
     }
 
     // --- 拍線 / 小節線 ---
-    const bpb = beat.beatsPerBar
+    const bpb = beatsPerBar
     // 小節番号の間引き（1 小節が 40px 未満なら 4、12px 未満なら 8 小節ごと）
     const barPx = ((60 / beat.bpm) * bpb) * effPps
     const labelEvery = barPx >= 40 ? 1 : barPx >= 12 ? 4 : 8
     for (let i = 0; i < beat.beats.length; i++) {
       const x = beat.beats[i] * effPps
       if (x > contentW) break
-      const isBar = (((i - beat.barPhase) % bpb) + bpb) % bpb === 0
+      const isBar = (((i - barPhase) % bpb) + bpb) % bpb === 0
       if (!isBar && barPx < 24) continue // 詰まりすぎたら拍線は省く
       g.fillStyle = isBar ? cMuted : cBorder
       g.fillRect(Math.round(x), isBar ? 0 : RULER_H, 1, isBar ? RULER_H + TRACK_H : TRACK_H)
       if (isBar) {
-        const barNo = Math.floor((i - beat.barPhase) / bpb) + 1
+        const barNo = Math.floor((i - barPhase) / bpb) + 1
         if (barNo >= 1 && (barNo - 1) % labelEvery === 0) {
           g.fillStyle = cFaint
           g.font = '10px system-ui, sans-serif'
@@ -830,7 +851,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       g.fillStyle = cAccent
       g.fillRect(Math.round(endX), 0, 1, RULER_H + TRACK_H)
     }
-  }, [beat, wave, effPps, contentW])
+  }, [beat, wave, effPps, contentW, beatsPerBar, barPhase])
 
   if (sequenceId == null) {
     return <div className="mtl-empty">左でシーケンスを選ぶと、曲に合わせた並びを表示します。</div>
@@ -857,9 +878,9 @@ export const MusicTimeline = memo(function MusicTimeline({
         {beat && !loading && (
           <>
             <span className="mtl-meta">
-              {beat.bpm.toFixed(1)} BPM · {beat.beatsPerBar}/4
+              {beat.bpm.toFixed(1)} BPM
             </span>
-            <span className="mtl-meta">全 {Math.floor(beat.beats.length / beat.beatsPerBar)} 小節</span>
+            <span className="mtl-meta">全 {Math.floor(beat.beats.length / beatsPerBar)} 小節</span>
             {beat.warning && <span className="mtl-warn">{beat.warning}</span>}
           </>
         )}
@@ -884,6 +905,30 @@ export const MusicTimeline = memo(function MusicTimeline({
         >
           サムネ
         </button>
+
+        {/*
+          拍子。自動判定は目安にすぎず耳と食い違う例があるので、手動で選び直せるようにする。
+          小節線・小節番号・吸着単位・尺表示がすべてこの値に連動する。
+        */}
+        {beat && (
+          <label className="mtl-snap" title="拍子（自動判定は目安。合わなければ選び直す）">
+            拍子
+            <select
+              value={seqBgm?.beatsPerBar ?? 0}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                void setMeter(v === 0 ? null : v)
+              }}
+            >
+              <option value={0}>自動（{beat.beatsPerBar}/4）</option>
+              {[2, 3, 4, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n}/4
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {/* 吸着単位。尺はこの整数倍になる（1小節を選べば 3小節・5小節も作れる） */}
         <label className="mtl-snap" title="クリップの尺を吸着させる単位">
@@ -1014,7 +1059,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                 const clicked = (e.clientX - rect.left - border) / effPps
                 // 頭出しは「吸着」単位（既定 1 小節）に合わせる。
                 // 拍に吸着させると、拍線が見えないズームでは小節線からズレて見えるため。
-                const songSec = beat ? snapToUnit(beat, clicked, snapBeats) : clicked
+                const songSec = beat ? snapToUnit(beat, barPhase, clicked, snapBeats) : clicked
                 const ts = songToSeqSec(songSec)
                 if (ts < 0) return // シーケンスが始まる前（イントロ部分）は無視する
                 // 吸着位置をその場で出し、直後のシーク着地誤差では動かさない

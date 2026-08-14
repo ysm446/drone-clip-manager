@@ -374,8 +374,13 @@ export function registerIpc(): void {
   )
   ipcMain.handle(
     'seq:setBgm',
-    (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
-      setSequenceBgm(sequenceId, relPath, startOffsetSec)
+    (
+      _e,
+      sequenceId: number,
+      relPath: string | null,
+      startOffsetSec = 0,
+      beatsPerBar: number | null = null
+    ): SequenceBgm | null => setSequenceBgm(sequenceId, relPath, startOffsetSec, beatsPerBar)
   )
 
   // 音楽タイムラインでの尺（拍数）と使用開始位置（Phase 2.6c 段階 3）

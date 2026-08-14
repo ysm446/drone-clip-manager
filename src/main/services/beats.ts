@@ -5,7 +5,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { getRoot, metaDir, resolveInBgm } from '../util/paths'
-import type { BeatAnalysis } from '../../shared/types'
+import type { BeatAnalysis, MeterCandidate } from '../../shared/types'
 
 // BGM のビート解析（Phase 2.6c 段階 1）。
 //
@@ -384,16 +384,42 @@ function tempoVariationPct(beatFrames: number[]): number {
   return med ? ((Math.max(...loc) - Math.min(...loc)) / med) * 100 : 0
 }
 
-/** 4 拍周期でオンセット強度が最大になる位相を小節頭とする。 */
-function downbeatPhase(env: Float64Array, beatFrames: number[], beatsPerBar: number): number {
-  const sums = new Array<number>(beatsPerBar).fill(0)
-  beatFrames.forEach((f, i) => {
-    const idx = Math.round(f)
-    if (idx >= 0 && idx < env.length) sums[i % beatsPerBar] += env[idx]
+/**
+ * 拍子の候補ごとに「小節頭の位相」と「位相別オンセット強度のコントラスト」を求める。
+ * コントラストは（最強位相の平均 ÷ 全位相の平均）で、1.0 に近いほど「その拍子で
+ * まとめても差が出ない」= その拍子らしくない、という意味になる。
+ *
+ * これは目安にすぎない。シンコペーションの効いた 4 拍子と 3 拍子は強弱だけでは
+ * 区別しきれず、実際に耳と食い違う例がある（plan.md の Phase 2.6c を参照）。
+ * そのため自動判定は初期値に留め、UI で手動上書きできるようにしている。
+ */
+function meterCandidates(env: Float64Array, beatFrames: number[]): MeterCandidate[] {
+  return [2, 3, 4, 6].map((bpb) => {
+    const sums = new Array<number>(bpb).fill(0)
+    const cnt = new Array<number>(bpb).fill(0)
+    beatFrames.forEach((f, i) => {
+      const idx = Math.round(f)
+      if (idx >= 0 && idx < env.length) {
+        sums[i % bpb] += env[idx]
+        cnt[i % bpb]++
+      }
+    })
+    const avg = sums.map((s, i) => (cnt[i] ? s / cnt[i] : 0))
+    const mean = avg.reduce((a, b) => a + b, 0) / bpb || 1
+    let bi = 0
+    for (let i = 1; i < bpb; i++) if (avg[i] > avg[bi]) bi = i
+    return { beatsPerBar: bpb, barPhase: bi, contrast: avg[bi] / mean }
   })
-  let bi = 0
-  for (let i = 1; i < beatsPerBar; i++) if (sums[i] > sums[bi]) bi = i
-  return bi
+}
+
+/**
+ * 自動判定の初期値。3 と 4 を比べ、3 が明確に上回るときだけ 3 を選ぶ。
+ * 迷ったら 4 に倒すのは、映像編集で扱う曲の大半が 4 拍子であるため。
+ */
+function pickMeter(cands: MeterCandidate[]): MeterCandidate {
+  const four = cands.find((c) => c.beatsPerBar === 4)!
+  const three = cands.find((c) => c.beatsPerBar === 3)!
+  return three.contrast > four.contrast * 1.15 ? three : four
 }
 
 // ---------------------------------------------------------------- キャッシュ
@@ -408,7 +434,8 @@ function cachePath(absPath: string): string | null {
     return null
   }
   const key = createHash('md5')
-    .update(`${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
+    // 解析の出力が変わったらキャッシュを作り直す（v2: 拍子候補 meters を追加）
+    .update(`v2|${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
     .digest('hex')
     .slice(0, 20)
   const dir = join(metaDir(), 'beats')
@@ -472,8 +499,11 @@ async function run(relPath: string): Promise<BeatAnalysis> {
     deviation = meanDeviationMs(env, beatFrames, peaks)
   }
 
-  const beatsPerBar = 4
-  const barPhase = downbeatPhase(env, beatFrames, beatsPerBar)
+  // 拍子は自動判定を初期値にし、UI で手動上書きできるようにする（meters を全候補返す）
+  const meters = meterCandidates(env, beatFrames)
+  const picked = pickMeter(meters)
+  const beatsPerBar = picked.beatsPerBar
+  const barPhase = picked.barPhase
   const variation = uniform ? 0 : tempoVariationPct(beatFrames)
 
   // 代表 BPM: 等間隔ならその値、追従なら拍間隔の中央値から求める
@@ -500,6 +530,7 @@ async function run(relPath: string): Promise<BeatAnalysis> {
     firstBeatSec: beatFrames.length ? beatFrames[0] / FPS : 0,
     barPhase,
     beatsPerBar,
+    meters,
     meanDeviationMs: Number.isFinite(deviation) ? deviation : 999,
     tempoVariationPct: variation,
     uniform,

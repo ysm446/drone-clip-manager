@@ -199,6 +199,19 @@ export interface BgmDeleteResult {
 }
 
 /**
+ * 拍子の候補（Phase 2.6c）。
+ * contrast は「最強位相の平均オンセット強度 ÷ 全位相の平均」で、
+ * 1.0 に近いほどその拍子でまとめても差が出ない = その拍子らしくない。
+ * ただし目安にすぎず、耳と食い違う例がある（手動で上書きできるようにしている）。
+ */
+export interface MeterCandidate {
+  beatsPerBar: number
+  /** その拍子での小節頭の位相（0 〜 beatsPerBar-1） */
+  barPhase: number
+  contrast: number
+}
+
+/**
  * BGM のビート解析結果（Phase 2.6c 段階 1）。
  * グリッドの正本は `beats`（拍の時刻）で、`bpm` は表示・手動補正用の代表値。
  * テンポが流れる曲は単一 BPM では表せないため（plan.md「Phase 2.6c」の検証結果を参照）。
@@ -211,9 +224,15 @@ export interface BeatAnalysis {
   /** 拍の時刻（秒）。テンポが揺れる曲にも追従する */
   beats: number[]
   firstBeatSec: number
-  /** 小節頭になる拍の位相（0 〜 beatsPerBar-1） */
+  /** 小節頭になる拍の位相（0 〜 beatsPerBar-1）。自動判定した拍子に対応する値。 */
   barPhase: number
+  /** 自動判定した拍子。UI で上書きできる（`meters` から選び直す） */
   beatsPerBar: number
+  /**
+   * 拍子の候補一覧。自動判定は目安にすぎず耳と食い違う例があるため、
+   * UI で選び直せるよう全候補を返す（古いキャッシュには無いことがある）。
+   */
+  meters?: MeterCandidate[]
   /** ビートと実オンセットの平均ズレ（ms）。小さいほど信頼できる */
   meanDeviationMs: number
   /** 局所テンポの変動幅（%）。10 を超えると拍スナップに向かない */
@@ -256,6 +275,8 @@ export interface SequenceBgm {
   relPath: string
   /** 曲のどこから使い始めるか（イントロ飛ばし / サビ合わせ） */
   startOffsetSec: number
+  /** 拍子の手動指定。null なら解析の自動判定に従う */
+  beatsPerBar: number | null
 }
 
 /** エクスプローラでの表示結果 */
@@ -489,7 +510,8 @@ export interface DcmApi {
   setSequenceBgm: (
     sequenceId: number,
     relPath: string | null,
-    startOffsetSec?: number
+    startOffsetSec?: number,
+    beatsPerBar?: number | null
   ) => Promise<SequenceBgm | null>
   /** 音楽タイムラインでのノードの尺（拍数）と使用開始位置を更新（元 segment は変更しない） */
   updateSequenceNodeMusic: (

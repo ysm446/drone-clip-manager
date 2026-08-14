@@ -106,7 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_seqedges_seq ON sequence_edges(sequence_id);
 CREATE TABLE IF NOT EXISTS sequence_bgm (
   sequence_id      INTEGER PRIMARY KEY,
   rel_path         TEXT NOT NULL,
-  start_offset_sec REAL NOT NULL DEFAULT 0
+  start_offset_sec REAL NOT NULL DEFAULT 0,
+  -- 拍子の手動指定。NULL なら解析の自動判定に従う（Phase 2.6c）
+  beats_per_bar    INTEGER
 );
 `
 
@@ -119,6 +121,7 @@ export function getDb(): Database.Database {
   db.exec(SCHEMA)
   migrateSegmentColors(db)
   migrateSequenceNodeMusic(db)
+  migrateSequenceBgmMeter(db)
   dbPath = target
   return db
 }
@@ -141,6 +144,12 @@ function migrateSequenceNodeMusic(d: Database.Database): void {
   for (const [name, decl] of SEQ_NODE_MUSIC_COLUMNS) {
     if (!existing.has(name)) d.exec(`ALTER TABLE sequence_nodes ADD COLUMN ${name} ${decl}`)
   }
+}
+
+// 拍子の手動指定を sequence_bgm に足す（Phase 2.6c）。既存 DB には列が無いため。
+function migrateSequenceBgmMeter(d: Database.Database): void {
+  const cols = (d.prepare('PRAGMA table_info(sequence_bgm)').all() as { name: string }[]).map((r) => r.name)
+  if (!cols.includes('beats_per_bar')) d.exec('ALTER TABLE sequence_bgm ADD COLUMN beats_per_bar INTEGER')
 }
 
 // 区間バーの配色を青〜紫パレットへ変更（2026-07-10）した際の、旧パレットで保存済みの色の置き換え。
@@ -585,6 +594,7 @@ interface SequenceBgmRow {
   sequence_id: number
   rel_path: string
   start_offset_sec: number
+  beats_per_bar: number | null
 }
 
 /** シーケンスに紐づく BGM。未設定なら null。 */
@@ -593,14 +603,20 @@ export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
     .prepare('SELECT * FROM sequence_bgm WHERE sequence_id = ?')
     .get(sequenceId) as SequenceBgmRow | undefined
   if (!r) return null
-  return { sequenceId: r.sequence_id, relPath: r.rel_path, startOffsetSec: r.start_offset_sec }
+  return {
+    sequenceId: r.sequence_id,
+    relPath: r.rel_path,
+    startOffsetSec: r.start_offset_sec,
+    beatsPerBar: r.beats_per_bar ?? null
+  }
 }
 
 /** シーケンスの BGM を設定する（relPath に null を渡すと解除）。 */
 export function setSequenceBgm(
   sequenceId: number,
   relPath: string | null,
-  startOffsetSec = 0
+  startOffsetSec = 0,
+  beatsPerBar: number | null = null
 ): SequenceBgm | null {
   const d = getDb()
   if (relPath == null) {
@@ -608,10 +624,12 @@ export function setSequenceBgm(
     return null
   }
   d.prepare(
-    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec) VALUES (?, ?, ?)
+    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec, beats_per_bar)
+     VALUES (?, ?, ?, ?)
      ON CONFLICT(sequence_id) DO UPDATE SET rel_path = excluded.rel_path,
-                                            start_offset_sec = excluded.start_offset_sec`
-  ).run(sequenceId, relPath, startOffsetSec)
+                                            start_offset_sec = excluded.start_offset_sec,
+                                            beats_per_bar = excluded.beats_per_bar`
+  ).run(sequenceId, relPath, startOffsetSec, beatsPerBar)
   return getSequenceBgm(sequenceId)
 }
 
