@@ -636,6 +636,13 @@ body.resizing {
   background: var(--selected);
   color: var(--accent);
 }
+/* 解析前のメトロノームなど、まだ使えないトグル */
+.bgm-controls button:disabled,
+.bgm-controls button:disabled:hover {
+  background: none;
+  color: var(--faint);
+  cursor: default;
+}
 /* 音量スライダー: 幅を狭く・つまみを小さくしたフラットなスタイル */
 .bgm-controls input[type='range'] {
   flex: none;

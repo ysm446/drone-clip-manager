@@ -1,7 +1,15 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { BeatAnalysis, BgmInfo, BgmTrack } from '../../../shared/types'
 import { ContextMenu } from './ContextMenu'
-import { IconFolder, IconLoop, IconNext, IconPause, IconPlay, IconPrev } from './icons'
+import {
+  IconFolder,
+  IconLoop,
+  IconMetronome,
+  IconNext,
+  IconPause,
+  IconPlay,
+  IconPrev
+} from './icons'
 
 const api = window.dcm
 
@@ -9,6 +17,10 @@ const api = window.dcm
 const BEAT_FLASH_SEC = 0.12
 /** タップテンポで「打ち直し」とみなす無入力時間（秒） */
 const TAP_RESET_SEC = 2.5
+/** メトロノームの先読み時間（秒）。この先までのクリックを Web Audio に予約する。 */
+const CLICK_LOOKAHEAD_SEC = 0.2
+/** メトロノームのスケジューラ間隔（ms）。先読みより十分短くする。 */
+const CLICK_TICK_MS = 40
 
 /** 秒 → m:ss */
 function fmtClock(s: number): string {
@@ -106,6 +118,13 @@ export const BgmPlayer = memo(function BgmPlayer({
   /** タップテンポで求めた BPM。null なら自動検出値を使う。 */
   const [tapBpm, setTapBpm] = useState<number | null>(null)
   const tapsRef = useRef<number[]>([])
+  /** メトロノーム（拍にクリック音を重ねる）。目視では拍のズレが判断できないため。 */
+  const [metronome, setMetronome] = useState(false)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  /** 次に予約すべき拍の番号。シーク時は -1 にして貼り直す。 */
+  const clickIdxRef = useRef(-1)
+  /** 予約済みで、まだ鳴っていないクリック（トグル OFF で止める） */
+  const pendingClicksRef = useRef<OscillatorNode[]>([])
 
   useEffect(() => {
     api.getBgm().then(setInfo)
@@ -269,6 +288,87 @@ export const BgmPlayer = memo(function BgmPlayer({
     return () => cancelAnimationFrame(raf)
   }, [beat, playing])
 
+  // メトロノーム。<audio> の currentTime を基準に、少し先の拍を Web Audio へ予約していく。
+  // setInterval は「先読みして予約する」ためだけに使うので、タイマの精度は音のズレに影響しない。
+  useEffect(() => {
+    const ctx = audioCtxRef.current
+    if (!metronome || !ctx || !beat || !beat.beats.length || !playing) return
+    void ctx.resume()
+    const beats = beat.beats
+
+    const schedule = (when: number, strong: boolean): void => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.frequency.value = strong ? 2000 : 1200 // 小節頭だけ高い音にする
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      // クリック音: 2ms で立ち上げて 50ms で減衰（exponential なので 0 は使えない）
+      gain.gain.setValueAtTime(0.0001, when)
+      gain.gain.exponentialRampToValueAtTime(strong ? 0.5 : 0.28, when + 0.002)
+      gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05)
+      osc.start(when)
+      osc.stop(when + 0.06)
+      pendingClicksRef.current.push(osc)
+      osc.onended = () => {
+        pendingClicksRef.current = pendingClicksRef.current.filter((o) => o !== osc)
+      }
+    }
+
+    const id = window.setInterval(() => {
+      const a = audioRef.current
+      if (!a || a.paused) return
+      const t = a.currentTime
+      const horizon = t + CLICK_LOOKAHEAD_SEC
+      let i = clickIdxRef.current
+      // シークで巻き戻った / 大きく飛んだら索引を貼り直す
+      if (
+        i < 0 ||
+        (i > 0 && i <= beats.length && beats[i - 1] > t) ||
+        (i < beats.length && beats[i] < t - 1)
+      ) {
+        i = beatIndexAt(beats, t) + 1
+      }
+      while (i < beats.length && beats[i] <= horizon) {
+        if (beats[i] >= t) {
+          const rel = i - beat.barPhase
+          const strong = (((rel % beat.beatsPerBar) + beat.beatsPerBar) % beat.beatsPerBar) === 0
+          // 再生位置との差を AudioContext の時計に載せ替える
+          schedule(ctx.currentTime + (beats[i] - t), strong)
+        }
+        i++
+      }
+      clickIdxRef.current = i
+    }, CLICK_TICK_MS)
+
+    return () => {
+      window.clearInterval(id)
+      for (const osc of pendingClicksRef.current) {
+        try {
+          osc.stop()
+        } catch {
+          /* 既に停止済み */
+        }
+      }
+      pendingClicksRef.current = []
+      clickIdxRef.current = -1
+    }
+  }, [metronome, beat, playing])
+
+  // AudioContext はアンマウント時に閉じる（曲やトグルの切替では使い回す）
+  useEffect(() => {
+    return () => {
+      void audioCtxRef.current?.close()
+      audioCtxRef.current = null
+    }
+  }, [])
+
+  /** メトロノームの ON / OFF。AudioContext はユーザー操作の中でしか生成できない。 */
+  const toggleMetronome = (): void => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
+    clickIdxRef.current = -1
+    setMetronome((v) => !v)
+  }
+
   /** タップテンポ。直近の打点の間隔の中央値から BPM を出す（間が空いたら打ち直し）。 */
   const tap = (): void => {
     const now = performance.now() / 1000
@@ -370,6 +470,16 @@ export const BgmPlayer = memo(function BgmPlayer({
               title="リスト全体をループ"
             >
               <IconLoop />
+            </button>
+            <button
+              className={metronome ? 'on' : ''}
+              onClick={toggleMetronome}
+              disabled={!beat}
+              title={
+                beat ? '拍にクリック音を重ねる（メトロノーム）' : 'ビート解析後に使えます'
+              }
+            >
+              <IconMetronome />
             </button>
             <input
               type="range"

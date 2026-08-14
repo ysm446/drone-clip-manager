@@ -107,6 +107,17 @@ export function IconZoomOut({ size = 14, className }: IconProps) {
   )
 }
 
+/** メトロノーム（BGM の拍を鳴らすトグル用）。本体の三角 + 振り子の棒。 */
+export function IconMetronome({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <path d="M6.2 2.6 H9.8 L12.6 13.4 H3.4 Z" />
+      <path d="M4.2 9.4 H11.8" />
+      <path d="M8 12.2 L10.4 4.6" />
+    </svg>
+  )
+}
+
 export function IconLoop({ size = 14, className }: IconProps) {
   return (
     <svg {...stroke(size, className)}>
