@@ -215,6 +215,32 @@ export interface BeatAnalysisResult {
   analysis?: BeatAnalysis
 }
 
+/** BGM の波形ピーク（音楽タイムラインの背景 / Phase 2.6c 段階 2） */
+export interface Waveform {
+  relPath: string
+  durationSec: number
+  /** 1 秒あたりの点数 */
+  peaksPerSec: number
+  /** 各点の振幅（0〜1 に正規化済み。上下対称に描く） */
+  peaks: number[]
+}
+
+/** 波形取得の結果（失敗時はエラー文言を返す） */
+export interface WaveformResult {
+  ok: boolean
+  error?: string
+  waveform?: Waveform
+}
+
+/** シーケンスに紐づく BGM（1 シーケンス 1 曲 / Phase 2.6c） */
+export interface SequenceBgm {
+  sequenceId: number
+  /** BGM フォルダからの相対パス */
+  relPath: string
+  /** 曲のどこから使い始めるか（イントロ飛ばし / サビ合わせ） */
+  startOffsetSec: number
+}
+
 /** エクスプローラでの表示結果 */
 export interface ShowInFolderResult {
   ok: boolean
@@ -416,6 +442,16 @@ export interface DcmApi {
   showBgmInFolder: (relPath: string) => Promise<ShowInFolderResult>
   /** BGM のビートを解析する（結果は .dcm/beats/ にキャッシュ。2 回目以降は即返る） */
   analyzeBgmBeats: (relPath: string) => Promise<BeatAnalysisResult>
+  /** BGM の波形ピークを取得する（結果は .dcm/waveforms/ にキャッシュ） */
+  getBgmWaveform: (relPath: string) => Promise<WaveformResult>
+  /** シーケンスに紐づく BGM を取得（未設定なら null） */
+  getSequenceBgm: (sequenceId: number) => Promise<SequenceBgm | null>
+  /** シーケンスの BGM を設定（relPath に null で解除） */
+  setSequenceBgm: (
+    sequenceId: number,
+    relPath: string | null,
+    startOffsetSec?: number
+  ) => Promise<SequenceBgm | null>
   // --- 書き出し ---
   pickExportDir: () => Promise<string | null>
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>

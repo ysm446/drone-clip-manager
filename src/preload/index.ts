@@ -69,6 +69,10 @@ const api: DcmApi = {
   deleteBgmTrack: (relPath) => ipcRenderer.invoke('bgm:delete', relPath),
   showBgmInFolder: (relPath) => ipcRenderer.invoke('bgm:showInFolder', relPath),
   analyzeBgmBeats: (relPath) => ipcRenderer.invoke('bgm:analyzeBeats', relPath),
+  getBgmWaveform: (relPath) => ipcRenderer.invoke('bgm:waveform', relPath),
+  getSequenceBgm: (sequenceId) => ipcRenderer.invoke('seq:getBgm', sequenceId),
+  setSequenceBgm: (sequenceId, relPath, startOffsetSec) =>
+    ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),
   exportSegments: (jobs: ExportJob[], options: ExportOptions) =>
     ipcRenderer.invoke('export:run', jobs, options),

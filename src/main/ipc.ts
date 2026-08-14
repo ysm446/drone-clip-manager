@@ -43,15 +43,20 @@ import {
   addSequenceEdge,
   removeSequenceEdge,
   restoreSegment,
-  restoreSequenceGraph
+  restoreSequenceGraph,
+  getSequenceBgm,
+  setSequenceBgm
 } from './services/db'
 import { analyzeBeats } from './services/beats'
+import { getWaveform } from './services/waveform'
 import { exportConcat, exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BeatAnalysisResult,
+  SequenceBgm,
+  WaveformResult,
   BgmDeleteResult,
   BgmInfo,
   BgmRenameResult,
@@ -349,6 +354,25 @@ export function registerIpc(): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  // BGM の波形ピーク（Phase 2.6c 段階 2）。結果は .dcm/waveforms/ にキャッシュされる。
+  ipcMain.handle('bgm:waveform', async (_e, relPath: string): Promise<WaveformResult> => {
+    try {
+      return { ok: true, waveform: await getWaveform(relPath) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // シーケンスに紐づく BGM の取得 / 設定（Phase 2.6c）
+  ipcMain.handle('seq:getBgm', (_e, sequenceId: number): SequenceBgm | null =>
+    getSequenceBgm(sequenceId)
+  )
+  ipcMain.handle(
+    'seq:setBgm',
+    (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
+      setSequenceBgm(sequenceId, relPath, startOffsetSec)
+  )
 
   ipcMain.handle('export:pickDir', async (e): Promise<string | null> => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? undefined

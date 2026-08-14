@@ -15,6 +15,7 @@ import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
 import { ContextMenu } from './ContextMenu'
 import type { ExportTarget } from './ExportModal'
 import { IconFilm, IconPause, IconPlay } from './icons'
+import { MusicTimeline } from './MusicTimeline'
 import { Splitter } from './Splitter'
 
 const api = window.dcm
@@ -168,6 +169,8 @@ export const SequenceView = memo(function SequenceView({
   )
   /** キャンバスのパン / ズーム。内容座標 → 画面座標は translate(x,y) scale(scale)。 */
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 })
+  /** 同じシーケンスをどのビューで見るか（ノードグラフ / 音楽タイムライン / Phase 2.6c） */
+  const [mode, setMode] = useState<'graph' | 'music'>('graph')
   /** 選択中ノード（クリック / 右ドラッグの矩形で選択、Delete で削除） */
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   /** 右ドラッグ中の選択矩形（キャンバス内容座標） */
@@ -972,14 +975,32 @@ export const SequenceView = memo(function SequenceView({
       {/* 3 列目: ノードネットワーク */}
       <div className="seq-main">
         <div className="seq-toolbar">
+          {/* ノードグラフ / 音楽タイムラインの切替（同じシーケンスの 2 つのビュー） */}
+          <div className="seq-modes">
+            <button
+              className={`seq-mode${mode === 'graph' ? ' active' : ''}`}
+              onClick={() => setMode('graph')}
+            >
+              ノード
+            </button>
+            <button
+              className={`seq-mode${mode === 'music' ? ' active' : ''}`}
+              onClick={() => setMode('music')}
+              title="曲の小節に合わせた並びを表示する"
+            >
+              音楽
+            </button>
+          </div>
           <span className="seq-count">{playItems.length} ノード（順路）</span>
           <span className="seq-total">合計 {fmtTime(totalDur)}</span>
-          <span
-            className="seq-zoom"
-            title="ホイールでズーム / 中ボタンドラッグでパン / A: 全体表示 / F: 選択ノードへフォーカス"
-          >
-            {Math.round(view.scale * 100)}%
-          </span>
+          {mode === 'graph' && (
+            <span
+              className="seq-zoom"
+              title="ホイールでズーム / 中ボタンドラッグでパン / A: 全体表示 / F: 選択ノードへフォーカス"
+            >
+              {Math.round(view.scale * 100)}%
+            </span>
+          )}
           <span className="clips-spacer" />
           {isPlaying ? (
             <button className="btn" onClick={onStopSequence}>
@@ -1008,6 +1029,9 @@ export const SequenceView = memo(function SequenceView({
           </button>
         </div>
 
+        {mode === 'music' ? (
+          <MusicTimeline sequenceId={activeId} items={playItems} />
+        ) : (
         <div
           className="seq-canvas"
           ref={canvasRef}
@@ -1124,6 +1148,7 @@ export const SequenceView = memo(function SequenceView({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {seqMenu && (

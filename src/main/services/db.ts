@@ -6,6 +6,7 @@ import type {
   Segment,
   SegmentInput,
   Sequence,
+  SequenceBgm,
   SequenceEdge,
   SequenceGraph,
   SequenceNode,
@@ -99,6 +100,14 @@ CREATE TABLE IF NOT EXISTS sequence_edges (
 
 CREATE INDEX IF NOT EXISTS idx_seqnodes_seq ON sequence_nodes(sequence_id);
 CREATE INDEX IF NOT EXISTS idx_seqedges_seq ON sequence_edges(sequence_id);
+
+-- シーケンスに紐づく BGM（音楽同期タイムライン / Phase 2.6c）。1 シーケンス 1 曲。
+-- 曲の指定と手動補正値だけを持つ。検出したビート列は曲側のキャッシュ（.dcm/beats/）に置く。
+CREATE TABLE IF NOT EXISTS sequence_bgm (
+  sequence_id      INTEGER PRIMARY KEY,
+  rel_path         TEXT NOT NULL,
+  start_offset_sec REAL NOT NULL DEFAULT 0
+);
 `
 
 export function getDb(): Database.Database {
@@ -545,9 +554,44 @@ export function deleteSequence(id: number): void {
   const tx = d.transaction((seqId: number) => {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(seqId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(seqId)
+    d.prepare('DELETE FROM sequence_bgm WHERE sequence_id = ?').run(seqId)
     d.prepare('DELETE FROM sequences WHERE id = ?').run(seqId)
   })
   tx(id)
+}
+
+interface SequenceBgmRow {
+  sequence_id: number
+  rel_path: string
+  start_offset_sec: number
+}
+
+/** シーケンスに紐づく BGM。未設定なら null。 */
+export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
+  const r = getDb()
+    .prepare('SELECT * FROM sequence_bgm WHERE sequence_id = ?')
+    .get(sequenceId) as SequenceBgmRow | undefined
+  if (!r) return null
+  return { sequenceId: r.sequence_id, relPath: r.rel_path, startOffsetSec: r.start_offset_sec }
+}
+
+/** シーケンスの BGM を設定する（relPath に null を渡すと解除）。 */
+export function setSequenceBgm(
+  sequenceId: number,
+  relPath: string | null,
+  startOffsetSec = 0
+): SequenceBgm | null {
+  const d = getDb()
+  if (relPath == null) {
+    d.prepare('DELETE FROM sequence_bgm WHERE sequence_id = ?').run(sequenceId)
+    return null
+  }
+  d.prepare(
+    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec) VALUES (?, ?, ?)
+     ON CONFLICT(sequence_id) DO UPDATE SET rel_path = excluded.rel_path,
+                                            start_offset_sec = excluded.start_offset_sec`
+  ).run(sequenceId, relPath, startOffsetSec)
+  return getSequenceBgm(sequenceId)
 }
 
 /** シーケンスをノード / エッジごと複製する。新しいシーケンスを返す。 */
