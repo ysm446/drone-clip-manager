@@ -3,6 +3,7 @@ import type {
   BgmInfo,
   ClipItem,
   ConcatBgm,
+  ConcatItem,
   SequenceBgm,
   SequenceNode,
   Waveform
@@ -170,10 +171,7 @@ interface Props {
    */
   onSelectClip?: (clip: ClipItem) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
-  onExport?: (
-    items: { videoRelPath: string; inSec: number; outSec: number }[],
-    bgm: ConcatBgm
-  ) => Promise<void>
+  onExport?: (items: ConcatItem[], bgm: ConcatBgm) => Promise<void>
   /** 書き出し実行中（ボタンを無効にする） */
   exporting?: boolean
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
@@ -810,15 +808,14 @@ export const MusicTimeline = memo(function MusicTimeline({
    *   そのままだとクリップ数だけ誤差が積もって曲の後半でカットが拍からずれる。
    *   「理想の累積時刻」との差で毎回の尺を決めるので、累積ズレは半フレーム未満に留まる。
    */
-  const buildExportItems = useCallback(async (): Promise<
-    { videoRelPath: string; inSec: number; outSec: number }[]
-  > => {
+  const buildExportItems = useCallback(async (): Promise<ConcatItem[]> => {
     if (!layout) return []
-    const out: { videoRelPath: string; inSec: number; outSec: number }[] = []
+    const out: ConcatItem[] = []
     // キーフレームは動画ごとに 1 回だけ引く
     const kfCache = new Map<string, number[]>()
-    let targetAcc = 0 // 拍ぴったりの累積時刻（理想）
+    let targetAcc = 0 // 置いたとおりの累積時刻（理想）
     let actualAcc = 0 // フレーム量子化後の累積時刻（実際に出力される尺）
+    let prevEnd: number | null = null
     for (const b of layout.blocks) {
       const c = b.clip
       const baseIn = c.inSnapped ?? c.inTime
@@ -837,13 +834,25 @@ export const MusicTimeline = memo(function MusicTimeline({
         }
         inSec = prev
       }
-      targetAcc += b.endSec - b.startSec
       const fps = c.videoFps && c.videoFps > 0 ? c.videoFps : 30
+
+      // 手前との隙間。ここは黒で埋める。尺と同じくフレーム単位へ量子化して、
+      // 誤差は次へ持ち越す（隙間を素通しにすると以降のカットが曲からずれる）。
+      let gapBeforeSec = 0
+      if (prevEnd != null && b.startSec - prevEnd > 0.001) {
+        targetAcc += b.startSec - prevEnd
+        const gapFrames = Math.max(1, Math.round((targetAcc - actualAcc) * fps))
+        gapBeforeSec = gapFrames / fps
+        actualAcc += gapBeforeSec
+      }
+
+      targetAcc += b.endSec - b.startSec
       // 理想の累積との差を、この動画のフレーム数へ丸める（余りは次のクリップへ持ち越す）
       const frames = Math.max(1, Math.round((targetAcc - actualAcc) * fps))
       const dur = frames / fps
       actualAcc += dur
-      out.push({ videoRelPath: c.videoRelPath, inSec, outSec: inSec + dur })
+      prevEnd = b.endSec
+      out.push({ videoRelPath: c.videoRelPath, inSec, outSec: inSec + dur, gapBeforeSec })
     }
     return out
   }, [layout])
@@ -1040,18 +1049,15 @@ export const MusicTimeline = memo(function MusicTimeline({
               : `曲より ${fmtSec(-layout.slackSec)} 長い`}
           </span>
         )}
-        {/*
-          隙間の警告。いまは隙間を埋める映像を作れないので書き出しを止めている
-          （黒フィラーの挿入は別作業。plan.md の Phase 2.6c を参照）。
-        */}
+        {/* 隙間があることの明示。書き出しでは黒で埋まる（plan.md の Phase 2.6c「隙間の扱い」） */}
         {!!layout?.gaps.length && (
           <span
-            className="mtl-slack over"
-            title={layout.gaps
+            className="mtl-meta"
+            title={`書き出しでは黒で埋まります。\n${layout.gaps
               .map((g) => `${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
-              .join('\n')}
+              .join('\n')}`}
           >
-            隙間 {layout.gaps.length} か所（書き出せません）
+            隙間 {layout.gaps.length} か所（黒で埋める）
           </span>
         )}
         <button className="mtl-zoom" onClick={() => setPps((v) => Math.max(MIN_PPS, v / 1.5))}>
@@ -1088,18 +1094,9 @@ export const MusicTimeline = memo(function MusicTimeline({
             </label>
             <button
               className="btn primary"
-              disabled={
-                !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout?.gaps.length
-              }
+              disabled={!wave || !layout?.blocks.length || !seqBgm || exporting}
               onClick={() => {
                 if (!seqBgm || !layout) return
-                if (layout.gaps.length) {
-                  onStatus?.(
-                    `クリップの間に隙間が ${layout.gaps.length} か所あります（最初は ${fmtSec(layout.gaps[0].startSec)}）。隙間を埋める映像をまだ作れないため書き出せません。`,
-                    'err'
-                  )
-                  return
-                }
                 void buildExportItems().then((exportItems) =>
                   onExport(exportItems, {
                     relPath: seqBgm.relPath,
@@ -1111,7 +1108,7 @@ export const MusicTimeline = memo(function MusicTimeline({
               }}
               title={
                 layout?.gaps.length
-                  ? 'クリップの間に隙間があるため書き出せません（隙間を詰めてください）'
+                  ? '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す（隙間は黒で埋める）'
                   : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
               }
             >
@@ -1159,7 +1156,7 @@ export const MusicTimeline = memo(function MusicTimeline({
               }}
             >
               {/*
-                クリップの間の隙間。書き出しを止めるうえに、再生では曲だけが飛ぶので、
+                クリップの間の隙間。書き出しでは黒になり、再生では飛ばされるので、
                 数ピクセルでも気づけるように明示する（縮めた直後は特に見落としやすい）。
               */}
               {layout?.gaps.map((g) => (
@@ -1170,7 +1167,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                     left: Math.round(g.startSec * effPps),
                     width: Math.max(2, Math.round((g.endSec - g.startSec) * effPps))
                   }}
-                  title={`隙間 ${fmtSec(g.endSec - g.startSec)}（${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}）\nここは書き出せません。再生では曲だけが先へ飛びます。`}
+                  title={`隙間 ${fmtSec(g.endSec - g.startSec)}（${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}）\n書き出しでは黒で埋まります。プレビュー再生では飛ばして詰めて鳴ります。`}
                 />
               ))}
 

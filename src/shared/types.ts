@@ -340,6 +340,12 @@ export interface ConcatItem {
   videoRelPath: string
   inSec: number
   outSec: number
+  /**
+   * このクリップの手前に挟む「無映像」の秒数（音楽ビューの隙間 / Phase 2.6c 段階 7）。
+   * 0 / 未指定なら詰めて繋ぐ。埋める黒は元動画の仕様に合わせて生成する。
+   * 隙間があるときは音声トラックを落とすので、**BGM 合成と併用すること**（映像だけの連結になる）。
+   */
+  gapBeforeSec?: number
 }
 
 /**

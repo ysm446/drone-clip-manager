@@ -86,16 +86,119 @@ function bgmArgs(concatPath: string, bgm: ConcatBgm, totalDur: number, outPath: 
   ]
 }
 
-function cutArgs(absInput: string, inSec: number, dur: number): string[] {
+function cutArgs(absInput: string, inSec: number, dur: number, withAudio = true): string[] {
   return [
     '-ss', String(inSec),
     '-i', absInput,
     '-t', String(dur),
     '-c', 'copy',
     '-map', '0:V',
-    '-map', '0:a?',
+    ...(withAudio ? ['-map', '0:a?'] : []),
     '-avoid_negative_ts', 'make_zero'
   ]
+}
+
+// ---------------------------------------------------------------- 隙間を埋める黒
+//
+// 音楽ビューではクリップの間に隙間を空けられる（Phase 2.6c 段階 7）。そこに映す素材は無いので
+// 黒を生成して挟む。**素材の映像は stream copy のまま**で、エンコードされるのは黒だけ。
+//
+// **素朴に MP4 のまま concat すると壊れる。** MP4 は HEVC のパラメータセット（VPS/SPS/PPS）を
+// `hvcC` に 1 組しか持てず、concat すると先頭ファイルのものだけが残る。別エンコードの黒は
+// SPS が違うので、その全フレームが誤ったパラメータでデコードされる。しかも ffmpeg はエラーを
+// 出さない（尺もフレーム数も合った正常なファイルに見える）。
+// そこで隙間があるときだけ、パラメータセットをストリーム内に持てる MPEG-TS を経由し、
+// MP4 へ戻すときは `hev1` タグ（ストリーム内パラメータセットを許すタグ）を付ける。
+// 実測は plan.md の Phase 2.6c「隙間の扱い」を参照。
+
+interface FillerSpec {
+  codec: string
+  profile: string
+  width: number
+  height: number
+  /** `60000/1001` のような分数のまま使う（小数にすると 59.94 が丸まる） */
+  fpsFrac: string
+  fps: number
+  pixFmt: string
+  timescale: number
+  colorPrimaries: string
+  colorTrc: string
+  colorSpace: string
+}
+
+/** 黒を作るために、元動画の映像仕様を引く。 */
+async function probeFillerSpec(absInput: string): Promise<FillerSpec> {
+  const out = await new Promise<string>((resolve, reject) => {
+    const ff = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries',
+      'stream=codec_name,profile,width,height,pix_fmt,r_frame_rate,time_base,color_primaries,color_transfer,color_space',
+      '-of', 'default=noprint_wrappers=1',
+      absInput
+    ])
+    let buf = ''
+    ff.stdout.on('data', (b: Buffer) => (buf += b.toString()))
+    ff.on('error', reject)
+    ff.on('close', (code) => (code === 0 ? resolve(buf) : reject(new Error('ffprobe 失敗'))))
+  })
+  const get = (key: string): string => out.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1]?.trim() ?? ''
+  const fpsFrac = get('r_frame_rate') || '30/1'
+  const [fn, fd] = fpsFrac.split('/').map(Number)
+  const tb = get('time_base').split('/')
+  return {
+    codec: get('codec_name'),
+    profile: get('profile'),
+    width: Number(get('width')) || 1920,
+    height: Number(get('height')) || 1080,
+    fpsFrac,
+    fps: fd ? fn / fd : 30,
+    pixFmt: get('pix_fmt') || 'yuv420p',
+    timescale: Number(tb[1]) || 90000,
+    colorPrimaries: get('color_primaries'),
+    colorTrc: get('color_transfer'),
+    colorSpace: get('color_space')
+  }
+}
+
+/** 元動画に合わせた黒クリップを作る。中身は真っ黒なので容量も時間もごく小さい。 */
+async function makeBlackPart(spec: FillerSpec, durSec: number, outPath: string): Promise<void> {
+  const frames = Math.max(1, Math.round(durSec * spec.fps))
+  // profile 名は ffprobe の表記（`Main 10`）とエンコーダの指定（`main10`）で違う
+  const profile = spec.profile.toLowerCase().replace(/\s+/g, '')
+  const enc = spec.codec === 'hevc' ? 'libx265' : 'libx264'
+  const color = [
+    ...(spec.colorPrimaries && spec.colorPrimaries !== 'unknown'
+      ? ['-color_primaries', spec.colorPrimaries]
+      : []),
+    ...(spec.colorTrc && spec.colorTrc !== 'unknown' ? ['-color_trc', spec.colorTrc] : []),
+    ...(spec.colorSpace && spec.colorSpace !== 'unknown' ? ['-colorspace', spec.colorSpace] : [])
+  ]
+  await runFfmpeg(
+    [
+      '-f', 'lavfi',
+      '-i', `color=c=black:s=${spec.width}x${spec.height}:r=${spec.fpsFrac}`,
+      '-frames:v', String(frames),
+      '-c:v', enc,
+      '-preset', 'ultrafast',
+      ...(profile ? ['-profile:v', profile] : []),
+      '-pix_fmt', spec.pixFmt,
+      ...color,
+      '-tag:v', spec.codec === 'hevc' ? 'hvc1' : 'avc1',
+      '-video_track_timescale', String(spec.timescale),
+      outPath
+    ],
+    () => void 0
+  )
+}
+
+/**
+ * パートを MPEG-TS へ変換する（stream copy）。
+ * TS はパラメータセットをストリーム内に持てるので、別エンコードの黒を混ぜても壊れない。
+ */
+async function toTs(part: string, out: string, codec: string): Promise<void> {
+  const bsf = codec === 'hevc' ? 'hevc_mp4toannexb' : 'h264_mp4toannexb'
+  await runFfmpeg(['-i', part, '-c', 'copy', '-bsf:v', bsf, '-f', 'mpegts', out], () => void 0)
 }
 
 /** 1区間をロスレス書き出しする（引数は cutArgs を参照）。 */
@@ -200,7 +303,9 @@ export async function exportConcat(
   if (items.length === 0) throw new Error('連結対象がありません')
   const durs = items.map((it) => it.outSec - it.inSec)
   if (durs.some((d) => !(d > 0))) throw new Error('区間長が 0 以下のクリップがあります')
-  const totalDur = durs.reduce((s, d) => s + d, 0)
+  const gaps = items.map((it) => Math.max(0, it.gapBeforeSec ?? 0))
+  const hasGap = gaps.some((g) => g > 0.001)
+  const totalDur = durs.reduce((s, d) => s + d, 0) + gaps.reduce((s, g) => s + g, 0)
   const outExt = extname(resolveInRoot(items[0].videoRelPath)) || '.mp4'
   const outPath = uniquePath(outDir, sanitize(name), outExt)
   // BGM 合成は「切り出し → 連結 → 合成」の 3 段。進捗の分母も 3 倍で数える。
@@ -208,25 +313,58 @@ export async function exportConcat(
 
   const tmp = await mkdtemp(join(tmpdir(), 'dcm-concat-'))
   try {
-    // 1. 各クリップを一時ファイルへ切り出し
+    // 隙間を埋めるときは、黒に合わせる仕様を先頭クリップから引く。
+    // 黒には音声が無いので、**音声トラックは落として映像だけ連結する**
+    // （concat demuxer はストリーム構成が揃っていないと通らない。音は BGM で載せ直す）。
+    const spec = hasGap ? await probeFillerSpec(resolveInRoot(items[0].videoRelPath)) : null
+    if (hasGap && !bgm) {
+      throw new Error('隙間を埋める書き出しは BGM と併用してください（音声が無音になります）')
+    }
+
+    // 1. 各クリップを一時ファイルへ切り出し（隙間があれば手前に黒を挟む）
     const parts: string[] = []
+    const blackCache = new Map<string, string>() // 同じ尺の黒は使い回す
     let doneDur = 0
     for (let i = 0; i < items.length; i++) {
       const it = items[i]
+      if (spec && gaps[i] > 0.001) {
+        const key = gaps[i].toFixed(4)
+        let black = blackCache.get(key)
+        if (!black) {
+          black = join(tmp, `black${key.replace('.', '_')}.mp4`)
+          await makeBlackPart(spec, gaps[i], black)
+          blackCache.set(key, black)
+        }
+        parts.push(black)
+        doneDur += gaps[i]
+        onProgress('cut', i + 1, doneDur / (totalDur * stages))
+      }
       const absInput = resolveInRoot(it.videoRelPath)
       const part = join(tmp, `part${String(i).padStart(4, '0')}${extname(absInput) || '.mp4'}`)
       parts.push(part)
+      const base = doneDur
       await runFfmpeg(
-        [...cutArgs(absInput, it.inSec, durs[i]), part],
-        (sec) => onProgress('cut', i + 1, (doneDur + Math.min(sec, durs[i])) / (totalDur * stages))
+        [...cutArgs(absInput, it.inSec, durs[i], !hasGap), part],
+        (sec) => onProgress('cut', i + 1, (base + Math.min(sec, durs[i])) / (totalDur * stages))
       )
       doneDur += durs[i]
       onProgress('cut', i + 1, doneDur / (totalDur * stages))
     }
 
+    // 隙間があるときは TS を経由する（パラメータセットをパートごとに持たせるため）
+    const joinParts = spec
+      ? await Promise.all(
+          parts.map(async (p, i) => {
+            const ts = join(tmp, `ts${String(i).padStart(4, '0')}.ts`)
+            await toTs(p, ts, spec.codec)
+            return ts
+          })
+        )
+      : parts
+
     // 2. concat demuxer で連結（パスは ' を '\'' にエスケープして quote する）
     const listPath = join(tmp, 'list.txt')
-    const listBody = parts
+    const listBody = joinParts
       .map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
       .join('\n')
     await writeFile(listPath, listBody, 'utf8')
@@ -239,6 +377,9 @@ export async function exportConcat(
         '-i', listPath,
         '-c', 'copy',
         '-map', '0',
+        // TS 経由のときは、ストリーム内パラメータセットを許すタグで MP4 へ戻す。
+        // `hvc1` のままだと先頭のものだけが hvcC に残り、黒のフレームが崩れる。
+        ...(spec?.codec === 'hevc' ? ['-tag:v', 'hev1'] : []),
         '-avoid_negative_ts', 'make_zero',
         concatOut
       ],
