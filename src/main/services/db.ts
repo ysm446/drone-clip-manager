@@ -118,8 +118,29 @@ export function getDb(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.exec(SCHEMA)
   migrateSegmentColors(db)
+  migrateSequenceNodeMusic(db)
   dbPath = target
   return db
+}
+
+// 音楽タイムライン用の列を sequence_nodes に足す（Phase 2.6c 段階 3）。
+// CREATE TABLE IF NOT EXISTS では既存 DB に列が増えないため、ここで追加する。
+// - units      : 尺の意図（拍数）。null は「元の区間に収まる最大の単位」を自動で使う
+// - src_offset : 元の区間のどこから使うか（秒）。縮めたときの逃げ場
+// - auto_shrunk: 曲の差し替えで自動的に単位を下げた印（UI 表示用）
+const SEQ_NODE_MUSIC_COLUMNS: [string, string][] = [
+  ['units', 'INTEGER'],
+  ['src_offset', 'REAL NOT NULL DEFAULT 0'],
+  ['auto_shrunk', 'INTEGER NOT NULL DEFAULT 0']
+]
+
+function migrateSequenceNodeMusic(d: Database.Database): void {
+  const existing = new Set(
+    (d.prepare('PRAGMA table_info(sequence_nodes)').all() as { name: string }[]).map((r) => r.name)
+  )
+  for (const [name, decl] of SEQ_NODE_MUSIC_COLUMNS) {
+    if (!existing.has(name)) d.exec(`ALTER TABLE sequence_nodes ADD COLUMN ${name} ${decl}`)
+  }
 }
 
 // 区間バーの配色を青〜紫パレットへ変更（2026-07-10）した際の、旧パレットで保存済みの色の置き換え。
@@ -634,6 +655,9 @@ interface SequenceNodeRow {
   segment_id: number
   x: number
   y: number
+  units: number | null
+  src_offset: number
+  auto_shrunk: number
 }
 
 /** ノード行 + そのクリップ（segment × video 結合。無ければ null）を組み立てる。 */
@@ -644,8 +668,39 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
     segmentId: r.segment_id,
     x: r.x,
     y: r.y,
+    units: r.units ?? null,
+    srcOffset: r.src_offset ?? 0,
+    autoShrunk: !!r.auto_shrunk,
     clip: clipBySeg.get(r.segment_id) ?? null
   }
+}
+
+/**
+ * 音楽タイムラインでの尺（拍数）と使用開始位置を更新する（Phase 2.6c 段階 3）。
+ * 元の segments は書き換えない（ライブラリ側のブックマークは不変）。
+ */
+export function updateSequenceNodeMusic(
+  nodeId: number,
+  units: number | null,
+  srcOffset: number,
+  autoShrunk = false
+): void {
+  getDb()
+    .prepare('UPDATE sequence_nodes SET units = ?, src_offset = ?, auto_shrunk = ? WHERE id = ?')
+    .run(units, srcOffset, autoShrunk ? 1 : 0, nodeId)
+}
+
+/** 曲の差し替えなどで複数ノードの尺をまとめて更新する。 */
+export function updateSequenceNodeMusicMany(
+  rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
+): void {
+  const d = getDb()
+  const upd = d.prepare(
+    'UPDATE sequence_nodes SET units = ?, src_offset = ?, auto_shrunk = ? WHERE id = ?'
+  )
+  d.transaction(() => {
+    for (const r of rows) upd.run(r.units, r.srcOffset, r.autoShrunk ? 1 : 0, r.nodeId)
+  })()
 }
 
 interface SequenceEdgeRow {

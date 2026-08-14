@@ -45,7 +45,9 @@ import {
   restoreSegment,
   restoreSequenceGraph,
   getSequenceBgm,
-  setSequenceBgm
+  setSequenceBgm,
+  updateSequenceNodeMusic,
+  updateSequenceNodeMusicMany
 } from './services/db'
 import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
@@ -372,6 +374,20 @@ export function registerIpc(): void {
     'seq:setBgm',
     (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
       setSequenceBgm(sequenceId, relPath, startOffsetSec)
+  )
+
+  // 音楽タイムラインでの尺（拍数）と使用開始位置（Phase 2.6c 段階 3）
+  ipcMain.handle(
+    'seq:updateNodeMusic',
+    (_e, nodeId: number, units: number | null, srcOffset: number, autoShrunk = false): void =>
+      updateSequenceNodeMusic(nodeId, units, srcOffset, autoShrunk)
+  )
+  ipcMain.handle(
+    'seq:updateNodeMusicMany',
+    (
+      _e,
+      rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
+    ): void => updateSequenceNodeMusicMany(rows)
   )
 
   ipcMain.handle('export:pickDir', async (e): Promise<string | null> => {

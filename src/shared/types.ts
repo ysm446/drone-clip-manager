@@ -86,6 +86,16 @@ export interface SequenceNode {
   segmentId: number
   x: number
   y: number
+  /**
+   * 音楽タイムラインでの尺の意図（拍数 / Phase 2.6c）。
+   * null なら「元の区間に収まる最大の単位」を自動で使う。
+   * 実尺は保存せず、拍数 × ビート列から毎回求める（曲を差し替えても意図が生き残る）。
+   */
+  units: number | null
+  /** 元の区間のどこから使うか（秒）。単位に収めて縮めたときの逃げ場 */
+  srcOffset: number
+  /** 曲の差し替えで自動的に単位を下げた印（UI 表示用） */
+  autoShrunk: boolean
   /** segment × video の結合（元 segment が消えていれば null） */
   clip: ClipItem | null
 }
@@ -452,6 +462,17 @@ export interface DcmApi {
     relPath: string | null,
     startOffsetSec?: number
   ) => Promise<SequenceBgm | null>
+  /** 音楽タイムラインでのノードの尺（拍数）と使用開始位置を更新（元 segment は変更しない） */
+  updateSequenceNodeMusic: (
+    nodeId: number,
+    units: number | null,
+    srcOffset: number,
+    autoShrunk?: boolean
+  ) => Promise<void>
+  /** 曲の差し替えなどで複数ノードの尺をまとめて更新 */
+  updateSequenceNodeMusicMany: (
+    rows: { nodeId: number; units: number | null; srcOffset: number; autoShrunk: boolean }[]
+  ) => Promise<void>
   // --- 書き出し ---
   pickExportDir: () => Promise<string | null>
   exportSegments: (jobs: ExportJob[], options: ExportOptions) => Promise<ExportResult[]>

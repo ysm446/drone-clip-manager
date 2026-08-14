@@ -1030,7 +1030,12 @@ export const SequenceView = memo(function SequenceView({
         </div>
 
         {mode === 'music' ? (
-          <MusicTimeline sequenceId={activeId} items={playItems} />
+          <MusicTimeline
+            sequenceId={activeId}
+            items={playItems}
+            nodes={nodes}
+            onNodesChanged={() => activeId != null && reload(activeId)}
+          />
         ) : (
         <div
           className="seq-canvas"

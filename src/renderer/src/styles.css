@@ -2644,3 +2644,28 @@ body.resizing {
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
+/* 右端の伸縮ハンドル: 見た目の線は出さず、掴める幅だけ広げる（style-guide 8） */
+.mtl-clip-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+/* Alt を押している間は中身をスライドできる（スリップ編集） */
+.mtl-clip:active {
+  cursor: grabbing;
+}
+/* 素材が足りない（手で伸ばして元の区間の外に出た）: 危険色の枠で示す */
+.mtl-clip.short {
+  box-shadow: inset 0 0 0 2px var(--danger);
+}
+/* 曲の差し替えで自動的に縮めた: 確認してほしいので警告色の枠 */
+.mtl-clip.shrunk {
+  box-shadow: inset 0 0 0 2px var(--warn);
+}
+/* ドラッグ中は編集対象であることをアクセントの枠で示す */
+.mtl-clip.dragging {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}

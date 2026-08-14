@@ -73,6 +73,9 @@ const api: DcmApi = {
   getSequenceBgm: (sequenceId) => ipcRenderer.invoke('seq:getBgm', sequenceId),
   setSequenceBgm: (sequenceId, relPath, startOffsetSec) =>
     ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec),
+  updateSequenceNodeMusic: (nodeId, units, srcOffset, autoShrunk) =>
+    ipcRenderer.invoke('seq:updateNodeMusic', nodeId, units, srcOffset, autoShrunk),
+  updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),
   exportSegments: (jobs: ExportJob[], options: ExportOptions) =>
     ipcRenderer.invoke('export:run', jobs, options),
