@@ -717,14 +717,21 @@ export const MusicTimeline = memo(function MusicTimeline({
     const endSec = blocks.reduce((m, b) => Math.max(m, b.endSec), floorSec)
     // 隙間（手前の終端と次の開始の間）。書き出しの可否判定と表示に使う。
     const gaps: { startSec: number; endSec: number }[] = []
+    // 重なり（手前の終端が次の開始を越えている）。**書き出しが静かに壊れる状態**なので、
+    // 隙間と同じように必ず見えるようにする（`buildExportItems` は重なりを詰めずに
+    // それぞれの尺を積むので、重なったぶん以降のカットが全部曲から遅れる）。
+    const overlaps: { startSec: number; endSec: number }[] = []
     for (let i = 1; i < blocks.length; i++) {
       const g = blocks[i].startSec - blocks[i - 1].endSec
       if (g > 0.001) gaps.push({ startSec: blocks[i - 1].endSec, endSec: blocks[i].startSec })
+      else if (g < -0.001)
+        overlaps.push({ startSec: blocks[i].startSec, endSec: blocks[i - 1].endSec })
     }
     return {
       blocks,
       endSec,
       gaps,
+      overlaps,
       needsPlacing,
       /** 曲に対する過不足（正 = 曲が余っている） */
       slackSec: songDurationSec - endSec
@@ -1522,6 +1529,42 @@ export const MusicTimeline = memo(function MusicTimeline({
   const gridName = beatOn ? '拍' : 'グリッド'
 
   /**
+   * その時刻が見えるところまで横スクロールする。
+   * 隙間や重なりは数十 ms のことがあり、幅 2px しか無いので手では探せない。
+   */
+  const scrollToSec = useCallback(
+    (sec: number): void => {
+      const sc = scrollRef.current
+      if (!sc) return
+      sc.scrollLeft = Math.max(0, Math.round(sec * effPps) - sc.clientWidth / 3)
+    },
+    [effPps]
+  )
+
+  /** 隙間 / 重なりを順番に見て回るときの、次に飛ぶ番号 */
+  const jumpIdxRef = useRef({ gap: 0, overlap: 0 })
+
+  /**
+   * 隙間 / 重なりの場所へ送る。**押すたびに次の箇所へ回る**（1 か所目で終わりにしない）。
+   * 何番目のどこへ来たのかはステータスに出す（帯は数 px しか無く、見ただけでは分からない）。
+   */
+  const jumpToIssue = useCallback(
+    (kind: 'gap' | 'overlap'): void => {
+      const list = kind === 'gap' ? layout?.gaps : layout?.overlaps
+      if (!list?.length) return
+      const i = jumpIdxRef.current[kind] % list.length
+      jumpIdxRef.current[kind] = i + 1
+      scrollToSec(list[i].startSec)
+      const name = kind === 'gap' ? '隙間' : '重なり'
+      const len = list[i].endSec - list[i].startSec
+      onStatus?.(
+        `${name} ${i + 1}/${list.length}: ${fmtSec(list[i].startSec)} から ${fmtSec(len)}`
+      )
+    },
+    [layout, scrollToSec, onStatus]
+  )
+
+  /**
    * 選択（無ければ本番の行の全部）を、まとめて吸着先へ揃える（2026-08-15）。
    *
    * **カードではなく「境目」を寄せるのが要点。** 頭だけ動かすと尺が変わらないぶん、
@@ -2137,15 +2180,37 @@ export const MusicTimeline = memo(function MusicTimeline({
               : `曲より ${fmtSec(-layout.slackSec)} 長い`}
           </span>
         )}
+        {/*
+          並びの健康状態。**問題が無いことも出す**（無表示だと「まだ調べていない」のか
+          「問題が無い」のかが分からない）。数か所ある場合はクリックで先頭へ送る。
+        */}
+        {!!layout?.blocks.length && !layout.gaps.length && !layout.overlaps.length && (
+          <span className="mtl-meta" title="本番の行に隙間も重なりもありません">
+            隙間・重なりなし
+          </span>
+        )}
         {/* 隙間があることの明示。書き出しでは黒で埋まる（plan.md の Phase 2.6c「隙間の扱い」） */}
         {!!layout?.gaps.length && (
           <span
-            className="mtl-meta"
-            title={`書き出しでは黒で埋まります。\n${layout.gaps
-              .map((g) => `${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
+            className="mtl-meta clickable"
+            onClick={() => jumpToIssue('gap')}
+            title={`書き出しでは黒で埋まります。**クリックすると 1 か所ずつ順番に送ります。**\n${layout.gaps
+              .map((g, i) => `${i + 1}. ${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
               .join('\n')}`}
           >
             隙間 {layout.gaps.length} か所（黒で埋める）
+          </span>
+        )}
+        {/* 重なりは書き出しを止める（このまま出すと以降のカットが曲から遅れる） */}
+        {!!layout?.overlaps.length && (
+          <span
+            className="mtl-meta bad clickable"
+            onClick={() => jumpToIssue('overlap')}
+            title={`重なったぶん、以降のカットが曲から遅れます。直すまで書き出せません。\nクリックすると 1 か所ずつ順番に送ります。\n${layout.overlaps
+              .map((o, i) => `${i + 1}. ${fmtSec(o.startSec)} 〜 ${fmtSec(o.endSec)}`)
+              .join('\n')}`}
+          >
+            重なり {layout.overlaps.length} か所
           </span>
         )}
         <button className="mtl-zoom" onClick={() => setPps((v) => Math.max(MIN_PPS, v / 1.5))}>
@@ -2182,7 +2247,9 @@ export const MusicTimeline = memo(function MusicTimeline({
             </label>
             <button
               className="btn primary"
-              disabled={!wave || !layout?.blocks.length || !seqBgm || exporting}
+              disabled={
+                !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout.overlaps.length
+              }
               onClick={() => {
                 if (!seqBgm || !layout) return
                 void buildExportItems().then((exportItems) =>
@@ -2195,9 +2262,11 @@ export const MusicTimeline = memo(function MusicTimeline({
                 )
               }}
               title={
-                layout?.gaps.length
-                  ? '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す（隙間は黒で埋める）'
-                  : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
+                layout?.overlaps.length
+                  ? `札が ${layout.overlaps.length} か所で重なっています。重なったぶん以降のカットが曲から遅れるため、直すまで書き出せません`
+                  : layout?.gaps.length
+                    ? '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す（隙間は黒で埋める）'
+                    : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
               }
             >
               書き出し…
@@ -2292,6 +2361,22 @@ export const MusicTimeline = memo(function MusicTimeline({
                     width: Math.max(2, Math.round((g.endSec - g.startSec) * effPps))
                   }}
                   title={`隙間 ${fmtSec(g.endSec - g.startSec)}（${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}）\n書き出しでは黒で埋まります。プレビュー再生では飛ばして詰めて鳴ります。`}
+                />
+              ))}
+
+              {/*
+                重なり。**札の上に出す**（隙間と違って下に地が無いため）。
+                数十 ms でも見つけられるように最小幅 2px を確保する。
+              */}
+              {layout?.overlaps.map((o) => (
+                <div
+                  key={`ov${o.startSec}`}
+                  className="mtl-overlap"
+                  style={{
+                    left: Math.round(o.startSec * effPps),
+                    width: Math.max(2, Math.round((o.endSec - o.startSec) * effPps))
+                  }}
+                  title={`重なり ${fmtSec(o.endSec - o.startSec)}（${fmtSec(o.startSec)} 〜 ${fmtSec(o.endSec)}）\nこのままでは書き出せません。重なったぶん、以降のカットが曲から遅れるためです。\n「${gridName}に揃える」か、札をドラッグして直してください。`}
                 />
               ))}
 

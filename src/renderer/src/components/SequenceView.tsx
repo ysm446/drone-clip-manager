@@ -114,6 +114,8 @@ interface Props {
   onJumpToNode: (items: SeqPlayItem[], nodeId: number) => void
   /** モーダルの開閉を App へ通知（mpv はネイティブ最前面のため、表示中は隠してもらう） */
   onModalOpenChange: (open: boolean) => void
+  /** ステータスバーへの通知（音楽タイムラインからのメッセージをそのまま流す） */
+  onStatus: (text: string, kind?: 'ok' | 'err') => void
   /** 連続再生中のノード id（App から通知）。頭出しだけでも入るので「再生中」の判定には使わない。 */
   playingNodeId: number | null
   /** シーケンスを実際に再生中か（再生 / 停止ボタンの表示に使う） */
@@ -203,6 +205,7 @@ export const SequenceView = memo(function SequenceView({
   onExport,
   onJumpToNode,
   onModalOpenChange,
+  onStatus,
   playingNodeId,
   sequencePlaying,
   segmentPatch
@@ -1444,6 +1447,7 @@ export const SequenceView = memo(function SequenceView({
             onSelectClip={onSelectClip}
             onExport={runMusicExport}
             exporting={exporting != null}
+            onStatus={onStatus}
           />
         ) : (
         <div

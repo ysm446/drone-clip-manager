@@ -2419,6 +2419,7 @@ export function App() {
               onExport={openExport}
               onJumpToNode={jumpToNode}
               onModalOpenChange={setSeqModalOpen}
+              onStatus={showStatus}
               playingNodeId={playingNodeId}
               sequencePlaying={seqPlaying}
               segmentPatch={segPatch}
