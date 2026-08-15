@@ -1762,6 +1762,44 @@ body.resizing {
 /* ============================================================
    下部ステータスバー（アクション通知 + 開いている動画の情報）
    ============================================================ */
+/* スクリーンショット保存のお知らせ（右下のトースト / 2026-08-16）。
+   ステータスバーの通知（5.9）と違い、保存物への導線（クリックでフォルダを開く）を持つ。
+   浮いている面なのでポップアップと同じ影。トーストはこの 1 種類だけに留める。 */
+.shot-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 34px; /* ステータスバーの上 */
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.shot-toast:hover {
+  border-color: var(--accent-border);
+}
+.shot-toast-title {
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+.shot-toast-name {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.shot-toast-hint {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
 .statusbar {
   flex: none;
   display: flex;

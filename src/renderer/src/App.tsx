@@ -196,6 +196,24 @@ export function App() {
       })
     })
   }, [])
+  /**
+   * スクリーンショット保存のお知らせ（右下のトースト / 2026-08-16）。
+   * ステータスバーの文字だけでは保存先へ辿れないため、**クリックでフォルダを開ける**
+   * カードとして出す。数秒で自動的に消える。
+   */
+  const [shotToast, setShotToast] = useState<{
+    title: string
+    name: string
+    relPath: string
+  } | null>(null)
+  const shotToastTimerRef = useRef<number | null>(null)
+  const showShotToast = useCallback((title: string, absPath: string) => {
+    const name = absPath.split(/[\\/]/).pop() ?? absPath
+    setShotToast({ title, name, relPath: `screenshots/${name}` })
+    if (shotToastTimerRef.current) window.clearTimeout(shotToastTimerRef.current)
+    shotToastTimerRef.current = window.setTimeout(() => setShotToast(null), 8000)
+  }, [])
+
   /** スクリーンショットの多重発火防止（キーリピート / 二重イベント対策） */
   const lastShotRef = useRef(0)
   const lastAppShotRef = useRef(0)
@@ -1899,15 +1917,14 @@ export function App() {
     }
     try {
       const path = await api.captureScreenshot(rel, currentTimeRef.current, mpvModeRef.current)
-      const name = path.split(/[\\/]/).pop() ?? path
-      showStatus(`動画フレームを保存: screenshots/${name}`)
+      showShotToast('動画フレームを保存しました', path)
     } catch (err) {
       showStatus(
         `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
         'err'
       )
     }
-  }, [showStatus])
+  }, [showStatus, showShotToast])
 
   // F12: アプリ画面全体をスクリーンショット保存。
   // Chromium 層(capturePage)には mpv 映像が写らないため、mpv の現フレームを動画領域に合成する。
@@ -1956,15 +1973,14 @@ export function App() {
       if (!blob) throw new Error('PNG 生成に失敗しました')
       const bytes = new Uint8Array(await blob.arrayBuffer())
       const path = await api.saveAppScreenshot(bytes)
-      const name = path.split(/[\\/]/).pop() ?? path
-      showStatus(`アプリのスクショを保存: screenshots/${name}`)
+      showShotToast('アプリのスクリーンショットを保存しました', path)
     } catch (err) {
       showStatus(
         `スクリーンショットに失敗: ${err instanceof Error ? err.message : String(err)}`,
         'err'
       )
     }
-  }, [showStatus])
+  }, [showStatus, showShotToast])
 
   // ライブラリビューの「書き出し…」: 選択中動画の全区間を対象にモーダルを開く
   const openExportForCurrent = useCallback(() => {
@@ -2651,6 +2667,25 @@ export function App() {
         クリップの切り替わりでは映像側を音に合わせる（音は止めない）。
       */}
       <audio ref={seqAudioRef} />
+
+      {/*
+        スクリーンショット保存のお知らせ（右下のトースト）。
+        ステータスバーの文字と違い、**クリックで保存先フォルダを開ける**。
+      */}
+      {shotToast && (
+        <button
+          className="shot-toast"
+          onClick={() => {
+            void api.showEntryInFolder(shotToast.relPath)
+            setShotToast(null)
+          }}
+          title="クリックでフォルダを開く"
+        >
+          <span className="shot-toast-title">{shotToast.title}</span>
+          <span className="shot-toast-name">screenshots/{shotToast.name}</span>
+          <span className="shot-toast-hint">クリックでフォルダを開く</span>
+        </button>
+      )}
 
       {/* 下部ステータスバー: 左にアクション通知、右に開いている動画の情報 */}
       <footer className="statusbar">
