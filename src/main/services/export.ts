@@ -4,7 +4,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolveInBgm, resolveInRoot } from '../util/paths'
-import type { ConcatBgm, ConcatItem, ExportJob, ExportOptions } from '../../shared/types'
+import type { CaptionStyle, ConcatBgm, ConcatItem, ExportJob, ExportOptions } from '../../shared/types'
 
 // ロスレス書き出し（stream copy / spec §6.3）。再エンコードしない。
 const FFMPEG = 'ffmpeg'
@@ -285,6 +285,200 @@ function runFfmpeg(args: string[], onOutTime: (sec: number) => void): Promise<vo
   })
 }
 
+// ---------------------------------------------------------------- テロップの焼き付け
+//
+// 地名などのテキストをクリップの頭に焼き付ける（Phase 2.6d）。
+// **テロップが乗るクリップだけを再エンコードし、残りは stream copy のまま**連結する。
+// 連結は隙間の黒と同じ経路（TS 経由 + `hev1`）に相乗りする。別エンコードのパートが混ざる点は
+// 黒とまったく同じ問題なので、対策も同じでよい。
+//
+// 実素材（DJI 4K60 HEVC Main10 / HLG）での検証は plan.md の Phase 2.6d を参照。要点:
+// - 色メタデータ（bt2020 / arib-std-b67 / bt2020nc）を明示すれば、再エンコードしても色は動かない
+//   （YAVG 452.869 → 452.899 / 1023 階調中 0.03 の差）。**明示しないと、そこだけ色が変わる。**
+// - `hevc_nvenc` なら 4K60 10bit がほぼ実時間。`cq15` で PSNR 50.7dB。
+//
+// テキストは **1 行目 = 地名（大）/ 2 行目 = 地域名（小）** の 2 段組み（Resolve の Text+ で
+// 作っていた形に合わせた）。行ごとに文字サイズが違うので、drawtext を 2 つ重ねる。
+
+/** 焼き付けの品質。隣の無劣化クリップと並べても差が見えないことを優先する。 */
+const CAPTION_CQ = 15
+
+/** ハードウェアエンコーダの有無（プロセス内で 1 回だけ調べる） */
+let encoderCache: Set<string> | null = null
+
+async function availableEncoders(): Promise<Set<string>> {
+  if (encoderCache) return encoderCache
+  const out = await new Promise<string>((resolve) => {
+    const ff = spawn(FFMPEG, ['-hide_banner', '-encoders'])
+    let buf = ''
+    ff.stdout.on('data', (b: Buffer) => (buf += b.toString()))
+    ff.on('error', () => resolve(''))
+    ff.on('close', () => resolve(buf))
+  })
+  encoderCache = new Set(
+    out
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/)[1])
+      .filter(Boolean)
+  )
+  return encoderCache
+}
+
+/**
+ * 焼き付けに使うエンコーダを選ぶ。**NVENC があれば必ずそちらを使う**。
+ * ソフトウェアだと 4K60 10bit は実用にならない（実時間の数十倍かかる）。
+ */
+async function pickEncoder(codec: string): Promise<{ enc: string; hw: boolean }> {
+  const enc = await availableEncoders()
+  if (codec === 'hevc') {
+    if (enc.has('hevc_nvenc')) return { enc: 'hevc_nvenc', hw: true }
+    return { enc: 'libx265', hw: false }
+  }
+  if (enc.has('h264_nvenc')) return { enc: 'h264_nvenc', hw: true }
+  return { enc: 'libx264', hw: false }
+}
+
+/**
+ * ffmpeg のフィルタ引数で特別扱いされる文字を逃がす。
+ * Windows の絶対パスはドライブレターのコロンが区切りに見えるので、必ず通すこと。
+ */
+function escapeFilterPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/:/g, '\\:')
+}
+
+/** フェードの alpha 式（0 → 1 → 0）。fade が 0 なら出しっぱなし。 */
+function alphaExpr(showSec: number, fadeSec: number): string {
+  const f = Math.max(0, Math.min(fadeSec, showSec / 2))
+  if (f < 0.001) return '1'
+  const inEnd = f.toFixed(3)
+  const outStart = (showSec - f).toFixed(3)
+  return `if(lt(t,${inEnd}),t/${inEnd},if(lt(t,${outStart}),1,max(0\\,(${showSec.toFixed(3)}-t)/${inEnd})))`
+}
+
+/**
+ * テロップの drawtext フィルタを組み立てる（2 行ぶんを重ねて返す）。
+ *
+ * - **テキストはファイルで渡す**（`textfile=`）。地名に `:` や `'` が入っても壊れないため。
+ * - 文字サイズと余白は **4K（高さ 2160）基準**の値を、実際の高さの比で拡縮する。
+ * - 2 行目は 1 行目より小さく、下に置く。CJK は字面が正方形に近いので、
+ *   行の高さは文字サイズで近似してよい（drawtext は他方の `th` を参照できない）。
+ */
+function captionFilters(
+  style: CaptionStyle,
+  files: { main: string; sub: string | null },
+  spec: FillerSpec,
+  showSec: number
+): string {
+  const scale = spec.height / 2160
+  const size = Math.max(8, Math.round(style.fontSize * scale))
+  const subSize = Math.max(8, Math.round(style.fontSize * style.subScale * scale))
+  const mx = Math.round(style.marginX * scale)
+  const my = Math.round(style.marginY * scale)
+  const gap = Math.round(style.lineGap * scale)
+  const shadow = Math.round(style.shadowOffset * scale)
+  const right = style.position.endsWith('right')
+  const top = style.position.startsWith('top')
+  const alpha = alphaExpr(showSec, style.fadeSec)
+  const hasSub = !!files.sub
+
+  const one = (file: string, fontSize: number, y: string): string => {
+    const parts = [
+      `fontfile='${escapeFilterPath(style.fontFile)}'`,
+      `textfile='${escapeFilterPath(file)}'`,
+      `fontcolor=${style.fontColor}`,
+      `fontsize=${fontSize}`,
+      `x=${right ? `w-tw-${mx}` : String(mx)}`,
+      `y=${y}`,
+      `alpha='${alpha}'`,
+      `enable='lt(t,${showSec.toFixed(3)})'`
+    ]
+    if (style.shadowAlpha > 0.001 && shadow > 0) {
+      parts.push(`shadowcolor=black@${style.shadowAlpha}`, `shadowx=${shadow}`, `shadowy=${shadow}`)
+    }
+    return `drawtext=${parts.join(':')}`
+  }
+
+  // 下寄せなら「下から: 余白 → 2 行目 → 行間 → 1 行目」、上寄せならその逆
+  const mainY = top ? String(my) : `h-th-${my + (hasSub ? subSize + gap : 0)}`
+  const subY = top ? String(my + size + gap) : `h-th-${my}`
+  const out = [one(files.main, size, mainY)]
+  if (files.sub) out.push(one(files.sub, subSize, subY))
+  return out.join(',')
+}
+
+/**
+ * テロップ付きのクリップを切り出す（**ここだけ再エンコード**）。
+ * 音声は copy のままにして、stream copy のパートと構成を揃える。
+ */
+async function cutWithCaption(
+  absInput: string,
+  inSec: number,
+  dur: number,
+  withAudio: boolean,
+  spec: FillerSpec,
+  style: CaptionStyle,
+  text: string,
+  showSec: number,
+  tmpDir: string,
+  outPath: string,
+  onSec: (sec: number) => void
+): Promise<void> {
+  const [mainLine, ...rest] = text.split('\n')
+  const subLine = rest.join(' ').trim()
+  const stem = basename(outPath).replace(/\.[^.]+$/, '')
+  const mainFile = join(tmpDir, `${stem}_main.txt`)
+  await writeFile(mainFile, mainLine, 'utf8')
+  let subFile: string | null = null
+  if (subLine) {
+    subFile = join(tmpDir, `${stem}_sub.txt`)
+    await writeFile(subFile, subLine, 'utf8')
+  }
+
+  const { enc, hw } = await pickEncoder(spec.codec)
+  const profile = spec.profile.toLowerCase().replace(/\s+/g, '')
+  const ten = spec.pixFmt.includes('10')
+  // **色メタデータは必ず引き継ぐ。** 落とすと、このクリップだけ色が変わって見える。
+  const color = [
+    ...(spec.colorPrimaries && spec.colorPrimaries !== 'unknown'
+      ? ['-color_primaries', spec.colorPrimaries]
+      : []),
+    ...(spec.colorTrc && spec.colorTrc !== 'unknown' ? ['-color_trc', spec.colorTrc] : []),
+    ...(spec.colorSpace && spec.colorSpace !== 'unknown' ? ['-colorspace', spec.colorSpace] : [])
+  ]
+  // **`-maxrate` / `-bufsize` は付けないこと。** 品質固定（`-cq` + `-b:v 0`）では不要なうえ、
+  // VBV を効かせると出力の末尾でフレームの時刻が 1 枚ぶん逆転し、連結後に
+  // 「non monotonically increasing dts」が出る（実測で切り分け済み）。
+  const quality = hw
+    ? ['-preset', 'p5', '-rc', 'vbr', '-cq', String(CAPTION_CQ), '-b:v', '0']
+    : ['-preset', 'medium', '-crf', String(CAPTION_CQ)]
+  // **尺はフレーム数で固定する。** `-t` だけだと丸めの向きで stream copy 側と 1 フレーム
+  // ずれることがあり、連結の継ぎ目で同じ DTS のフレームが 2 枚できる（黒の生成と同じ考え方）。
+  const frames = Math.max(1, Math.round(dur * spec.fps))
+  await runFfmpeg(
+    [
+      '-ss', String(inSec),
+      '-i', absInput,
+      '-t', String(dur + 1 / spec.fps),
+      '-frames:v', String(frames),
+      '-vf', captionFilters(style, { main: mainFile, sub: subFile }, spec, showSec),
+      '-map', '0:V',
+      ...(withAudio ? ['-map', '0:a?'] : []),
+      '-c:v', enc,
+      ...(profile ? ['-profile:v', profile] : []),
+      // NVENC の 10bit 入力は p010le（yuv420p10le を直接受けない）
+      '-pix_fmt', hw && ten ? 'p010le' : spec.pixFmt,
+      ...quality,
+      ...color,
+      '-tag:v', spec.codec === 'hevc' ? 'hvc1' : 'avc1',
+      '-video_track_timescale', String(spec.timescale),
+      ...(withAudio ? ['-c:a', 'copy'] : []),
+      '-avoid_negative_ts', 'make_zero',
+      outPath
+    ],
+    onSec
+  )
+}
+
 /**
  * シーケンスの順路を無劣化で 1 本に連結書き出しする（Phase 2.6）。
  * 2 段階の stream copy（再エンコードなし）:
@@ -298,13 +492,17 @@ export async function exportConcat(
   outDir: string,
   name: string,
   onProgress: (phase: 'cut' | 'concat' | 'bgm', index: number, percent: number) => void,
-  bgm?: ConcatBgm
+  bgm?: ConcatBgm,
+  caption?: CaptionStyle
 ): Promise<string> {
   if (items.length === 0) throw new Error('連結対象がありません')
   const durs = items.map((it) => it.outSec - it.inSec)
   if (durs.some((d) => !(d > 0))) throw new Error('区間長が 0 以下のクリップがあります')
   const gaps = items.map((it) => Math.max(0, it.gapBeforeSec ?? 0))
   const hasGap = gaps.some((g) => g > 0.001)
+  // テロップが付いたクリップは再エンコードするので、黒と同じく TS 経由の連結が要る
+  const captions = items.map((it) => (caption && it.caption?.trim() ? it.caption.trim() : null))
+  const hasCaption = captions.some(Boolean)
   const totalDur = durs.reduce((s, d) => s + d, 0) + gaps.reduce((s, g) => s + g, 0)
   const outExt = extname(resolveInRoot(items[0].videoRelPath)) || '.mp4'
   const outPath = uniquePath(outDir, sanitize(name), outExt)
@@ -316,9 +514,20 @@ export async function exportConcat(
     // 隙間を埋めるときは、黒に合わせる仕様を先頭クリップから引く。
     // 黒には音声が無いので、**音声トラックは落として映像だけ連結する**
     // （concat demuxer はストリーム構成が揃っていないと通らない。音は BGM で載せ直す）。
-    const spec = hasGap ? await probeFillerSpec(resolveInRoot(items[0].videoRelPath)) : null
-    if (hasGap && !bgm) {
-      throw new Error('隙間を埋める書き出しは BGM と併用してください（音声が無音になります）')
+    // 仕様（解像度・fps・pix_fmt・色）は、黒の生成とテロップの再エンコードの両方で要る
+    const spec =
+      hasGap || hasCaption ? await probeFillerSpec(resolveInRoot(items[0].videoRelPath)) : null
+    // 黒とテロップでは**音声トラックを落とす**（音は BGM で載せ直す）。
+    // 黒には音声が無いので構成を揃える必要があり、テロップ側は
+    // **copy した音声の長さが映像とフレーム単位で揃わず、連結の継ぎ目で時刻が 1 フレーム
+    // 逆転する**（実測。映像だけなら完全にクリーン）。どちらも BGM 前提なので実害はない。
+    const dropAudio = hasGap || hasCaption
+    if (dropAudio && !bgm) {
+      throw new Error(
+        hasGap
+          ? '隙間を埋める書き出しは BGM と併用してください（音声が無音になります）'
+          : 'テロップ付きの書き出しは BGM と併用してください（音声が無音になります）'
+      )
     }
 
     // 1. 各クリップを一時ファイルへ切り出し（隙間があれば手前に黒を挟む）
@@ -343,15 +552,24 @@ export async function exportConcat(
       const part = join(tmp, `part${String(i).padStart(4, '0')}${extname(absInput) || '.mp4'}`)
       parts.push(part)
       const base = doneDur
-      await runFfmpeg(
-        [...cutArgs(absInput, it.inSec, durs[i], !hasGap), part],
-        (sec) => onProgress('cut', i + 1, (base + Math.min(sec, durs[i])) / (totalDur * stages))
-      )
+      const onSec = (sec: number): void =>
+        onProgress('cut', i + 1, (base + Math.min(sec, durs[i])) / (totalDur * stages))
+      const capText = captions[i]
+      if (capText && caption && spec) {
+        // テロップが乗るクリップだけ再エンコード（他は下の stream copy のまま）
+        const showSec = Math.min(it.captionDurSec ?? caption.defaultDurSec, durs[i])
+        await cutWithCaption(
+          absInput, it.inSec, durs[i], !dropAudio, spec, caption, capText, showSec, tmp, part, onSec
+        )
+      } else {
+        await runFfmpeg([...cutArgs(absInput, it.inSec, durs[i], !dropAudio), part], onSec)
+      }
       doneDur += durs[i]
       onProgress('cut', i + 1, doneDur / (totalDur * stages))
     }
 
-    // 隙間があるときは TS を経由する（パラメータセットをパートごとに持たせるため）
+    // 別エンコードのパート（黒 / テロップ）が混ざるときは TS を経由する
+    // （パラメータセットをパートごとに持たせるため。理由は上の「隙間を埋める黒」の解説）
     const joinParts = spec
       ? await Promise.all(
           parts.map(async (p, i) => {

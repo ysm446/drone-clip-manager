@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CaptionStyle,
   ClipItem,
   ConcatBgm,
   ConcatItem,
@@ -401,7 +402,9 @@ export const SequenceView = memo(function SequenceView({
         startSec: n.startSec,
         durSec: n.durSec,
         srcOffset: n.srcOffset,
-        lane: n.lane
+        lane: n.lane,
+        caption: n.caption,
+        captionDurSec: n.captionDurSec
       })),
       edges: edgesRef.current.map((e) => ({
         id: e.id,
@@ -427,7 +430,9 @@ export const SequenceView = memo(function SequenceView({
           startSec: n.startSec,
           durSec: n.durSec,
           srcOffset: n.srcOffset,
-          lane: n.lane
+          lane: n.lane,
+          caption: n.caption,
+          captionDurSec: n.captionDurSec
         })),
         edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
       }
@@ -682,7 +687,9 @@ export const SequenceView = memo(function SequenceView({
             startSec: n.startSec,
             durSec: n.durSec,
             srcOffset: n.srcOffset,
-            lane: n.lane
+            lane: n.lane,
+            caption: n.caption,
+            captionDurSec: n.captionDurSec
           }
         }),
         edges: edgesRef.current.map((e) => ({
@@ -1136,7 +1143,11 @@ export const SequenceView = memo(function SequenceView({
    * in / out は拍に合わせて算出済みのものを受け取り、BGM を合成して 1 本に出す。
    * 既存の「連結書き出し」「分割書き出し」の挙動には影響しない。
    */
-  const runMusicExport = async (items: ConcatItem[], bgm: ConcatBgm): Promise<void> => {
+  const runMusicExport = async (
+    items: ConcatItem[],
+    bgm: ConcatBgm,
+    caption: CaptionStyle
+  ): Promise<void> => {
     if (items.length === 0 || activeId == null || exporting) return
     if (!checkConcatCompatible()) return
     const dir = await api.pickExportDir()
@@ -1145,7 +1156,7 @@ export const SequenceView = memo(function SequenceView({
     setExporting({ phase: 'cut', index: 0, total: items.length, percent: 0 })
     const off = api.onConcatProgress(setExporting)
     try {
-      setExportResult(await api.exportSequenceConcat(items, dir, name, bgm))
+      setExportResult(await api.exportSequenceConcat(items, dir, name, bgm, caption))
     } finally {
       off()
       setExporting(null)

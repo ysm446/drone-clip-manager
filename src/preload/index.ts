@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  CaptionStyle,
   ConcatBgm,
   ConcatItem,
   ConcatProgress,
@@ -85,6 +86,9 @@ const api: DcmApi = {
     ipcRenderer.invoke('seq:updateNodeMusic', nodeId, startSec, durSec, srcOffset),
   updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),
   updateSequenceNodeLane: (nodeId, lane) => ipcRenderer.invoke('seq:updateNodeLane', nodeId, lane),
+  updateSequenceNodeCaption: (nodeId, caption, durSec) =>
+    ipcRenderer.invoke('seq:updateNodeCaption', nodeId, caption, durSec),
+  listFonts: () => ipcRenderer.invoke('fonts:list'),
   replaceSequenceNodeSegment: (nodeId, segmentId) =>
     ipcRenderer.invoke('seq:replaceNodeSegment', nodeId, segmentId),
   setSequenceOrder: (sequenceId, nodeIds) =>
@@ -97,8 +101,13 @@ const api: DcmApi = {
     ipcRenderer.on('export:progress', handler)
     return () => ipcRenderer.removeListener('export:progress', handler)
   },
-  exportSequenceConcat: (items: ConcatItem[], outDir: string, name: string, bgm?: ConcatBgm) =>
-    ipcRenderer.invoke('seq:export', items, outDir, name, bgm),
+  exportSequenceConcat: (
+    items: ConcatItem[],
+    outDir: string,
+    name: string,
+    bgm?: ConcatBgm,
+    caption?: CaptionStyle
+  ) => ipcRenderer.invoke('seq:export', items, outDir, name, bgm, caption),
   onConcatProgress: (cb: (p: ConcatProgress) => void) => {
     const handler = (_e: unknown, p: ConcatProgress) => cb(p)
     ipcRenderer.on('seq:exportProgress', handler)

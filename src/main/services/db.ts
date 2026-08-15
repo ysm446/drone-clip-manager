@@ -152,11 +152,16 @@ export function getDb(): Database.Database {
 //                1 以上 = 予備の行（何行でも作れる）。**予備も同じ時間軸の上に置く**ので、
 //                「この辺で使えそう」という位置の意味を保ったまま取り置きできる。
 //                予備の行は順路（再生・書き出し）には入らない
+// - caption          : クリップの頭に焼き付けるテロップ（地名など / Phase 2.6d）。
+//                      null / 空文字は「無し」。**これが付いたクリップだけ再エンコードされる**
+// - caption_dur_sec  : テロップの表示秒数。null なら共通設定の既定値
 const SEQ_NODE_MUSIC_COLUMNS: [string, string][] = [
   ['start_sec', 'REAL'],
   ['dur_sec', 'REAL'],
   ['src_offset', 'REAL NOT NULL DEFAULT 0'],
-  ['lane', 'INTEGER NOT NULL DEFAULT 0']
+  ['lane', 'INTEGER NOT NULL DEFAULT 0'],
+  ['caption', 'TEXT'],
+  ['caption_dur_sec', 'REAL']
 ]
 
 function migrateSequenceNodeMusic(d: Database.Database): void {
@@ -803,6 +808,8 @@ interface SequenceNodeRow {
   dur_sec: number | null
   src_offset: number
   lane: number | null
+  caption: string | null
+  caption_dur_sec: number | null
 }
 
 /** ノード行 + そのクリップ（segment × video 結合。無ければ null）を組み立てる。 */
@@ -817,8 +824,24 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
     durSec: r.dur_sec ?? null,
     srcOffset: r.src_offset ?? 0,
     lane: r.lane ?? 0,
+    caption: r.caption || null,
+    captionDurSec: r.caption_dur_sec ?? null,
     clip: clipBySeg.get(r.segment_id) ?? null
   }
+}
+
+/**
+ * クリップに焼き付けるテロップを設定する（Phase 2.6d）。
+ * 空文字 / null で解除。秒数の null は共通設定の既定値を使う意味。
+ */
+export function updateSequenceNodeCaption(
+  nodeId: number,
+  caption: string | null,
+  captionDurSec: number | null
+): void {
+  getDb()
+    .prepare('UPDATE sequence_nodes SET caption = ?, caption_dur_sec = ? WHERE id = ?')
+    .run(caption || null, captionDurSec, nodeId)
 }
 
 /**
@@ -1025,6 +1048,8 @@ export function restoreSequenceGraph(
     durSec?: number | null
     srcOffset?: number
     lane?: number
+    caption?: string | null
+    captionDurSec?: number | null
   }[],
   edges: { id: number; srcNodeId: number; dstNodeId: number }[]
 ): void {
@@ -1032,10 +1057,10 @@ export function restoreSequenceGraph(
   const tx = d.transaction(() => {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(sequenceId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
-    // 音楽タイムラインの配置（行を含む）も一緒に戻す（落とすと undo で配置が消える）
+    // 音楽タイムラインの配置（行・テロップを含む）も一緒に戻す（落とすと undo で消える）
     const insN = d.prepare(
-      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset, lane)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset, lane, caption, caption_dur_sec)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const n of nodes) {
       insN.run(
@@ -1047,7 +1072,9 @@ export function restoreSequenceGraph(
         n.startSec ?? null,
         n.durSec ?? null,
         n.srcOffset ?? 0,
-        n.lane ?? 0
+        n.lane ?? 0,
+        n.caption ?? null,
+        n.captionDurSec ?? null
       )
     }
     const insE = d.prepare(

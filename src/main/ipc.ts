@@ -53,6 +53,7 @@ import {
   deleteSequenceMarker,
   restoreSequenceMarker,
   setSequenceOrder,
+  updateSequenceNodeCaption,
   updateSequenceNodeLane,
   updateSequenceNodeMusic,
   updateSequenceNodeMusicMany,
@@ -62,10 +63,12 @@ import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
 import { exportConcat, exportOne } from './services/export'
 import { ensureThumb } from './services/thumbs'
+import { listFonts } from './services/fonts'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BeatAnalysisResult,
+  CaptionStyle,
   ConcatBgm,
   SequenceBgm,
   SequenceMarker,
@@ -421,6 +424,14 @@ export function registerIpc(): void {
       rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
     ): void => updateSequenceNodeMusicMany(rows)
   )
+  // クリップに焼き付けるテロップ（Phase 2.6d）
+  ipcMain.handle(
+    'seq:updateNodeCaption',
+    (_e, nodeId: number, caption: string | null, durSec: number | null): void =>
+      updateSequenceNodeCaption(nodeId, caption, durSec)
+  )
+  // 焼き付けに使えるフォントの一覧
+  ipcMain.handle('fonts:list', (): { name: string; path: string }[] => listFonts())
   // 行の移動（0 = 本番のタイムライン / 1 以上 = 予備の行）
   ipcMain.handle('seq:updateNodeLane', (_e, nodeId: number, lane: number): void =>
     updateSequenceNodeLane(nodeId, lane)
@@ -476,7 +487,8 @@ export function registerIpc(): void {
       items: ConcatItem[],
       outDir: string,
       name: string,
-      bgm?: ConcatBgm
+      bgm?: ConcatBgm,
+      caption?: CaptionStyle
     ): Promise<ConcatResult> => {
       try {
         const outPath = await exportConcat(
@@ -485,7 +497,8 @@ export function registerIpc(): void {
           name,
           (phase, index, percent) =>
             e.sender.send('seq:exportProgress', { phase, index, total: items.length, percent }),
-          bgm
+          bgm,
+          caption
         )
         return { ok: true, outPath }
       } catch (err) {

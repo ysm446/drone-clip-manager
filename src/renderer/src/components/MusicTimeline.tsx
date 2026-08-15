@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import type {
   BeatAnalysis,
   BgmInfo,
+  CaptionStyle,
   ClipItem,
   ConcatBgm,
   ConcatItem,
@@ -70,6 +71,26 @@ const DRAG_LABELS: Record<'move' | 'dur' | 'trimL' | 'slip', string> = {
 }
 /** クリップパレットからのドラッグ。値は segment id。 */
 const MIME_CLIP = 'application/x-dcm-clip'
+/**
+ * 焼き付けテロップの既定スタイル（Phase 2.6d）。
+ * 実素材（4K / HLG）に Noto Serif JP で焼いて決めた値。数値はすべて 4K（高さ 2160）基準。
+ * **HLG では純白（1023）が眩しい**ので、文字色は少し落としてある。
+ */
+const CAPTION_STYLE_KEY = 'dcm.mtl.captionStyle'
+const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+  fontFile: 'C:/Windows/Fonts/NotoSerifJP-VF.ttf',
+  fontSize: 150,
+  subScale: 0.53,
+  lineGap: 30,
+  fontColor: '0xF5F5F5',
+  shadowAlpha: 0.5,
+  shadowOffset: 4,
+  marginX: 140,
+  marginY: 120,
+  position: 'bottom-left',
+  defaultDurSec: 4,
+  fadeSec: 0.4
+}
 const SNAP_KEY = 'dcm.mtl.snapSec'
 const SNAP_BEATS_KEY = 'dcm.mtl.snapBeats'
 const BEAT_GRID_KEY = 'dcm.mtl.beatGrid'
@@ -78,6 +99,8 @@ const THUMB_KEY = 'dcm.mtl.showThumbs'
 const THUMB_MIN_W = 64
 /** 尺（秒）を出す最小のブロック幅 */
 const DUR_MIN_W = 52
+/** テロップの印を出す最小のブロック幅（px） */
+const CAPTION_MARK_MIN_W = 90
 /** 元の長さを併記する最小のブロック幅 */
 const SRCDUR_MIN_W = 120
 
@@ -189,6 +212,8 @@ interface MusicBlock {
   overflow: boolean
   /** 行の中での並び順（色分けに使う） */
   index: number
+  /** 焼き付けるテロップ（1 行目 = 地名 / 2 行目 = 地域名）。null で無し */
+  caption: string | null
 }
 
 /** 押し出しの解決対象（開始位置の昇順で渡す） */
@@ -320,7 +345,7 @@ interface Props {
    */
   onSelectClip?: (clip: ClipItem) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
-  onExport?: (items: ConcatItem[], bgm: ConcatBgm) => Promise<void>
+  onExport?: (items: ConcatItem[], bgm: ConcatBgm, caption: CaptionStyle) => Promise<void>
   /** 書き出し実行中（ボタンを無効にする） */
   exporting?: boolean
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
@@ -466,6 +491,43 @@ export const MusicTimeline = memo(function MusicTimeline({
   const marqueeMovedRef = useRef(false)
   /** クリップの右クリックメニュー */
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
+  /**
+   * テロップの編集（Phase 2.6d）。`main` が地名、`sub` が地域名。
+   * 保存は改行区切りの 1 つの文字列（1 行目 = 大 / 2 行目 = 小）。
+   */
+  const [capEdit, setCapEdit] = useState<{
+    nodeId: number
+    x: number
+    y: number
+    main: string
+    sub: string
+    durSec: string
+  } | null>(null)
+  /** 焼き付けスタイル（共通設定）。シーケンスごとではないので localStorage に持つ。 */
+  const [capStyle, setCapStyle] = useState<CaptionStyle>(() => {
+    try {
+      const raw = localStorage.getItem(CAPTION_STYLE_KEY)
+      return raw ? { ...DEFAULT_CAPTION_STYLE, ...JSON.parse(raw) } : DEFAULT_CAPTION_STYLE
+    } catch {
+      return DEFAULT_CAPTION_STYLE
+    }
+  })
+  /** スタイル設定パネルを開いているか */
+  const [capPanel, setCapPanel] = useState(false)
+  /** 選べるフォント（インストール済み。ユーザーインストール分も含む） */
+  const [fonts, setFonts] = useState<{ name: string; path: string }[]>([])
+
+  const patchCapStyle = useCallback((patch: Partial<CaptionStyle>): void => {
+    setCapStyle((cur) => {
+      const next = { ...cur, ...patch }
+      localStorage.setItem(CAPTION_STYLE_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (capPanel && fonts.length === 0) void api.listFonts().then(setFonts)
+  }, [capPanel, fonts.length])
   /**
    * 切り替えポイント（マーカー）。曲の絶対時刻で持ち、クリップの吸着先になる。
    * 拍・小節の自動グリッドは廃止したので、その役目を手で置くこれが担う。
@@ -708,7 +770,9 @@ export const MusicTimeline = memo(function MusicTimeline({
           /** 尺を手で決めているか（false なら自動） */
           manual: (pending?.get(b.key) ?? nodeById.get(b.key))?.durSec != null,
           /** 曲の終わりを越えているか */
-          overflow: startSec >= songDurationSec
+          overflow: startSec >= songDurationSec,
+          /** 焼き付けるテロップ（Phase 2.6d） */
+          caption: nodeById.get(b.key)?.caption ?? null
         }
       })
       .sort((a, b) => a.startSec - b.startSec)
@@ -815,7 +879,8 @@ export const MusicTimeline = memo(function MusicTimeline({
         short: durSec > avail + 0.001,
         manual: eff.durSec != null,
         overflow: startSec >= songDurationSec,
-        index: 0
+        index: 0,
+        caption: n.caption
       })
       rows.set(lane, list)
     }
@@ -1525,6 +1590,23 @@ export const MusicTimeline = memo(function MusicTimeline({
       : apply().then(() => onNodesChanged?.()))
   }
 
+  /**
+   * テロップを保存する（Phase 2.6d）。**undo に載せる**（配置編集と同じ扱い）。
+   * 1 行目 = 地名、2 行目 = 地域名。どちらも空なら解除。
+   */
+  const saveCaption = useCallback(
+    (nodeId: number, main: string, sub: string, durSec: number | null): void => {
+      const text = [main.trim(), sub.trim()].filter(Boolean).join('\n')
+      const apply = async (): Promise<void> => {
+        await api.updateSequenceNodeCaption(nodeId, text || null, text ? durSec : null)
+      }
+      void (runPlacementEdit
+        ? runPlacementEdit(text ? 'テロップの設定' : 'テロップの削除', apply)
+        : apply().then(() => onNodesChanged?.()))
+    },
+    [runPlacementEdit, onNodesChanged]
+  )
+
   /** 一括で揃える先の呼び名（ボタンの文言とステータスに使う） */
   const gridName = beatOn ? '拍' : 'グリッド'
 
@@ -1736,10 +1818,20 @@ export const MusicTimeline = memo(function MusicTimeline({
       const dur = frames / fps
       actualAcc += dur
       prevEnd = b.endSec
-      out.push({ videoRelPath: c.videoRelPath, inSec, outSec: inSec + dur, gapBeforeSec })
+      out.push({
+        videoRelPath: c.videoRelPath,
+        inSec,
+        outSec: inSec + dur,
+        gapBeforeSec,
+        // テロップが付いた項目だけ、書き出し側で再エンコードされる（Phase 2.6d）
+        ...(b.caption ? { caption: b.caption } : {}),
+        ...(nodeById.get(b.key)?.captionDurSec != null
+          ? { captionDurSec: nodeById.get(b.key)!.captionDurSec! }
+          : {})
+      })
     }
     return out
-  }, [layout])
+  }, [layout, nodeById])
 
   /**
    * 再生ヘッドを曲の時刻へ動かす。位置は ref にも控える。
@@ -2008,6 +2100,12 @@ export const MusicTimeline = memo(function MusicTimeline({
             {w >= SRCDUR_MIN_W && Math.abs(srcDur - arranged) > 0.05 ? ` / 元${fmtSec(srcDur)}` : ''}
           </span>
         </span>
+        {/* テロップ有りの印。狭い札では省く（style-guide 5.12 の段階的な省略） */}
+        {b.caption && w >= CAPTION_MARK_MIN_W && (
+          <span className="mtl-clip-caption" title={`テロップ: ${b.caption.replace('\n', ' / ')}`}>
+            {b.caption.split('\n')[0]}
+          </span>
+        )}
         {/* 両端のトリムハンドル（見た目は出さず、カーソルと当たり判定だけ） */}
         <span className="mtl-clip-handle left" />
         <span className="mtl-clip-handle" />
@@ -2246,6 +2344,13 @@ export const MusicTimeline = memo(function MusicTimeline({
               秒
             </label>
             <button
+              className="mtl-zoom"
+              onClick={() => setCapPanel(true)}
+              title="焼き付けるテロップの見た目（フォント・影・位置・秒数）。テロップは札の右クリックから入れる"
+            >
+              テロップ設定
+            </button>
+            <button
               className="btn primary"
               disabled={
                 !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout.overlaps.length
@@ -2253,12 +2358,16 @@ export const MusicTimeline = memo(function MusicTimeline({
               onClick={() => {
                 if (!seqBgm || !layout) return
                 void buildExportItems().then((exportItems) =>
-                  onExport(exportItems, {
-                    relPath: seqBgm.relPath,
-                    startOffsetSec: seqBgm.startOffsetSec,
-                    fadeInSec: fadeIn,
-                    fadeOutSec: fadeOut
-                  })
+                  onExport(
+                    exportItems,
+                    {
+                      relPath: seqBgm.relPath,
+                      startOffsetSec: seqBgm.startOffsetSec,
+                      fadeInSec: fadeIn,
+                      fadeOutSec: fadeOut
+                    },
+                    capStyle
+                  )
                 )
               }}
               title={
@@ -2453,6 +2562,213 @@ export const MusicTimeline = memo(function MusicTimeline({
         </div>
       )}
 
+      {/*
+        テロップの編集（Phase 2.6d）。**1 行目 = 地名（大）/ 2 行目 = 地域名（小）**の 2 段組みで、
+        Resolve の Text+ で作っていた形に合わせている。右クリックした位置に出す。
+      */}
+      {capEdit && (
+        <>
+          <div className="mtl-cap-backdrop" onMouseDown={() => setCapEdit(null)} />
+          <div
+            className="mtl-cap-edit"
+            style={{ left: Math.min(capEdit.x, window.innerWidth - 320), top: capEdit.y }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setCapEdit(null)
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                saveCaption(
+                  capEdit.nodeId,
+                  capEdit.main,
+                  capEdit.sub,
+                  capEdit.durSec ? Number(capEdit.durSec) : null
+                )
+                setCapEdit(null)
+              }
+            }}
+          >
+            <label className="mtl-cap-row">
+              地名
+              <input
+                autoFocus
+                value={capEdit.main}
+                placeholder="アルブラ峠"
+                onChange={(e) => setCapEdit({ ...capEdit, main: e.target.value })}
+              />
+            </label>
+            <label className="mtl-cap-row">
+              地域
+              <input
+                value={capEdit.sub}
+                placeholder="スイス・グラウビュンデン州"
+                onChange={(e) => setCapEdit({ ...capEdit, sub: e.target.value })}
+              />
+            </label>
+            <label className="mtl-cap-row">
+              秒数
+              <input
+                type="number"
+                min={0.5}
+                step={0.5}
+                value={capEdit.durSec}
+                placeholder={String(capStyle.defaultDurSec)}
+                onChange={(e) => setCapEdit({ ...capEdit, durSec: e.target.value })}
+              />
+            </label>
+            <div className="mtl-cap-actions">
+              <button
+                className="btn small"
+                onClick={() => {
+                  saveCaption(capEdit.nodeId, '', '', null)
+                  setCapEdit(null)
+                }}
+              >
+                削除
+              </button>
+              <span className="clips-spacer" />
+              <button className="btn small" onClick={() => setCapEdit(null)}>
+                キャンセル
+              </button>
+              <button
+                className="btn small primary"
+                onClick={() => {
+                  saveCaption(
+                    capEdit.nodeId,
+                    capEdit.main,
+                    capEdit.sub,
+                    capEdit.durSec ? Number(capEdit.durSec) : null
+                  )
+                  setCapEdit(null)
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* テロップの見た目（共通設定）。書き出しに効くので書き出しボタンの近くから開く */}
+      {capPanel && (
+        <>
+          <div className="mtl-cap-backdrop" onMouseDown={() => setCapPanel(false)} />
+          <div className="mtl-cap-panel">
+            <div className="mtl-cap-title">テロップの見た目（全シーケンス共通）</div>
+            <label className="mtl-cap-row">
+              フォント
+              <select
+                value={capStyle.fontFile}
+                onChange={(e) => patchCapStyle({ fontFile: e.target.value })}
+              >
+                {/* 保存済みのフォントが一覧に無い場合も選択を保つ */}
+                {!fonts.some((f) => f.path === capStyle.fontFile) && (
+                  <option value={capStyle.fontFile}>{capStyle.fontFile}</option>
+                )}
+                {fonts.map((f) => (
+                  <option key={f.path} value={f.path}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="mtl-cap-row">
+              文字サイズ
+              <input
+                type="number"
+                min={20}
+                max={400}
+                step={5}
+                value={capStyle.fontSize}
+                onChange={(e) => patchCapStyle({ fontSize: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">px（4K 基準）</span>
+            </label>
+            <label className="mtl-cap-row">
+              影
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={capStyle.shadowAlpha}
+                onChange={(e) => patchCapStyle({ shadowAlpha: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">{Math.round(capStyle.shadowAlpha * 100)}%</span>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={1}
+                value={capStyle.shadowOffset}
+                onChange={(e) => patchCapStyle({ shadowOffset: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">px ずらし</span>
+            </label>
+            <label className="mtl-cap-row">
+              位置
+              <select
+                value={capStyle.position}
+                onChange={(e) =>
+                  patchCapStyle({ position: e.target.value as CaptionStyle['position'] })
+                }
+              >
+                <option value="bottom-left">左下</option>
+                <option value="bottom-right">右下</option>
+                <option value="top-left">左上</option>
+                <option value="top-right">右上</option>
+              </select>
+              <input
+                type="number"
+                min={0}
+                max={600}
+                step={10}
+                value={capStyle.marginX}
+                onChange={(e) => patchCapStyle({ marginX: Number(e.target.value) })}
+              />
+              <input
+                type="number"
+                min={0}
+                max={600}
+                step={10}
+                value={capStyle.marginY}
+                onChange={(e) => patchCapStyle({ marginY: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">余白 px</span>
+            </label>
+            <label className="mtl-cap-row">
+              既定の秒数
+              <input
+                type="number"
+                min={0.5}
+                max={30}
+                step={0.5}
+                value={capStyle.defaultDurSec}
+                onChange={(e) => patchCapStyle({ defaultDurSec: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">フェード</span>
+              <input
+                type="number"
+                min={0}
+                max={3}
+                step={0.1}
+                value={capStyle.fadeSec}
+                onChange={(e) => patchCapStyle({ fadeSec: Number(e.target.value) })}
+              />
+              <span className="mtl-cap-unit">秒</span>
+            </label>
+            <div className="mtl-cap-note">
+              テロップを入れたクリップだけ再エンコードされます（他は無劣化のまま）。
+              可変フォント（VF）は既定のウェイトで焼かれるので、太さを変えたいときは
+              その太さのフォントファイルを選んでください。
+            </div>
+            <div className="mtl-cap-actions">
+              <span className="clips-spacer" />
+              <button className="btn small" onClick={() => setCapPanel(false)}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {markerMenu && (
         <ContextMenu
           x={markerMenu.x}
@@ -2474,6 +2790,21 @@ export const MusicTimeline = memo(function MusicTimeline({
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            {
+              label: nodeById.get(menu.nodeId)?.caption ? 'テロップを編集…' : 'テロップを入れる…',
+              onClick: () => {
+                const n = nodeById.get(menu.nodeId)
+                const [main = '', ...rest] = (n?.caption ?? '').split('\n')
+                setCapEdit({
+                  nodeId: menu.nodeId,
+                  x: menu.x,
+                  y: menu.y,
+                  main,
+                  sub: rest.join(' '),
+                  durSec: n?.captionDurSec != null ? String(n.captionDurSec) : ''
+                })
+              }
+            },
             { label: '尺を自動に戻す', onClick: () => resetDur(menu.nodeId) },
             {
               label:
