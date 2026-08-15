@@ -54,7 +54,8 @@ import {
   restoreSequenceMarker,
   setSequenceOrder,
   updateSequenceNodeMusic,
-  updateSequenceNodeMusicMany
+  updateSequenceNodeMusicMany,
+  updateSequenceNodeSegment
 } from './services/db'
 import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
@@ -418,6 +419,10 @@ export function registerIpc(): void {
       _e,
       rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
     ): void => updateSequenceNodeMusicMany(rows)
+  )
+  // 音楽タイムラインのドロップ差し替え（ノードの区間だけ差し替え、配置・順路は保つ）
+  ipcMain.handle('seq:replaceNodeSegment', (_e, nodeId: number, segmentId: number): void =>
+    updateSequenceNodeSegment(nodeId, segmentId)
   )
   // 音楽タイムラインでの並べ替え（順路を与えられた並びの一本道に置き換える）
   ipcMain.handle('seq:setOrder', (_e, sequenceId: number, nodeIds: number[]): void =>

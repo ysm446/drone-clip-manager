@@ -814,6 +814,15 @@ export function updateSequenceNodeMusic(
 }
 
 /**
+ * ノードの区間（segment）を差し替える（音楽タイムラインのドロップ差し替え）。
+ * ノードを消して作り直さないのは、配置・順路・エッジをそのまま保ち、
+ * undo をグラフのスナップショット 1 回で戻せるようにするため。
+ */
+export function updateSequenceNodeSegment(nodeId: number, segmentId: number): void {
+  getDb().prepare('UPDATE sequence_nodes SET segment_id = ? WHERE id = ?').run(segmentId, nodeId)
+}
+
+/**
  * 複数ノードの配置をまとめて更新する。
  * 押し出し（1 枚動かすと後続が連鎖して動く）と、未配置ノードへの前詰め位置の書き込みで使う。
  */

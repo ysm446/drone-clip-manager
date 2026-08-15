@@ -560,6 +560,8 @@ export interface DcmApi {
   updateSequenceNodeMusicMany: (
     rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
   ) => Promise<void>
+  /** ノードの区間を差し替える（音楽タイムラインのドロップ差し替え。配置・順路は保つ） */
+  replaceSequenceNodeSegment: (nodeId: number, segmentId: number) => Promise<void>
   /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */
   setSequenceOrder: (sequenceId: number, nodeIds: number[]) => Promise<void>
   // --- 書き出し ---

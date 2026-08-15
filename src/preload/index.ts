@@ -84,6 +84,8 @@ const api: DcmApi = {
   updateSequenceNodeMusic: (nodeId, startSec, durSec, srcOffset) =>
     ipcRenderer.invoke('seq:updateNodeMusic', nodeId, startSec, durSec, srcOffset),
   updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),
+  replaceSequenceNodeSegment: (nodeId, segmentId) =>
+    ipcRenderer.invoke('seq:replaceNodeSegment', nodeId, segmentId),
   setSequenceOrder: (sequenceId, nodeIds) =>
     ipcRenderer.invoke('seq:setOrder', sequenceId, nodeIds),
   pickExportDir: () => ipcRenderer.invoke('export:pickDir'),

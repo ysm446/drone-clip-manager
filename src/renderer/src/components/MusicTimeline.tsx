@@ -241,8 +241,23 @@ interface Props {
    * 未指定なら undo に載せずそのまま実行する。
    */
   runPlacementEdit?: (label: string, apply: () => Promise<void>) => Promise<void>
-  /** クリップパレットからのドロップ配置（曲の startSec の位置へ置く） */
-  onDropClip?: (segmentId: number, startSec: number) => Promise<void>
+  /**
+   * クリップパレットからのドロップ配置（曲の startSec の位置へ置く）。
+   * maxDurSec は「次のクリップの頭まで」の空き。null は後ろに次のクリップが無い = 制限なし。
+   * 収まらないクリップはこの長さにカットして、クリップ同士を重ねない。
+   */
+  onDropClip?: (segmentId: number, startSec: number, maxDurSec: number | null) => Promise<void>
+  /**
+   * 既存クリップの札の上へのドロップ差し替え。位置（startSec）はそのままで区間だけ替える。
+   * maxDurSec は「次のクリップの頭まで」の空き（旧クリップの尺 + 直後の隙間）。
+   * null は後ろに次のクリップが無い = 制限なし（新クリップの全長で置く）。
+   */
+  onReplaceClip?: (
+    nodeId: number,
+    segmentId: number,
+    startSec: number,
+    maxDurSec: number | null
+  ) => Promise<void>
   /**
    * 上部プレイヤーの再生ボタンから引くための「いまの再生キューを返す関数」の置き場。
    * ここへ push するのではなく、**押された瞬間に引いてもらう**（常時装填はしない）。
@@ -274,6 +289,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   onNodesChanged,
   runPlacementEdit,
   onDropClip,
+  onReplaceClip,
   queueRef,
   onSeek,
   onDeleteClips,
@@ -358,6 +374,8 @@ export const MusicTimeline = memo(function MusicTimeline({
   } | null>(null)
   /** パレットからのドロップ位置（曲の時刻・秒）。null で非表示。 */
   const [dropAt, setDropAt] = useState<number | null>(null)
+  /** ドロップ差し替えの受け先（ノード id）。札の上にドラッグが乗っている間だけ立つ。 */
+  const [replaceAt, setReplaceAt] = useState<number | null>(null)
   /**
    * ドラッグを離した直後の配置（nodeId → 開始位置・尺・使用開始位置）。
    * 保存 → グラフ再読み込みが返るまで `nodes` は古い値のままなので、これが無いと
@@ -1780,7 +1798,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                 setDropAt(null)
                 if (!idStr || !onDropClip) return
                 e.preventDefault()
-                void onDropClip(Number(idStr), at)
+                // 次の札の頭まで（= 隙間の残り）を上限として渡す。クリップ同士を重ねない
+                const next = layoutBlocks.find((b) => b.startSec > at + 0.001)
+                void onDropClip(Number(idStr), at, next ? next.startSec - at : null)
               }}
             >
               {/*
@@ -1830,7 +1850,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                   b.overflow ? 'over' : '',
                   b.short ? 'short' : '',
                   selected.has(b.key) ? 'selected' : '',
-                  drag?.nodeId === b.key ? 'dragging' : ''
+                  drag?.nodeId === b.key ? 'dragging' : '',
+                  replaceAt === b.key ? 'drop-replace' : ''
                 ]
                   .filter(Boolean)
                   .join(' ')
@@ -1843,6 +1864,28 @@ export const MusicTimeline = memo(function MusicTimeline({
                     style={{ left, width: w, background: colorForIndex(b.index) }}
                     onMouseDown={(e) => startDrag(e, b)}
                     onDoubleClick={() => resetDur(b.key)}
+                    // パレットからのドロップ差し替え。列側（新規配置）に渡さないよう伝播を止める
+                    onDragOver={(e) => {
+                      if (!onReplaceClip || !e.dataTransfer.types.includes('application/x-dcm-clip'))
+                        return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      e.dataTransfer.dropEffect = 'copy'
+                      setDropAt(null)
+                      setReplaceAt((cur) => (cur === b.key ? cur : b.key))
+                    }}
+                    onDragLeave={() => setReplaceAt((cur) => (cur === b.key ? null : cur))}
+                    onDrop={(e) => {
+                      const idStr = e.dataTransfer.getData('application/x-dcm-clip')
+                      setReplaceAt(null)
+                      if (!idStr || !onReplaceClip) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      // 空き = 次の札の頭まで（尺 + 直後の隙間）。後続の札は動かさない
+                      const next = layoutBlocks[b.index + 1]
+                      const maxDur = next ? next.startSec - b.startSec : null
+                      void onReplaceClip(b.key, Number(idStr), b.startSec, maxDur)
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       // 右ドラッグ（矩形選択）だったならメニューは出さない
@@ -1867,7 +1910,8 @@ export const MusicTimeline = memo(function MusicTimeline({
                       '本体ドラッグ: 位置を移動（重なった札は押し出される）',
                       '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
                       'ダブルクリック: 尺を自動に戻す',
-                      '右ドラッグ: 矩形選択 / Shift / Ctrl+クリック: 選択に足す・外す'
+                      '右ドラッグ: 矩形選択 / Shift / Ctrl+クリック: 選択に足す・外す',
+                      'パレットからクリップをドロップ: このクリップと差し替え'
                     ]
                       .filter(Boolean)
                       .join('\n')}

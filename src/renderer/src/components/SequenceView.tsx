@@ -132,6 +132,8 @@ interface Props {
 const NODE_W = 172
 const NODE_H = 132
 const PORT_Y = NODE_H / 2
+/** 音楽タイムラインのクリップの最小尺（秒）。MusicTimeline 側の MIN_DUR_SEC と揃える。 */
+const MUSIC_MIN_DUR_SEC = 0.1
 
 function clipDuration(c: ClipItem): number {
   return (c.outSnapped ?? c.outTime) - (c.inSnapped ?? c.inTime)
@@ -835,12 +837,29 @@ export const SequenceView = memo(function SequenceView({
   }
 
   /**
+   * ドロップされたクリップの尺（保存値）を決める。
+   * 空き（maxDurSec = 次のクリップの頭まで）に収まるなら null（自動 = 全長）、
+   * 収まらなければ空きぴったりにカットする。クリップ同士を重ねないための共通規則。
+   * 空きが極端に狭いときは最小尺（MUSIC_MIN_DUR_SEC）を優先する（0 秒のクリップを作らない）。
+   */
+  const fitDurSec = (clip: ClipItem, maxDurSec: number | null): number | null => {
+    if (maxDurSec == null || clipDuration(clip) <= maxDurSec + 0.001) return null
+    return Math.max(MUSIC_MIN_DUR_SEC, maxDurSec)
+  }
+
+  /**
    * 音楽タイムラインへのドロップ配置（Phase 2.6c 段階 3b）。
    * ノードを作って**落とされた時刻へ置き**、順路は時刻順に張り直す。
    * ノードグラフ側の座標は順路の末尾に並べておく（あとで開いても迷子にならないように）。
    */
-  const dropClipIntoOrder = async (segmentId: number, startSec: number): Promise<void> => {
+  const dropClipIntoOrder = async (
+    segmentId: number,
+    startSec: number,
+    maxDurSec: number | null
+  ): Promise<void> => {
     if (activeId == null) return
+    const clip = clips.find((c) => c.id === segmentId)
+    if (!clip) return
     const before = graphSnapshot()
     const order = playItemsRef.current.map((it) => it.nodeId)
     const lastNode = nodesRef.current.find((n) => n.id === order[order.length - 1])
@@ -850,8 +869,8 @@ export const SequenceView = memo(function SequenceView({
       Math.round((lastNode?.x ?? 0) + NODE_W + 40),
       Math.round(lastNode?.y ?? 0)
     )
-    // 尺は未指定（元の区間の残り全部）。位置だけ落とされた場所に確定させる。
-    await api.updateSequenceNodeMusic(node.id, startSec, null, 0)
+    // 位置は落とされた場所。尺は空き（次のクリップの頭まで）に収める。
+    await api.updateSequenceNodeMusic(node.id, startSec, fitDurSec(clip, maxDurSec), 0)
     // 順路は時刻順。未配置のノード（位置が無いもの）は末尾に回す。
     const startOf = new Map(nodesRef.current.map((n) => [n.id, n.startSec ?? Number.POSITIVE_INFINITY]))
     startOf.set(node.id, startSec)
@@ -861,6 +880,30 @@ export const SequenceView = memo(function SequenceView({
     await api.setSequenceOrder(activeId, next)
     await reload(activeId)
     await pushGraphUndo('タイムラインへの配置', before)
+  }
+
+  /**
+   * 音楽タイムラインのドロップ差し替え（札の上へのドロップ）。
+   * ノードは作り直さず区間だけ差し替えるので、配置・順路・エッジはそのまま残る。
+   * 尺は「次のクリップの頭まで」（旧クリップの尺 + 直後の隙間）に収める:
+   * 収まるなら新クリップの全長（尺は自動 = null）、収まらなければカット。
+   * 後続のクリップは動かさない（差し替えでカット位置がずれないように）。
+   */
+  const replaceMusicClip = async (
+    nodeId: number,
+    segmentId: number,
+    startSec: number,
+    maxDurSec: number | null
+  ): Promise<void> => {
+    if (activeId == null) return
+    const clip = clips.find((c) => c.id === segmentId)
+    if (!clip) return
+    const before = graphSnapshot()
+    await api.replaceSequenceNodeSegment(nodeId, segmentId)
+    // 新クリップは頭から使う（旧クリップのトリム量は引き継がない）
+    await api.updateSequenceNodeMusic(nodeId, startSec, fitDurSec(clip, maxDurSec), 0)
+    await reload(activeId)
+    await pushGraphUndo('クリップの差し替え', before)
   }
 
   /** 音楽タイムラインでの並べ替え後にグラフを読み直す */
@@ -1294,6 +1337,7 @@ export const SequenceView = memo(function SequenceView({
             onNodesChanged={reloadActive}
             runPlacementEdit={runPlacementEdit}
             onDropClip={dropClipIntoOrder}
+            onReplaceClip={replaceMusicClip}
             queueRef={musicQueueRef}
             onSeek={seekMusic}
             onDeleteClips={removeMusicClips}

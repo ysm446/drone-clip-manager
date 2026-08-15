@@ -2853,6 +2853,13 @@ body.resizing {
 .mtl-clip.selected {
   box-shadow: inset 0 0 0 3px var(--accent);
 }
+/*
+ * パレットからのドロップ差し替えの受け先。§8 の受け先表現（inset 1px）では明るい素材色に
+ * 埋もれるため 2px にする（選択 3px と同じ理由の例外）。selected より後に置いて優先させる。
+ */
+.mtl-clip.drop-replace {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
 /* サムネイル表示トグルの ON */
 .mtl-zoom.on {
   background: var(--selected);
