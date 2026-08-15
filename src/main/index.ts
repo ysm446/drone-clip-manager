@@ -36,6 +36,31 @@ app.disableHardwareAcceleration()
 // <video> フォールバック時のために Chromium の platform HEVC デコーダも有効化しておく。
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport')
 
+/**
+ * 二重起動を防ぐ（2026-08-15）。2 つ目の起動は**既存のウィンドウを前面に出して自分は終了する**。
+ *
+ * 同じ userData を 2 つのインスタンスで共有すると、Chromium のディスクキャッシュを奪い合って
+ * 起動のたびに `Unable to move the cache（アクセスが拒否されました）` が出る。
+ * それ以上に困るのが以下の 2 点で、こちらは実害がある:
+ *
+ * - `will-quit` の `cleanTempProxies()` は**共有の一時フォルダを丸ごと消す**。
+ *   2 つ目を閉じただけで、先に動いているインスタンスの一時プロキシが消える。
+ * - ライブラリ DB（`.dcm/library.db`）を 2 つのプロセスから書くことになる。
+ */
+const isPrimaryInstance = app.requestSingleInstanceLock()
+if (!isPrimaryInstance) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // 2 つ目の起動は「既にあるウィンドウを出してほしい」という意思表示として扱う
+    const win = mainWindow
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
+
 // 動画・BGM は file:// の制約を避け、Range 対応でスクラブできるよう独自プロトコルで配信する。
 // host で配信元を切り替える:
 //   dcm-media://root/<rel>   ルートフォルダ配下（原本）
@@ -302,27 +327,33 @@ function registerMpvIpc(): void {
   )
 }
 
-app.whenReady().then(() => {
-  // アプリケーションメニュー（File / Edit / View …）を非表示にする。
-  // 併せて既定の DevTools ショートカット(F12)も無くなるので、F12 をスクリーンショットに使える。
-  // テキスト入力のコピペ等は Chromium が編集要素向けに標準処理するのでメニュー無しでも動く。
-  Menu.setApplicationMenu(null)
-  cleanTempProxies() // 前回セッションの残骸を掃除
-  registerMediaProtocol()
-  registerIpc()
-  registerMpvIpc()
-  createWindow()
+// 2 つ目のインスタンスでは何も初期化しない（上で quit 済み）。
+// ready を待たずにここで切るのは、ウィンドウも mpv も DB も触らせないため。
+if (isPrimaryInstance) {
+  app.whenReady().then(() => {
+    // アプリケーションメニュー（File / Edit / View …）を非表示にする。
+    // 併せて既定の DevTools ショートカット(F12)も無くなるので、F12 をスクリーンショットに使える。
+    // テキスト入力のコピペ等は Chromium が編集要素向けに標準処理するのでメニュー無しでも動く。
+    Menu.setApplicationMenu(null)
+    cleanTempProxies() // 前回セッションの残骸を掃除
+    registerMediaProtocol()
+    registerIpc()
+    registerMpvIpc()
+    createWindow()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
-})
 
-// 一時プロキシは永続させない（容量対策）。終了時に削除する。
-app.on('will-quit', () => {
-  mpvKill()
-  cleanTempProxies()
-})
+  // 一時プロキシは永続させない（容量対策）。終了時に削除する。
+  // **2 つ目のインスタンスでは絶対に呼ばない**（一時フォルダは共有なので、
+  // 2 つ目が閉じただけで動いている方のプロキシまで消えてしまう）。
+  app.on('will-quit', () => {
+    mpvKill()
+    cleanTempProxies()
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
