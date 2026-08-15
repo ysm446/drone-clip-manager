@@ -5,12 +5,14 @@ import type {
   ConcatBgm,
   ConcatItem,
   SequenceBgm,
+  SequenceMarker,
   SequenceNode,
   Waveform
 } from '../../../shared/types'
 import type { MusicQueueGetter, SeqPlayBgm, SeqPlayItem } from './SequenceView'
 import { colorForIndex, fmtSec } from '../util'
 import { ContextMenu } from './ContextMenu'
+import { pushUndo, registerUndoRefresh } from '../undo'
 
 const api = window.dcm
 
@@ -156,6 +158,11 @@ const MAX_PPS = 200
 const EDGE_HIT = 8
 /** 矩形選択とみなす最小のドラッグ量（px）。これ以下は右クリック / クリック扱い。 */
 const MARQUEE_MIN_PX = 3
+/**
+ * マーカーへ吸着する距離（px）。**秒ではなく px** で持つ。
+ * 秒だとズームを上げるほど吸着が強くなり、細かく合わせたいときほど邪魔になるため。
+ */
+const MARKER_SNAP_PX = 8
 
 interface Props {
   sequenceId: number | null
@@ -297,6 +304,19 @@ export const MusicTimeline = memo(function MusicTimeline({
   const marqueeMovedRef = useRef(false)
   /** クリップの右クリックメニュー */
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
+  /**
+   * 切り替えポイント（マーカー）。曲の絶対時刻で持ち、クリップの吸着先になる。
+   * 拍・小節の自動グリッドは廃止したので、その役目を手で置くこれが担う。
+   */
+  const [markers, setMarkers] = useState<SequenceMarker[]>([])
+  /** ドラッグ中のマーカー（`sec` は画面に出す暫定値。離すまで保存しない） */
+  const [markerDrag, setMarkerDrag] = useState<{ id: number; from: number; sec: number } | null>(
+    null
+  )
+  /** マーカーの右クリックメニュー */
+  const [markerMenu, setMarkerMenu] = useState<{ x: number; y: number; m: SequenceMarker } | null>(
+    null
+  )
   /** ブロックにサムネイルを出すか（幅が足りないブロックは自動で省く） */
   const [showThumbs, setShowThumbs] = useState<boolean>(
     () => localStorage.getItem(THUMB_KEY) !== '0'
@@ -324,6 +344,21 @@ export const MusicTimeline = memo(function MusicTimeline({
       alive = false
     }
   }, [sequenceId])
+
+  // 切り替えポイント（マーカー）を読む。undo / redo のあとも取り直す
+  const reloadMarkers = useCallback(async (): Promise<void> => {
+    if (sequenceId == null) {
+      setMarkers([])
+      return
+    }
+    setMarkers(await api.getSequenceMarkers(sequenceId))
+  }, [sequenceId])
+
+  useEffect(() => {
+    void reloadMarkers()
+  }, [reloadMarkers])
+
+  useEffect(() => registerUndoRefresh(() => void reloadMarkers()), [reloadMarkers])
 
   // 曲が決まったら波形を読む（.dcm/waveforms/ にキャッシュされる）
   useEffect(() => {
@@ -514,6 +549,47 @@ export const MusicTimeline = memo(function MusicTimeline({
   const effPps = Math.min(pps, maxPps)
   const contentW = Math.max(200, Math.round(totalSec * effPps))
 
+  /** 画面に出ているマーカーの時刻（ドラッグ中のものは暫定値。時刻順） */
+  const markerSecs = useMemo(
+    () =>
+      markers
+        .map((m) => (markerDrag?.id === m.id ? markerDrag.sec : m.sec))
+        .sort((a, b) => a - b),
+    [markers, markerDrag]
+  )
+
+  /**
+   * `t` に置いたとき、`offsets` のどれかがマーカーに乗る位置を探す。無ければ null。
+   *
+   * `offsets` は「t から見て、マーカーに乗せたい点までの距離」。
+   * 例: 札を移動するときは `[0, 尺]` を渡すと、**頭と尻の両方**が吸着の候補になる
+   * （末尾をサビ頭に合わせたい場面が必ずあるため）。
+   */
+  const nearestMarker = useCallback(
+    (t: number, offsets: number[] = [0]): number | null => {
+      let best: number | null = null
+      let bestPx = MARKER_SNAP_PX
+      for (const m of markerSecs) {
+        for (const off of offsets) {
+          const cand = m - off
+          const px = Math.abs(cand - t) * effPps
+          if (px <= bestPx) {
+            bestPx = px
+            best = cand
+          }
+        }
+      }
+      return best
+    },
+    [markerSecs, effPps]
+  )
+
+  /** 吸着。**マーカーが近ければ吸着単位のグリッドより優先する**（手で置いた点が最優先）。 */
+  const snapTime = useCallback(
+    (t: number, offsets?: number[]): number => nearestMarker(t, offsets) ?? snapSeconds(t, snapSec),
+    [nearestMarker, snapSec]
+  )
+
   // --- 編集（尺の変更 / 使用範囲のスライド）---
 
   /**
@@ -675,8 +751,12 @@ export const MusicTimeline = memo(function MusicTimeline({
     const onMove = (e: MouseEvent): void => {
       const dxSec = (e.clientX - drag.startX) / effPps
       if (drag.kind === 'move') {
-        // 置きたい位置。曲の使い始めより手前へは出さない（実際の当たりは押し出し側で解く）
-        const want = Math.max(floorSec, snapSeconds(drag.baseStart + dxSec, snapSec))
+        // 置きたい位置。曲の使い始めより手前へは出さない（実際の当たりは押し出し側で解く）。
+        // 吸着は札の**頭と尻の両方**をマーカーの候補にする
+        const want = Math.max(
+          floorSec,
+          snapTime(drag.baseStart + dxSec, [0, drag.durSec])
+        )
         setDrag((d) =>
           d && (Math.abs(d.startSec - want) > 1e-6 || !d.moved)
             ? { ...d, startSec: want, moved: true }
@@ -685,9 +765,13 @@ export const MusicTimeline = memo(function MusicTimeline({
         return
       }
       if (drag.kind === 'dur') {
-        // 引いた先の長さを吸着単位へ丸め、元の区間に残っているぶんで頭打ちにする
+        // 引いた先の長さを吸着単位へ丸め、元の区間に残っているぶんで頭打ちにする。
+        // **マーカーが近いときは尻の時刻をそこへ合わせる**（開始位置は動かないので尺で吸収する）
         const avail = drag.maxOffsetBase - drag.offset
-        const target = snapSeconds(drag.baseDur + dxSec, snapSec)
+        const wantEnd = drag.startSec + drag.baseDur + dxSec
+        const onMarker = nearestMarker(wantEnd)
+        const target =
+          onMarker != null ? onMarker - drag.startSec : snapSeconds(drag.baseDur + dxSec, snapSec)
         const best = Math.min(avail, Math.max(MIN_DUR_SEC, target))
         setDrag((d) =>
           d && Math.abs(d.durSec - best) > 1e-6 ? { ...d, durSec: best, moved: true } : d
@@ -699,7 +783,8 @@ export const MusicTimeline = memo(function MusicTimeline({
         // 手前の素材（srcOffset >= 0）と手前の札（prevEnd）で頭打ちにする。
         const lo = Math.max(-drag.baseOffset, drag.prevEnd - drag.baseStart)
         const hi = drag.baseDur - MIN_DUR_SEC
-        const delta = Math.min(hi, Math.max(lo, snapSeconds(drag.baseStart + dxSec, snapSec) - drag.baseStart))
+        // イン点は札の左端そのものなので、吸着の候補も左端だけ（右端は動かさない）
+        const delta = Math.min(hi, Math.max(lo, snapTime(drag.baseStart + dxSec) - drag.baseStart))
         const next = {
           startSec: drag.baseStart + delta,
           durSec: drag.baseDur - delta,
@@ -777,8 +862,97 @@ export const MusicTimeline = memo(function MusicTimeline({
     onStatus,
     runPlacementEdit,
     sequenceId,
-    snapSec
+    snapSec,
+    snapTime,
+    nearestMarker
   ])
+
+  // --- 切り替えポイント（マーカー）---
+
+  /** マーカーを 1 本置く。undo に載せる。 */
+  const addMarkerAt = useCallback(
+    async (sec: number): Promise<void> => {
+      if (sequenceId == null) return
+      const m = await api.addSequenceMarker(sequenceId, Math.max(0, sec))
+      setMarkers((prev) => [...prev, m].sort((a, b) => a.sec - b.sec))
+      pushUndo({
+        label: 'マーカーの追加',
+        undo: () => api.deleteSequenceMarker(m.id),
+        redo: () => api.restoreSequenceMarker(m)
+      })
+      onStatus?.(`マーカーを置きました（${fmtSec(m.sec)}）`)
+    },
+    [sequenceId, onStatus]
+  )
+
+  /**
+   * 再生ヘッドの位置にマーカーを置く（M キー / ツールバーのボタン）。
+   * 曲を聴きながら切り替えたい所で打つのが本来の使い方なので、基準はヘッドにする。
+   */
+  const addMarkerAtHead = useCallback((): void => {
+    const at = headSecRef.current
+    if (at == null) {
+      onStatus?.('先に曲トラックをクリックして再生位置を決めてください', 'err')
+      return
+    }
+    void addMarkerAt(at)
+  }, [addMarkerAt, onStatus])
+
+  const deleteMarker = useCallback(async (m: SequenceMarker): Promise<void> => {
+    setMarkerMenu(null)
+    await api.deleteSequenceMarker(m.id)
+    setMarkers((prev) => prev.filter((x) => x.id !== m.id))
+    pushUndo({
+      label: 'マーカーの削除',
+      undo: () => api.restoreSequenceMarker(m),
+      redo: () => api.deleteSequenceMarker(m.id)
+    })
+  }, [])
+
+  /** マーカーの取っ手を掴んで動かす。離すまで保存しない。 */
+  const startMarkerDrag = (e: React.MouseEvent, m: SequenceMarker): void => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const baseX = e.clientX
+    setMarkerDrag({ id: m.id, from: m.sec, sec: m.sec })
+    let sec = m.sec
+    const onMove = (ev: MouseEvent): void => {
+      // マーカー自身は吸着単位のグリッドにだけ乗せる（他のマーカーへは吸着させない）
+      sec = Math.max(0, snapSeconds(m.sec + (ev.clientX - baseX) / effPps, snapSec))
+      setMarkerDrag((d) => (d && Math.abs(d.sec - sec) > 1e-6 ? { ...d, sec } : d))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setMarkerDrag(null)
+      if (Math.abs(sec - m.sec) < 1e-6) return // 動いていない
+      setMarkers((prev) => prev.map((x) => (x.id === m.id ? { ...x, sec } : x)).sort((a, b) => a.sec - b.sec))
+      const from = m.sec
+      void api.updateSequenceMarker(m.id, sec)
+      pushUndo({
+        label: 'マーカーの移動',
+        undo: () => api.updateSequenceMarker(m.id, from),
+        redo: () => api.updateSequenceMarker(m.id, sec)
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // M キーで再生ヘッドの位置にマーカーを打つ（入力欄にフォーカスがあるときは無効）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key !== 'm' && e.key !== 'M') return
+      const t = document.activeElement as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return
+      e.preventDefault()
+      addMarkerAtHead()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [addMarkerAtHead])
 
   /** 選択中のクリップを削除する */
   const deleteSelected = useCallback(
@@ -882,7 +1056,7 @@ export const MusicTimeline = memo(function MusicTimeline({
     const rect = e.currentTarget.getBoundingClientRect()
     const border = e.currentTarget.clientLeft
     const at = (clientX: number): number =>
-      Math.max(0, snapSeconds((clientX - rect.left - border) / effPps, snapSec))
+      Math.max(0, snapTime((clientX - rect.left - border) / effPps))
     e.preventDefault()
 
     // 停止中だけスクラブ音を出す（再生中は App 側の音とぶつかる）
@@ -1160,6 +1334,15 @@ export const MusicTimeline = memo(function MusicTimeline({
         {wave && !loading && <span className="mtl-meta">曲の長さ {fmtSec(wave.durationSec)}</span>}
 
         <button
+          className="mtl-zoom"
+          disabled={!wave}
+          onClick={addMarkerAtHead}
+          title="再生位置に切り替えポイント（マーカー）を打つ（M）。クリップはここに吸着します"
+        >
+          マーカー
+        </button>
+
+        <button
           className={`mtl-zoom${showThumbs ? ' on' : ''}`}
           onClick={() => {
             const v = !showThumbs
@@ -1285,6 +1468,32 @@ export const MusicTimeline = memo(function MusicTimeline({
             {/* 曲トラック（上）: ルーラー + 波形。ドラッグでスクラブ、離した位置で頭出しする */}
             <canvas ref={canvasRef} className="mtl-canvas" onMouseDown={startScrub} />
 
+            {/*
+              切り替えポイント（マーカー）。線はルーラーからクリップ列まで通し、
+              掴む取っ手はルーラーの中に置く（クリップ列に置くと札のドラッグや矩形選択とぶつかる）。
+            */}
+            {markers.map((m) => {
+              const sec = markerDrag?.id === m.id ? markerDrag.sec : m.sec
+              return (
+                <div
+                  key={m.id}
+                  className={`mtl-marker${markerDrag?.id === m.id ? ' dragging' : ''}`}
+                  style={{ left: Math.round(sec * effPps) + 1 }}
+                >
+                  <span
+                    className="mtl-marker-grip"
+                    onMouseDown={(e) => startMarkerDrag(e, m)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setMarkerMenu({ x: e.clientX, y: e.clientY, m })
+                    }}
+                    title={`切り替えポイント ${fmtSec(sec)}\nドラッグ: 位置を変える / 右クリック: 削除`}
+                  />
+                </div>
+              )
+            })}
+
             {/* 再生ヘッド（シルバー。アクセント色とは別系統 / style-guide 1.2） */}
             <div ref={headRef} className="mtl-head-line" style={{ display: 'none' }}>
               <span className="mtl-head-marker" />
@@ -1302,12 +1511,12 @@ export const MusicTimeline = memo(function MusicTimeline({
                 if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'copy'
-                setDropAt(Math.max(floorSec, snapSeconds(secAtX(e.clientX), snapSec)))
+                setDropAt(Math.max(floorSec, snapTime(secAtX(e.clientX))))
               }}
               onDragLeave={() => setDropAt(null)}
               onDrop={(e) => {
                 const idStr = e.dataTransfer.getData('application/x-dcm-clip')
-                const at = dropAt ?? Math.max(floorSec, snapSeconds(secAtX(e.clientX), snapSec))
+                const at = dropAt ?? Math.max(floorSec, snapTime(secAtX(e.clientX)))
                 setDropAt(null)
                 if (!idStr || !onDropClip) return
                 e.preventDefault()
@@ -1429,6 +1638,21 @@ export const MusicTimeline = memo(function MusicTimeline({
             </div>
           </div>
         </div>
+      )}
+
+      {markerMenu && (
+        <ContextMenu
+          x={markerMenu.x}
+          y={markerMenu.y}
+          onClose={() => setMarkerMenu(null)}
+          items={[
+            {
+              label: 'マーカーを削除',
+              danger: true,
+              onClick: () => void deleteMarker(markerMenu.m)
+            }
+          ]}
+        />
       )}
 
       {menu && (

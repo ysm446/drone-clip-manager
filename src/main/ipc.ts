@@ -46,6 +46,11 @@ import {
   restoreSequenceGraph,
   getSequenceBgm,
   setSequenceBgm,
+  getSequenceMarkers,
+  addSequenceMarker,
+  updateSequenceMarker,
+  deleteSequenceMarker,
+  restoreSequenceMarker,
   setSequenceOrder,
   updateSequenceNodeMusic,
   updateSequenceNodeMusicMany
@@ -60,6 +65,7 @@ import type {
   BeatAnalysisResult,
   ConcatBgm,
   SequenceBgm,
+  SequenceMarker,
   WaveformResult,
   BgmDeleteResult,
   BgmInfo,
@@ -376,6 +382,21 @@ export function registerIpc(): void {
     'seq:setBgm',
     (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
       setSequenceBgm(sequenceId, relPath, startOffsetSec)
+  )
+
+  // 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）
+  ipcMain.handle('seq:getMarkers', (_e, sequenceId: number): SequenceMarker[] =>
+    getSequenceMarkers(sequenceId)
+  )
+  ipcMain.handle('seq:addMarker', (_e, sequenceId: number, sec: number): SequenceMarker =>
+    addSequenceMarker(sequenceId, sec)
+  )
+  ipcMain.handle('seq:updateMarker', (_e, id: number, sec: number): void =>
+    updateSequenceMarker(id, sec)
+  )
+  ipcMain.handle('seq:deleteMarker', (_e, id: number): void => deleteSequenceMarker(id))
+  ipcMain.handle('seq:restoreMarker', (_e, marker: SequenceMarker): void =>
+    restoreSequenceMarker(marker)
   )
 
   // 音楽タイムラインでの配置（開始位置・尺・使用開始位置 / Phase 2.6c 段階 3）

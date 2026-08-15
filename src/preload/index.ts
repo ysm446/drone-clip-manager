@@ -74,6 +74,11 @@ const api: DcmApi = {
   getSequenceBgm: (sequenceId) => ipcRenderer.invoke('seq:getBgm', sequenceId),
   setSequenceBgm: (sequenceId, relPath, startOffsetSec) =>
     ipcRenderer.invoke('seq:setBgm', sequenceId, relPath, startOffsetSec),
+  getSequenceMarkers: (sequenceId) => ipcRenderer.invoke('seq:getMarkers', sequenceId),
+  addSequenceMarker: (sequenceId, sec) => ipcRenderer.invoke('seq:addMarker', sequenceId, sec),
+  updateSequenceMarker: (id, sec) => ipcRenderer.invoke('seq:updateMarker', id, sec),
+  deleteSequenceMarker: (id) => ipcRenderer.invoke('seq:deleteMarker', id),
+  restoreSequenceMarker: (marker) => ipcRenderer.invoke('seq:restoreMarker', marker),
   updateSequenceNodeMusic: (nodeId, startSec, durSec, srcOffset) =>
     ipcRenderer.invoke('seq:updateNodeMusic', nodeId, startSec, durSec, srcOffset),
   updateSequenceNodeMusicMany: (rows) => ipcRenderer.invoke('seq:updateNodeMusicMany', rows),

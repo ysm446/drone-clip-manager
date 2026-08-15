@@ -279,6 +279,18 @@ export interface SequenceBgm {
   startOffsetSec: number
 }
 
+/**
+ * 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）。
+ * 曲の絶対時刻（秒）で持つ。サビ頭・盛り上がりの変わり目など、カットを合わせたい位置を手で置く。
+ * 拍・小節の自動グリッドは廃止したので（plan.md の方針転換）、その役目をこれが担う。
+ */
+export interface SequenceMarker {
+  id: number
+  sequenceId: number
+  /** 曲の先頭からの秒数 */
+  sec: number
+}
+
 /** エクスプローラでの表示結果 */
 export interface ShowInFolderResult {
   ok: boolean
@@ -518,6 +530,15 @@ export interface DcmApi {
     relPath: string | null,
     startOffsetSec?: number
   ) => Promise<SequenceBgm | null>
+  /** 音楽タイムラインの切り替えポイント（マーカー）を時刻順に取得 */
+  getSequenceMarkers: (sequenceId: number) => Promise<SequenceMarker[]>
+  /** マーカーを 1 本追加する（追加したものを返す） */
+  addSequenceMarker: (sequenceId: number, sec: number) => Promise<SequenceMarker>
+  /** マーカーの位置を変える */
+  updateSequenceMarker: (id: number, sec: number) => Promise<void>
+  deleteSequenceMarker: (id: number) => Promise<void>
+  /** 削除したマーカーを id ごと戻す（undo 用） */
+  restoreSequenceMarker: (marker: SequenceMarker) => Promise<void>
   /** 音楽タイムラインでのノードの配置（開始位置・尺・使用開始位置）を更新（元 segment は変更しない） */
   updateSequenceNodeMusic: (
     nodeId: number,

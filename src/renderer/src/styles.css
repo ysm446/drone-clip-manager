@@ -40,6 +40,8 @@
   /* 再生ヘッド（シルバー / 明るい背景では見えるよう少し濃いめ） */
   --playhead: #8a9099;
   --playhead-text: #ffffff;
+  /* 音楽タイムラインの切り替えポイント（マーカー）。ヘッドとも アクセントとも別系統の青緑 */
+  --marker: #0f8a94;
   --primary: var(--accent);
   --ok: #1a7f37;
   --warn: #b58a00;
@@ -69,6 +71,8 @@
   /* 再生ヘッド（シルバー / 暗い背景で映える明るめの銀） */
   --playhead: #d5d9de;
   --playhead-text: #08121a;
+  /* 切り替えポイント（マーカー）。暗い面で映える明るめの青緑 */
+  --marker: #35c5d1;
   --ok: #44cf6e;
   --warn: #e0ac00;
   --danger: #fb464c;
@@ -2775,6 +2779,36 @@ body.resizing {
   background: var(--playhead);
   pointer-events: none;
   z-index: 5;
+}
+/* 切り替えポイント（マーカー）。線はルーラー〜クリップ列を貫き、取っ手はルーラーの中に置く。
+   再生ヘッド（シルバー）ともアクセント（紫）とも別系統の色を使う（style-guide 1.2）。 */
+.mtl-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--marker);
+  /* 線そのものは掴めない（下の札のドラッグや矩形選択を邪魔しないため） */
+  pointer-events: none;
+  z-index: 4;
+}
+.mtl-marker-grip {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 10px;
+  background: var(--marker);
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+.mtl-marker-grip:hover {
+  height: 14px;
+}
+/* ドラッグ中は線を太くして、どこへ置こうとしているか分かるようにする */
+.mtl-marker.dragging {
+  width: 2px;
 }
 /* 頭部マーカー（タイムラインの再生ヘッドと同じ 12×14px） */
 .mtl-head-marker {

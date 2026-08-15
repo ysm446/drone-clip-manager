@@ -7,6 +7,7 @@ import type {
   SegmentInput,
   Sequence,
   SequenceBgm,
+  SequenceMarker,
   SequenceEdge,
   SequenceGraph,
   SequenceNode,
@@ -109,6 +110,17 @@ CREATE TABLE IF NOT EXISTS sequence_bgm (
   rel_path         TEXT NOT NULL,
   start_offset_sec REAL NOT NULL DEFAULT 0
 );
+
+-- 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）。曲の絶対時刻（秒）。
+-- サビ頭などカットを合わせたい位置を手で置き、クリップの吸着先にする。
+-- 拍・小節の自動グリッドを廃止した代わりの仕組み。
+CREATE TABLE IF NOT EXISTS sequence_markers (
+  id          INTEGER PRIMARY KEY,
+  sequence_id INTEGER NOT NULL,
+  sec         REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_seqmarkers_seq ON sequence_markers(sequence_id);
 `
 
 export function getDb(): Database.Database {
@@ -607,6 +619,7 @@ export function deleteSequence(id: number): void {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(seqId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(seqId)
     d.prepare('DELETE FROM sequence_bgm WHERE sequence_id = ?').run(seqId)
+    d.prepare('DELETE FROM sequence_markers WHERE sequence_id = ?').run(seqId)
     d.prepare('DELETE FROM sequences WHERE id = ?').run(seqId)
   })
   tx(id)
@@ -649,6 +662,49 @@ export function setSequenceBgm(
                                             start_offset_sec = excluded.start_offset_sec`
   ).run(sequenceId, relPath, startOffsetSec)
   return getSequenceBgm(sequenceId)
+}
+
+interface SequenceMarkerRow {
+  id: number
+  sequence_id: number
+  sec: number
+}
+
+const rowToMarker = (r: SequenceMarkerRow): SequenceMarker => ({
+  id: r.id,
+  sequenceId: r.sequence_id,
+  sec: r.sec
+})
+
+/** 音楽タイムラインの切り替えポイント（時刻順）。 */
+export function getSequenceMarkers(sequenceId: number): SequenceMarker[] {
+  return (
+    getDb()
+      .prepare('SELECT * FROM sequence_markers WHERE sequence_id = ? ORDER BY sec ASC')
+      .all(sequenceId) as SequenceMarkerRow[]
+  ).map(rowToMarker)
+}
+
+export function addSequenceMarker(sequenceId: number, sec: number): SequenceMarker {
+  const info = getDb()
+    .prepare('INSERT INTO sequence_markers (sequence_id, sec) VALUES (?, ?)')
+    .run(sequenceId, sec)
+  return { id: Number(info.lastInsertRowid), sequenceId, sec }
+}
+
+export function updateSequenceMarker(id: number, sec: number): void {
+  getDb().prepare('UPDATE sequence_markers SET sec = ? WHERE id = ?').run(sec, id)
+}
+
+export function deleteSequenceMarker(id: number): void {
+  getDb().prepare('DELETE FROM sequence_markers WHERE id = ?').run(id)
+}
+
+/** 削除したマーカーを **id ごと** 戻す（undo。id が変わると redo が別物を指してしまう）。 */
+export function restoreSequenceMarker(m: SequenceMarker): void {
+  getDb()
+    .prepare('INSERT OR REPLACE INTO sequence_markers (id, sequence_id, sec) VALUES (?, ?, ?)')
+    .run(m.id, m.sequenceId, m.sec)
 }
 
 /** シーケンスをノード / エッジごと複製する。新しいシーケンスを返す。 */
