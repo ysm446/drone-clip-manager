@@ -89,6 +89,8 @@ const api: DcmApi = {
   updateSequenceNodeCaption: (nodeId, caption, durSec) =>
     ipcRenderer.invoke('seq:updateNodeCaption', nodeId, caption, durSec),
   listFonts: () => ipcRenderer.invoke('fonts:list'),
+  captionPreview: (videoRelPath, timeSec, caption, style) =>
+    ipcRenderer.invoke('caption:preview', videoRelPath, timeSec, caption, style),
   replaceSequenceNodeSegment: (nodeId, segmentId) =>
     ipcRenderer.invoke('seq:replaceNodeSegment', nodeId, segmentId),
   setSequenceOrder: (sequenceId, nodeIds) =>

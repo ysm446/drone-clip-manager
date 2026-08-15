@@ -61,8 +61,8 @@ import {
 } from './services/db'
 import { analyzeBeats } from './services/beats'
 import { getWaveform } from './services/waveform'
-import { exportConcat, exportOne } from './services/export'
-import { ensureThumb } from './services/thumbs'
+import { captionPreviewFilter, exportConcat, exportOne } from './services/export'
+import { ensureThumb, renderCaptionPreview } from './services/thumbs'
 import { listFonts } from './services/fonts'
 import { captureScreenshot } from './services/screenshot'
 import { buildProxy, proxyStatus } from './services/proxy'
@@ -429,6 +429,24 @@ export function registerIpc(): void {
     'seq:updateNodeCaption',
     (_e, nodeId: number, caption: string | null, durSec: number | null): void =>
       updateSequenceNodeCaption(nodeId, caption, durSec)
+  )
+  // テロップの焼き付けプレビュー（実際の drawtext で 1 フレームに焼いて返す）
+  ipcMain.handle(
+    'caption:preview',
+    async (
+      _e,
+      videoRelPath: string,
+      timeSec: number,
+      caption: string,
+      style: CaptionStyle
+    ): Promise<string | null> => {
+      try {
+        const filter = await captionPreviewFilter(videoRelPath, caption, style)
+        return await renderCaptionPreview(videoRelPath, timeSec, caption, filter)
+      } catch {
+        return null
+      }
+    }
   )
   // 焼き付けに使えるフォントの一覧
   ipcMain.handle('fonts:list', (): { name: string; path: string }[] => listFonts())

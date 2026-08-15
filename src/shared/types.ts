@@ -643,6 +643,16 @@ export interface DcmApi {
     bgm?: ConcatBgm,
     caption?: CaptionStyle
   ) => Promise<ConcatResult>
+  /**
+   * テロップの焼き付けプレビュー（Phase 2.6d）。書き出しと同じ drawtext で 1 フレームに焼き、
+   * 表示用に SDR へトーンマップした画像の名前を返す（thumbUrl で表示）。失敗時は null。
+   */
+  captionPreview: (
+    videoRelPath: string,
+    timeSec: number,
+    caption: string,
+    style: CaptionStyle
+  ) => Promise<string | null>
   /** 焼き付けに使えるフォントの一覧（インストール済みから拾う / Phase 2.6d） */
   listFonts: () => Promise<{ name: string; path: string }[]>
   /** 連結書き出しの進捗イベントを購読。返り値で解除する。 */

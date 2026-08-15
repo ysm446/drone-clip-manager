@@ -230,11 +230,14 @@ export const SequenceView = memo(function SequenceView({
   /** シーケンス一覧の「…」メニュー（複製 / 削除） */
   const [seqMenu, setSeqMenu] = useState<{ x: number; y: number; seq: Sequence } | null>(null)
 
-  // 書き出しモーダルの表示中は mpv（ネイティブ最前面）に隠されないよう App へ通知して隠してもらう
+  /** 音楽ビューが出しているパネル（テロップ設定など）。mpv を隠す判断に混ぜる。 */
+  const [musicOverlay, setMusicOverlay] = useState(false)
+
+  // モーダル / パネルの表示中は mpv（ネイティブ最前面）に覆われないよう App へ通知して隠してもらう
   useEffect(() => {
-    onModalOpenChange(exporting != null || exportResult != null)
+    onModalOpenChange(exporting != null || exportResult != null || musicOverlay)
     return () => onModalOpenChange(false) // アンマウント（タブ切替）時は解除
-  }, [exporting, exportResult, onModalOpenChange])
+  }, [exporting, exportResult, musicOverlay, onModalOpenChange])
   // 列の幅とその境界（スプリッタ）は App 側が持つ（.main.view-sequence のグリッドで配置するため）
   /** 接続中のドラッグ（出力ポート → 入力ポート）。座標はキャンバス内容座標。 */
   const [connecting, setConnecting] = useState<{ srcNodeId: number; x: number; y: number } | null>(
@@ -1459,6 +1462,7 @@ export const SequenceView = memo(function SequenceView({
             onExport={runMusicExport}
             exporting={exporting != null}
             onStatus={onStatus}
+            onOverlayChange={setMusicOverlay}
           />
         ) : (
         <div

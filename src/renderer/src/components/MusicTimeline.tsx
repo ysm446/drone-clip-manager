@@ -349,6 +349,12 @@ interface Props {
   /** 書き出し実行中（ボタンを無効にする） */
   exporting?: boolean
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
+  /**
+   * パネル（テロップの設定 / 入力）の開閉を伝える。
+   * **mpv はネイティブ最前面で DOM の上に出るため、開いている間は隠してもらう必要がある。**
+   * これを繋がないと、パネルはプレイヤーの裏に描かれて「押しても何も起きない」ように見える。
+   */
+  onOverlayChange?: (open: boolean) => void
 }
 
 export const MusicTimeline = memo(function MusicTimeline({
@@ -368,7 +374,8 @@ export const MusicTimeline = memo(function MusicTimeline({
   onSelectClip,
   onExport,
   exporting,
-  onStatus
+  onStatus,
+  onOverlayChange
 }: Props) {
   const [bgmInfo, setBgmInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
   const [seqBgm, setSeqBgm] = useState<SequenceBgm | null>(null)
@@ -516,6 +523,12 @@ export const MusicTimeline = memo(function MusicTimeline({
   const [capPanel, setCapPanel] = useState(false)
   /** 選べるフォント（インストール済み。ユーザーインストール分も含む） */
   const [fonts, setFonts] = useState<{ name: string; path: string }[]>([])
+  /**
+   * 焼き付け結果のプレビュー画像。**再生中の映像には出せない**ので（テロップは書き出し時に
+   * 焼くもので、mpv はネイティブ最前面で DOM も重ねられない）、実際に焼いた 1 フレームを出す。
+   */
+  const [capPreview, setCapPreview] = useState<string | null>(null)
+  const [capPreviewBusy, setCapPreviewBusy] = useState(false)
 
   const patchCapStyle = useCallback((patch: Partial<CaptionStyle>): void => {
     setCapStyle((cur) => {
@@ -528,6 +541,16 @@ export const MusicTimeline = memo(function MusicTimeline({
   useEffect(() => {
     if (capPanel && fonts.length === 0) void api.listFonts().then(setFonts)
   }, [capPanel, fonts.length])
+
+  /**
+   * パネルの開閉を伝える。**mpv を隠すのは入力欄（テロップの編集）を開くときだけ**。
+   * 設定パネルは画面下（タイムライン側）に置いて mpv と重ならないようにしてあるので隠さない。
+   * 隠すと、見た目を調整している最中に映像が消えてしまう。
+   */
+  useEffect(() => {
+    onOverlayChange?.(capEdit != null)
+    return () => onOverlayChange?.(false)
+  }, [capEdit, onOverlayChange])
   /**
    * 切り替えポイント（マーカー）。曲の絶対時刻で持ち、クリップの吸着先になる。
    * 拍・小節の自動グリッドは廃止したので、その役目を手で置くこれが担う。
@@ -1607,6 +1630,47 @@ export const MusicTimeline = memo(function MusicTimeline({
     [runPlacementEdit, onNodesChanged]
   )
 
+  /**
+   * プレビューに使う札。選択中 → テロップのある最初の札 → 先頭、の順で選ぶ。
+   * テロップが無ければ見本の文言で焼いて、見た目だけ確かめられるようにする。
+   */
+  const capPreviewTarget = useMemo(() => {
+    if (!layoutBlocks.length) return null
+    const sel = layoutBlocks.find((b) => selected.has(b.key) )
+    const b = sel ?? layoutBlocks.find((x) => x.caption) ?? layoutBlocks[0]
+    return {
+      relPath: b.clip.videoRelPath,
+      timeSec: (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset + 0.5,
+      text: b.caption ?? '地名\n地域名'
+    }
+  }, [layoutBlocks, selected])
+
+  // 設定を変えるたびに焼き直す（連続で動かすので少し待ってからまとめて 1 回）
+  useEffect(() => {
+    if (!capPanel || !capPreviewTarget) return
+    let alive = true
+    setCapPreviewBusy(true)
+    const t = window.setTimeout(() => {
+      void api
+        .captionPreview(
+          capPreviewTarget.relPath,
+          capPreviewTarget.timeSec,
+          capPreviewTarget.text,
+          capStyle
+        )
+        .then((name) => {
+          if (!alive) return
+          setCapPreview(name ? api.thumbUrl(name) : null)
+          setCapPreviewBusy(false)
+        })
+        .catch(() => alive && setCapPreviewBusy(false))
+    }, 350)
+    return () => {
+      alive = false
+      window.clearTimeout(t)
+    }
+  }, [capPanel, capPreviewTarget, capStyle])
+
   /** 一括で揃える先の呼び名（ボタンの文言とステータスに使う） */
   const gridName = beatOn ? '拍' : 'グリッド'
 
@@ -2652,6 +2716,23 @@ export const MusicTimeline = memo(function MusicTimeline({
           <div className="mtl-cap-backdrop" onMouseDown={() => setCapPanel(false)} />
           <div className="mtl-cap-panel">
             <div className="mtl-cap-title">テロップの見た目（全シーケンス共通）</div>
+            {/*
+              焼き付け結果のプレビュー。**再生中の映像には出せない**ので（テロップは書き出し時に
+              焼くもので、mpv はネイティブ最前面のため DOM を重ねることもできない）、
+              実際の drawtext で 1 フレームに焼いたものを出す。
+            */}
+            <div className="mtl-cap-preview">
+              {capPreview && <img src={capPreview} alt="" />}
+              {(!capPreview || capPreviewBusy) && (
+                <div className="mtl-cap-preview-note">
+                  {capPreviewBusy ? '焼き付け中…' : 'プレビューを作れませんでした'}
+                </div>
+              )}
+            </div>
+            <div className="mtl-cap-note">
+              実際に焼いた 1 フレームです（表示用に SDR へ変換しています）。
+              選んでいる札があればそのクリップ、無ければテロップの付いた最初のクリップを使います。
+            </div>
             <label className="mtl-cap-row">
               フォント
               <select

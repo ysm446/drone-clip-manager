@@ -624,3 +624,31 @@ export async function exportConcat(
     await rm(tmp, { recursive: true, force: true }).catch(() => void 0)
   }
 }
+
+/**
+ * テロップのプレビュー用に、**書き出しとまったく同じ `drawtext` フィルタ**を組み立てる
+ * （Phase 2.6d）。1 フレームに焼くだけなのでフェードは外し、常に見えるようにする。
+ * テキストはファイル渡しなので、一時フォルダに書いてそのパスを埋め込む。
+ */
+export async function captionPreviewFilter(
+  videoRelPath: string,
+  caption: string,
+  style: CaptionStyle
+): Promise<string> {
+  const spec = await probeFillerSpec(resolveInRoot(videoRelPath))
+  const dir = join(tmpdir(), 'dcm-caption-preview')
+  mkdirSync(dir, { recursive: true })
+  const [mainLine, ...rest] = caption.split('\n')
+  const subLine = rest.join(' ').trim()
+  // 同時に別の内容を書いても混ざらないよう、内容そのものをファイル名にする
+  const nameOf = (s: string): string =>
+    join(dir, `${Buffer.from(s, 'utf8').toString('hex').slice(0, 40)}.txt`)
+  const mainFile = nameOf(`m${mainLine}`)
+  await writeFile(mainFile, mainLine, 'utf8')
+  let subFile: string | null = null
+  if (subLine) {
+    subFile = nameOf(`s${subLine}`)
+    await writeFile(subFile, subLine, 'utf8')
+  }
+  return captionFilters({ ...style, fadeSec: 0 }, { main: mainFile, sub: subFile }, spec, 9999)
+}
