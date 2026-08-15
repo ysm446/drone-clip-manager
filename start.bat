@@ -21,6 +21,7 @@ goto run
 :run
 echo [drone-clip-manager] 起動します (npm run dev) ...
 call npm run dev
+if errorlevel 1 goto dev_fail
 goto end
 
 :no_npm
@@ -33,5 +34,10 @@ echo [drone-clip-manager] npm install に失敗しました。
 pause
 goto end
 
-:end
+:dev_fail
+echo.
+echo [drone-clip-manager] 異常終了しました。上のメッセージを確認してください。
 pause
+goto end
+
+:end
