@@ -103,12 +103,15 @@ CREATE INDEX IF NOT EXISTS idx_seqnodes_seq ON sequence_nodes(sequence_id);
 CREATE INDEX IF NOT EXISTS idx_seqedges_seq ON sequence_edges(sequence_id);
 
 -- シーケンスに紐づく BGM（音楽タイムライン / Phase 2.6c）。1 シーケンス 1 曲。
--- 曲の指定と、どこから使い始めるかだけを持つ。
--- 拍・小節のグリッドは 2026-08-15 に廃止した（拍が取れない曲では誤ったグリッドが邪魔になるため）。
+-- 曲の指定と、どこから使い始めるかを持つ。
+-- beats_per_bar は「拍グリッド表示」の拍子の手動上書き（null = 自動判定）。
+-- 拍グリッドは吸着と表示のレイヤーで、クリップの保存値（秒）には影響しない
+-- （2026-08-15 に一度廃止し、同日この位置づけで復活。経緯は plan.md の Phase 2.6c）。
 CREATE TABLE IF NOT EXISTS sequence_bgm (
   sequence_id      INTEGER PRIMARY KEY,
   rel_path         TEXT NOT NULL,
-  start_offset_sec REAL NOT NULL DEFAULT 0
+  start_offset_sec REAL NOT NULL DEFAULT 0,
+  beats_per_bar    INTEGER
 );
 
 -- 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）。曲の絶対時刻（秒）。
@@ -133,6 +136,7 @@ export function getDb(): Database.Database {
   migrateSegmentColors(db)
   migrateSequenceNodeMusic(db)
   migrateDropBeatGrid(db)
+  migrateSequenceBgmMeter(db)
   dbPath = target
   return db
 }
@@ -162,12 +166,12 @@ function migrateSequenceNodeMusic(d: Database.Database): void {
 // 拍が取れない曲では誤ったグリッドがかえって編集の邪魔になるため、音楽タイムラインは
 // 秒ベースへ切り替えた。尺は拍数（units）ではなく秒（dur_sec）で持つ。
 // 拍数から秒への正確な変換手段は無い（テンポ自体を捨てるため）ので、旧 units は変換せず捨てる。
+// beats_per_bar だけは同日「拍グリッド表示の拍子上書き」として復活したので落とさない。
 const DROPPED_BEAT_COLUMNS: [string, string][] = [
   // 尺の意図（拍数）。秒へ変換できないので捨てる
   ['sequence_nodes', 'units'],
   // 曲の差し替えで自動的に単位を下げた印。秒モードでは曲を替えても尺が変わらないので不要
   ['sequence_nodes', 'auto_shrunk'],
-  ['sequence_bgm', 'beats_per_bar'],
   ['sequence_bgm', 'bar_phase'],
   ['sequence_bgm', 'tempo_ratio']
 ]
@@ -183,6 +187,16 @@ function migrateDropBeatGrid(d: Database.Database): void {
     } catch {
       // DROP COLUMN 非対応の SQLite では列が残るが、読み書きしないので実害はない
     }
+  }
+}
+
+// 拍グリッドの拍子上書き列（2026-08-15 復活）。廃止マイグレーションで落とした DB に足し直す。
+function migrateSequenceBgmMeter(d: Database.Database): void {
+  const cols = (d.prepare('PRAGMA table_info(sequence_bgm)').all() as { name: string }[]).map(
+    (r) => r.name
+  )
+  if (!cols.includes('beats_per_bar')) {
+    d.exec('ALTER TABLE sequence_bgm ADD COLUMN beats_per_bar INTEGER')
   }
 }
 
@@ -629,6 +643,7 @@ interface SequenceBgmRow {
   sequence_id: number
   rel_path: string
   start_offset_sec: number
+  beats_per_bar: number | null
 }
 
 /** シーケンスに紐づく BGM。未設定なら null。 */
@@ -640,7 +655,8 @@ export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
   return {
     sequenceId: r.sequence_id,
     relPath: r.rel_path,
-    startOffsetSec: r.start_offset_sec
+    startOffsetSec: r.start_offset_sec,
+    beatsPerBar: r.beats_per_bar ?? null
   }
 }
 
@@ -655,12 +671,27 @@ export function setSequenceBgm(
     d.prepare('DELETE FROM sequence_bgm WHERE sequence_id = ?').run(sequenceId)
     return null
   }
+  // 曲を差し替えたら拍子の上書きは捨てる（別の曲の拍子を引き継いでも意味がない）
+  const prev = getSequenceBgm(sequenceId)
+  const keepMeter = prev?.relPath === relPath ? prev.beatsPerBar : null
   d.prepare(
-    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec)
-     VALUES (?, ?, ?)
+    `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec, beats_per_bar)
+     VALUES (?, ?, ?, ?)
      ON CONFLICT(sequence_id) DO UPDATE SET rel_path = excluded.rel_path,
-                                            start_offset_sec = excluded.start_offset_sec`
-  ).run(sequenceId, relPath, startOffsetSec)
+                                            start_offset_sec = excluded.start_offset_sec,
+                                            beats_per_bar = excluded.beats_per_bar`
+  ).run(sequenceId, relPath, startOffsetSec, keepMeter)
+  return getSequenceBgm(sequenceId)
+}
+
+/** 拍グリッドの拍子の手動上書きを保存する（null で自動判定へ戻す）。 */
+export function setSequenceBgmMeter(
+  sequenceId: number,
+  beatsPerBar: number | null
+): SequenceBgm | null {
+  getDb()
+    .prepare('UPDATE sequence_bgm SET beats_per_bar = ? WHERE sequence_id = ?')
+    .run(beatsPerBar, sequenceId)
   return getSequenceBgm(sequenceId)
 }
 

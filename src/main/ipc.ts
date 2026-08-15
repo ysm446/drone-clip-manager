@@ -46,6 +46,7 @@ import {
   restoreSequenceGraph,
   getSequenceBgm,
   setSequenceBgm,
+  setSequenceBgmMeter,
   getSequenceMarkers,
   addSequenceMarker,
   updateSequenceMarker,
@@ -382,6 +383,12 @@ export function registerIpc(): void {
     'seq:setBgm',
     (_e, sequenceId: number, relPath: string | null, startOffsetSec = 0): SequenceBgm | null =>
       setSequenceBgm(sequenceId, relPath, startOffsetSec)
+  )
+  // 拍グリッド表示の拍子の手動上書き（null = 自動判定へ戻す）
+  ipcMain.handle(
+    'seq:setBgmMeter',
+    (_e, sequenceId: number, beatsPerBar: number | null): SequenceBgm | null =>
+      setSequenceBgmMeter(sequenceId, beatsPerBar)
   )
 
   // 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）

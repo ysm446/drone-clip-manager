@@ -2574,6 +2574,11 @@ body.resizing {
 .mtl-slack.over {
   color: var(--warn);
 }
+/* 拍グリッド ON 時の、解析が信頼できない曲の注意書き。素材の性質なのでその場に置く（§5.9 の例外） */
+.mtl-warn {
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
 .mtl-zoom {
   flex: none;
   background: none;

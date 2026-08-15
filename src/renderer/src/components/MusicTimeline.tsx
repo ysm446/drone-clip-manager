@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  BeatAnalysis,
   BgmInfo,
   ClipItem,
   ConcatBgm,
@@ -21,7 +22,10 @@ const api = window.dcm
 //
 // **尺は秒で持つ**（sequence_nodes.dur_sec）。当初は拍数で持ち「曲を差し替えると全クリップが
 // 自動で並び直る」設計だったが、拍が取れない曲では誤ったグリッドがかえって編集の邪魔になるため、
-// 拍・小節のグリッドごと廃止した（2026-08-15。経緯は plan.md の Phase 2.6c）。
+// 拍数の保存は廃止した（2026-08-15。経緯は plan.md の Phase 2.6c）。
+// 拍・小節のグリッドは同日「吸着と表示のレイヤー」として復活した（`beatGrid` トグル）。
+// ON にすると拍・小節線を表示し、吸着先が秒から拍に変わるが、保存される値は秒のまま。
+// そのため曲を差し替えてもクリップは並び直らない（これは仕様として受け入れた）。
 // 元の segments は書き換えない。
 
 /**
@@ -36,6 +40,17 @@ const SNAP_SECS = [
   { label: '1秒', sec: 1 },
   { label: '2秒', sec: 2 },
   { label: '5秒', sec: 5 }
+]
+/**
+ * 拍グリッド時の吸着単位（拍数）。`beats: 0` は「なし」、-1 は「1 小節」（= 拍子ぶん）。
+ * 拍グリッドは**吸着と表示のレイヤー**で、どちらのモードでも保存される値は秒のまま
+ * （2026-08-15。一度廃止した拍・小節グリッドをこの位置づけで復活した。経緯は plan.md Phase 2.6c）。
+ */
+const SNAP_BEAT_UNITS = [
+  { label: 'なし', beats: 0 },
+  { label: '1拍', beats: 1 },
+  { label: '2拍', beats: 2 },
+  { label: '1小節', beats: -1 }
 ]
 /**
  * ルーラーの目盛り候補（秒）。ズームに応じて「1 目盛りが RULER_TICK_MIN_PX 以上」になる
@@ -53,6 +68,8 @@ const DRAG_LABELS: Record<'move' | 'dur' | 'trimL' | 'slip', string> = {
   slip: '使用範囲のスライド'
 }
 const SNAP_KEY = 'dcm.mtl.snapSec'
+const SNAP_BEATS_KEY = 'dcm.mtl.snapBeats'
+const BEAT_GRID_KEY = 'dcm.mtl.beatGrid'
 const THUMB_KEY = 'dcm.mtl.showThumbs'
 /** サムネイルを出す最小のブロック幅（px）。これより狭いと絵が潰れて役に立たない。 */
 const THUMB_MIN_W = 64
@@ -96,6 +113,52 @@ function clamp(v: number, lo: number, hi: number): number {
 /** 秒を吸着単位の倍数へ丸める（snap が 0 なら丸めない）。 */
 function snapSeconds(t: number, snap: number): number {
   return snap > 0 ? Math.round(t / snap) * snap : t
+}
+
+/** 時刻 t の直前の拍の番号（拍は昇順なので二分探索）。無ければ -1。 */
+function beatIndexAt(beats: number[], t: number): number {
+  let lo = 0
+  let hi = beats.length - 1
+  let ans = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (beats[mid] <= t) {
+      ans = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return ans
+}
+
+/**
+ * 時刻 t を拍グリッド（stepBeats 拍ごと、小節頭 barPhase 基準）へ吸着させる。
+ * 秒ではなく拍の番号で丸めてから拍列を引くため、テンポが流れる曲でも正しく効く。
+ * 拍列の外（曲の前後）は代表 BPM の拍長で外挿する（クリップは曲の終わりより後ろにも置けるため）。
+ */
+function snapToBeatGrid(
+  beat: BeatAnalysis,
+  barPhase: number,
+  stepBeats: number,
+  t: number
+): number {
+  const beats = beat.beats
+  if (!beats.length || stepBeats <= 0) return t
+  const last = beats.length - 1
+  const beatSec = 60 / beat.bpm
+  // t を「拍番号」（小数）へ写す
+  let fi: number
+  if (t <= beats[0]) fi = (t - beats[0]) / beatSec
+  else if (t >= beats[last]) fi = last + (t - beats[last]) / beatSec
+  else {
+    const i = beatIndexAt(beats, t)
+    fi = i + (t - beats[i]) / (beats[i + 1] - beats[i])
+  }
+  const idx = barPhase + Math.round((fi - barPhase) / stepBeats) * stepBeats
+  if (idx < 0) return beats[0] + idx * beatSec
+  if (idx > last) return beats[last] + (idx - last) * beatSec
+  return beats[idx]
 }
 
 /** 押し出しの解決対象（開始位置の昇順で渡す） */
@@ -235,6 +298,22 @@ export const MusicTimeline = memo(function MusicTimeline({
     const saved = raw == null ? NaN : Number(raw)
     return SNAP_SECS.some((u) => u.sec === saved) ? saved : 0.5
   })
+  /**
+   * 拍グリッド。ON にすると拍・小節線を表示し、吸着先が秒から拍に変わる。
+   * 保存される位置・尺はどちらのモードでも秒のまま（吸着と表示のレイヤー）。
+   */
+  const [beatGrid, setBeatGrid] = useState<boolean>(
+    () => localStorage.getItem(BEAT_GRID_KEY) === '1'
+  )
+  /** 拍グリッド時の吸着単位（拍数。0 = なし / -1 = 1 小節）。既定は 1 拍。 */
+  const [snapBeats, setSnapBeats] = useState<number>(() => {
+    const raw = localStorage.getItem(SNAP_BEATS_KEY)
+    const saved = raw == null ? NaN : Number(raw)
+    return SNAP_BEAT_UNITS.some((u) => u.beats === saved) ? saved : 1
+  })
+  /** ビート解析の結果（.dcm/beats/ にキャッシュ済みなら即返る）。拍グリッドの土台。 */
+  const [beat, setBeat] = useState<BeatAnalysis | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   /** 横スクロールの器。再生ヘッドが画面外へ出たときの追従に使う。 */
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -383,6 +462,29 @@ export const MusicTimeline = memo(function MusicTimeline({
     }
   }, [seqBgm?.relPath, onStatus])
 
+  // 拍グリッド用のビート解析。曲が決まったら読む（2 回目以降はキャッシュで即返る）
+  useEffect(() => {
+    const rel = seqBgm?.relPath
+    setBeat(null)
+    if (!rel) return
+    let alive = true
+    setAnalyzing(true)
+    api
+      .analyzeBgmBeats(rel)
+      .then((res) => {
+        if (!alive) return
+        setAnalyzing(false)
+        if (res.ok && res.analysis) setBeat(res.analysis)
+        else onStatus?.(res.error ?? 'ビートを解析できませんでした', 'err')
+      })
+      .catch(() => {
+        if (alive) setAnalyzing(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [seqBgm?.relPath, onStatus])
+
   /** nodeId → 保存済みの尺・使用開始位置 */
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
 
@@ -392,11 +494,35 @@ export const MusicTimeline = memo(function MusicTimeline({
     setSeqBgm(next)
   }
 
+  /** 拍子の手動上書きを保存する（null = 自動判定へ戻す）。小節線と吸着に効く。 */
+  const setMeter = async (bpb: number | null): Promise<void> => {
+    if (sequenceId == null) return
+    setSeqBgm(await api.setSequenceBgmMeter(sequenceId, bpb))
+  }
+
   /** 曲の長さ（秒）。波形の解析結果から取る。 */
   const songDurationSec = wave?.durationSec ?? 0
 
   /** クリップを置ける最も手前の位置（曲の使い始め） */
   const floorSec = seqBgm?.startOffsetSec ?? 0
+
+  /**
+   * 拍グリッドの拍子と小節頭。拍子は手動上書き（seqBgm.beatsPerBar）を優先し、
+   * 小節頭はその拍子での自動判定値（meters）から引く。
+   */
+  const { beatsPerBar, barPhase } = useMemo(() => {
+    const auto = beat?.beatsPerBar ?? 4
+    const bpb = seqBgm?.beatsPerBar ?? auto
+    const phase =
+      beat?.meters?.find((m) => m.beatsPerBar === bpb)?.barPhase ??
+      (bpb === auto ? (beat?.barPhase ?? 0) : 0)
+    return { beatsPerBar: bpb, barPhase: phase }
+  }, [beat, seqBgm?.beatsPerBar])
+
+  /** 拍グリッドが実際に効いているか（トグル ON かつ解析済み。解析前・失敗時は秒の目盛りに戻る） */
+  const beatOn = beatGrid && beat != null && beat.beats.length > 0
+  /** 吸着単位の実拍数（-1 = 1 小節 = 拍子ぶん） */
+  const stepBeats = snapBeats === -1 ? beatsPerBar : snapBeats
 
   /**
    * レイアウト。各クリップは `start_sec` の絶対位置に置く（前詰めではない = 隙間を作れる）。
@@ -584,10 +710,37 @@ export const MusicTimeline = memo(function MusicTimeline({
     [markerSecs, effPps]
   )
 
-  /** 吸着。**マーカーが近ければ吸着単位のグリッドより優先する**（手で置いた点が最優先）。 */
+  /** モードに応じたグリッド吸着（マーカーは含まない）。拍グリッド ON なら拍へ、OFF なら秒単位へ。 */
+  const gridSnapPoint = useCallback(
+    (t: number): number => {
+      if (beatOn && beat) return snapBeats === 0 ? t : snapToBeatGrid(beat, barPhase, stepBeats, t)
+      return snapSeconds(t, snapSec)
+    },
+    [beatOn, beat, snapBeats, stepBeats, barPhase, snapSec]
+  )
+
+  /** 吸着。**マーカーが近ければグリッドより優先する**（手で置いた点が最優先）。 */
   const snapTime = useCallback(
-    (t: number, offsets?: number[]): number => nearestMarker(t, offsets) ?? snapSeconds(t, snapSec),
-    [nearestMarker, snapSec]
+    (t: number, offsets: number[] = [0]): number => {
+      const m = nearestMarker(t, offsets)
+      if (m != null) return m
+      // 秒モードは従来どおり基準点そのもの（札の頭）だけを丸める
+      if (!beatOn) return gridSnapPoint(t)
+      // 拍グリッドでは基準点（札の頭と尻など）のうち、いちばん近くで拍に乗るものを選ぶ
+      let best = gridSnapPoint(t)
+      let bestD = Math.abs(best - t)
+      for (const off of offsets) {
+        if (off === 0) continue
+        const cand = gridSnapPoint(t + off) - off
+        const d = Math.abs(cand - t)
+        if (d < bestD) {
+          bestD = d
+          best = cand
+        }
+      }
+      return best
+    },
+    [nearestMarker, beatOn, gridSnapPoint]
   )
 
   // --- 編集（尺の変更 / 使用範囲のスライド）---
@@ -766,12 +919,17 @@ export const MusicTimeline = memo(function MusicTimeline({
       }
       if (drag.kind === 'dur') {
         // 引いた先の長さを吸着単位へ丸め、元の区間に残っているぶんで頭打ちにする。
-        // **マーカーが近いときは尻の時刻をそこへ合わせる**（開始位置は動かないので尺で吸収する）
+        // **マーカーが近いときは尻の時刻をそこへ合わせる**（開始位置は動かないので尺で吸収する）。
+        // 拍グリッドでも同じ考え方で、尻の時刻を拍に乗せて尺で吸収する
         const avail = drag.maxOffsetBase - drag.offset
         const wantEnd = drag.startSec + drag.baseDur + dxSec
         const onMarker = nearestMarker(wantEnd)
         const target =
-          onMarker != null ? onMarker - drag.startSec : snapSeconds(drag.baseDur + dxSec, snapSec)
+          onMarker != null
+            ? onMarker - drag.startSec
+            : beatOn
+              ? gridSnapPoint(wantEnd) - drag.startSec
+              : snapSeconds(drag.baseDur + dxSec, snapSec)
         const best = Math.min(avail, Math.max(MIN_DUR_SEC, target))
         setDrag((d) =>
           d && Math.abs(d.durSec - best) > 1e-6 ? { ...d, durSec: best, moved: true } : d
@@ -864,7 +1022,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     sequenceId,
     snapSec,
     snapTime,
-    nearestMarker
+    nearestMarker,
+    beatOn,
+    gridSnapPoint
   ])
 
   // --- 切り替えポイント（マーカー）---
@@ -918,8 +1078,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     setMarkerDrag({ id: m.id, from: m.sec, sec: m.sec })
     let sec = m.sec
     const onMove = (ev: MouseEvent): void => {
-      // マーカー自身は吸着単位のグリッドにだけ乗せる（他のマーカーへは吸着させない）
-      sec = Math.max(0, snapSeconds(m.sec + (ev.clientX - baseX) / effPps, snapSec))
+      // マーカー自身はグリッドにだけ乗せる（他のマーカーへは吸着させない）。
+      // 拍グリッド ON のときは拍へ吸着する
+      sec = Math.max(0, gridSnapPoint(m.sec + (ev.clientX - baseX) / effPps))
       setMarkerDrag((d) => (d && Math.abs(d.sec - sec) > 1e-6 ? { ...d, sec } : d))
     }
     const onUp = (): void => {
@@ -1282,19 +1443,44 @@ export const MusicTimeline = memo(function MusicTimeline({
       }
     }
 
-    // --- 時間の目盛り（主目盛りに時刻、その 1/2 に補助線）---
-    const step = rulerStep(effPps)
-    g.font = '10px system-ui, sans-serif'
-    for (let k = 0; ; k++) {
-      const t = (k * step) / 2
-      const x = t * effPps
-      if (x > contentW) break
-      const major = k % 2 === 0
-      g.fillStyle = major ? cMuted : cBorder
-      g.fillRect(Math.round(x), major ? 0 : RULER_H, 1, major ? RULER_H + TRACK_H : TRACK_H)
-      if (major) {
-        g.fillStyle = cFaint
-        g.fillText(tickLabel(t, step), Math.round(x) + 3, 12)
+    if (beatOn && beat) {
+      // --- 拍線 / 小節線（拍グリッド。ルーラーには小節番号を出す）---
+      // 色は時間目盛りと同じ規則: 補助（拍）= --border / 主（小節）= --muted / ラベル = --faint
+      const bpb = beatsPerBar
+      // 小節番号の間引き（1 小節が 40px 未満なら 4、12px 未満なら 8 小節ごと）
+      const barPx = (60 / beat.bpm) * bpb * effPps
+      const labelEvery = barPx >= 40 ? 1 : barPx >= 12 ? 4 : 8
+      g.font = '10px system-ui, sans-serif'
+      for (let i = 0; i < beat.beats.length; i++) {
+        const x = beat.beats[i] * effPps
+        if (x > contentW) break
+        const isBar = (((i - barPhase) % bpb) + bpb) % bpb === 0
+        if (!isBar && barPx < 24) continue // 詰まりすぎたら拍線は省く
+        g.fillStyle = isBar ? cMuted : cBorder
+        g.fillRect(Math.round(x), isBar ? 0 : RULER_H, 1, isBar ? RULER_H + TRACK_H : TRACK_H)
+        if (isBar) {
+          const barNo = Math.floor((i - barPhase) / bpb) + 1
+          if (barNo >= 1 && (barNo - 1) % labelEvery === 0) {
+            g.fillStyle = cFaint
+            g.fillText(String(barNo), Math.round(x) + 3, 12)
+          }
+        }
+      }
+    } else {
+      // --- 時間の目盛り（主目盛りに時刻、その 1/2 に補助線）---
+      const step = rulerStep(effPps)
+      g.font = '10px system-ui, sans-serif'
+      for (let k = 0; ; k++) {
+        const t = (k * step) / 2
+        const x = t * effPps
+        if (x > contentW) break
+        const major = k % 2 === 0
+        g.fillStyle = major ? cMuted : cBorder
+        g.fillRect(Math.round(x), major ? 0 : RULER_H, 1, major ? RULER_H + TRACK_H : TRACK_H)
+        if (major) {
+          g.fillStyle = cFaint
+          g.fillText(tickLabel(t, step), Math.round(x) + 3, 12)
+        }
       }
     }
 
@@ -1304,7 +1490,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       g.fillStyle = cAccent
       g.fillRect(Math.round(endX), 0, 1, RULER_H + TRACK_H)
     }
-  }, [wave, effPps, contentW])
+  }, [wave, effPps, contentW, beatOn, beat, beatsPerBar, barPhase])
 
   if (sequenceId == null) {
     return <div className="mtl-empty">左でシーケンスを選ぶと、曲に合わせた並びを表示します。</div>
@@ -1332,6 +1518,18 @@ export const MusicTimeline = memo(function MusicTimeline({
 
         {loading && <span className="mtl-meta">読み込み中…</span>}
         {wave && !loading && <span className="mtl-meta">曲の長さ {fmtSec(wave.durationSec)}</span>}
+        {beatGrid && analyzing && <span className="mtl-meta">ビート解析中…</span>}
+        {beatOn && beat && (
+          <>
+            <span
+              className="mtl-meta"
+              title={`平均ズレ ${beat.meanDeviationMs.toFixed(0)}ms / テンポ変動 ${beat.tempoVariationPct.toFixed(0)}%`}
+            >
+              {beat.bpm.toFixed(1)} BPM・全 {Math.floor(beat.beats.length / beatsPerBar)} 小節
+            </span>
+            {beat.warning && <span className="mtl-warn">{beat.warning}</span>}
+          </>
+        )}
 
         <button
           className="mtl-zoom"
@@ -1354,26 +1552,88 @@ export const MusicTimeline = memo(function MusicTimeline({
           サムネ
         </button>
 
-        {/* 吸着単位（秒）。尺と頭出しをこの倍数に丸める */}
+        {/*
+          拍グリッドのトグル。ON で拍・小節線を表示し、吸着先が秒から拍に変わる。
+          保存される位置・尺はどちらのモードでも秒のまま（吸着と表示のレイヤー）。
+        */}
+        <button
+          className={`mtl-zoom${beatGrid ? ' on' : ''}`}
+          disabled={!seqBgm}
+          onClick={() => {
+            const v = !beatGrid
+            setBeatGrid(v)
+            localStorage.setItem(BEAT_GRID_KEY, v ? '1' : '0')
+          }}
+          title="検出した拍・小節のグリッドを表示し、吸着先を秒から拍に切り替える（クリップの位置・尺は秒のまま保存されます）"
+        >
+          拍グリッド
+        </button>
+
+        {/*
+          拍子。自動判定は目安にすぎず耳と食い違う例があるので、手動で選び直せるようにする。
+          小節線・小節番号・「1小節」吸着がこの値に連動する。
+        */}
+        {beatOn && beat && (
+          <label className="mtl-snap" title="拍子（自動判定は目安。小節線が合わなければ選び直す）">
+            拍子
+            <select
+              value={seqBgm?.beatsPerBar ?? 0}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                void setMeter(v === 0 ? null : v)
+              }}
+            >
+              <option value={0}>自動（{beat.beatsPerBar}/4）</option>
+              {[2, 3, 4, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n}/4
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* 吸着単位。秒モードは秒の倍数、拍グリッドでは拍・小節単位に丸める */}
         <label
           className="mtl-snap"
-          title="クリップの尺と頭出しを吸着させる単位。「なし」なら丸めずそのまま取る"
+          title={
+            beatOn
+              ? 'クリップの位置と尺を吸着させる拍の単位。「なし」なら丸めずそのまま取る'
+              : 'クリップの尺と頭出しを吸着させる単位。「なし」なら丸めずそのまま取る'
+          }
         >
           吸着
-          <select
-            value={snapSec}
-            onChange={(e) => {
-              const v = Number(e.target.value)
-              setSnapSec(v)
-              localStorage.setItem(SNAP_KEY, String(v))
-            }}
-          >
-            {SNAP_SECS.map((u) => (
-              <option key={u.sec} value={u.sec}>
-                {u.label}
-              </option>
-            ))}
-          </select>
+          {beatOn ? (
+            <select
+              value={snapBeats}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setSnapBeats(v)
+                localStorage.setItem(SNAP_BEATS_KEY, String(v))
+              }}
+            >
+              {SNAP_BEAT_UNITS.map((u) => (
+                <option key={u.beats} value={u.beats}>
+                  {u.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={snapSec}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                setSnapSec(v)
+                localStorage.setItem(SNAP_KEY, String(v))
+              }}
+            >
+              {SNAP_SECS.map((u) => (
+                <option key={u.sec} value={u.sec}>
+                  {u.label}
+                </option>
+              ))}
+            </select>
+          )}
         </label>
 
         <span className="clips-spacer" />

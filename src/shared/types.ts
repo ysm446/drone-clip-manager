@@ -277,6 +277,11 @@ export interface SequenceBgm {
   relPath: string
   /** 曲のどこから使い始めるか（イントロ飛ばし / サビ合わせ） */
   startOffsetSec: number
+  /**
+   * 拍グリッド表示の拍子の手動上書き（null = 自動判定を使う）。
+   * 拍グリッドは表示と吸着のレイヤーで、クリップの保存値（秒）には影響しない。
+   */
+  beatsPerBar: number | null
 }
 
 /**
@@ -529,6 +534,11 @@ export interface DcmApi {
     sequenceId: number,
     relPath: string | null,
     startOffsetSec?: number
+  ) => Promise<SequenceBgm | null>
+  /** 拍グリッドの拍子の手動上書きを保存する（null で自動判定へ戻す） */
+  setSequenceBgmMeter: (
+    sequenceId: number,
+    beatsPerBar: number | null
   ) => Promise<SequenceBgm | null>
   /** 音楽タイムラインの切り替えポイント（マーカー）を時刻順に取得 */
   getSequenceMarkers: (sequenceId: number) => Promise<SequenceMarker[]>
