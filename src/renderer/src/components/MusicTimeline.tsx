@@ -377,6 +377,12 @@ export const MusicTimeline = memo(function MusicTimeline({
   const scrollRef = useRef<HTMLDivElement>(null)
   /** スクラブ中は自動追従を止める（見る場所は本人が決めているため） */
   const scrubbingRef = useRef(false)
+  /**
+   * 再生中か。**ヘッドの自動追従を再生中だけにする**ために持つ。
+   * `moveHead` は `effPps` で memo 化しているので、prop を直接見ると古い値を掴む。
+   */
+  const playingRef = useRef(false)
+  playingRef.current = !!playing
   const clipsRef = useRef<HTMLDivElement>(null)
   /**
    * 行（lane）の DOM。0 = 本番 / 1 以上 = 予備。ドラッグ中に
@@ -1572,9 +1578,14 @@ export const MusicTimeline = memo(function MusicTimeline({
       // 画面の外へ出たら横スクロールを追従させる。
       // 端に貼り付ける方式だと再生中ずっと右端に張り付いて先が見えないので、
       // **ヘッドが左から 1/8 の位置へ来るように送る**（ページめくり式）。
-      // スクラブ中は本人が見る場所を決めているので触らない。
+      //
+      // **追従するのは再生中だけ。** 止まっているときは本人が見たい場所を見ているので、
+      // 横スクロールを勝手に戻さない。特に隙間や曲の余りで一時停止していると、
+      // 待ち合わせのティック（`dcm:seq-gap`）が止まらずに届き続けるため、
+      // スクロールしても即座にヘッドへ引き戻されていた（2026-08-15 の報告）。
+      // スクラブ中も同じ理由で触らない。
       const sc = scrollRef.current
-      if (!sc || scrubbingRef.current) return
+      if (!sc || scrubbingRef.current || !playingRef.current) return
       const margin = 24
       if (x < sc.scrollLeft + margin || x > sc.scrollLeft + sc.clientWidth - margin) {
         sc.scrollLeft = Math.max(0, x - sc.clientWidth / 8)
