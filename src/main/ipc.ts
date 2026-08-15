@@ -53,6 +53,7 @@ import {
   deleteSequenceMarker,
   restoreSequenceMarker,
   setSequenceOrder,
+  updateSequenceNodeLane,
   updateSequenceNodeMusic,
   updateSequenceNodeMusicMany,
   updateSequenceNodeSegment
@@ -419,6 +420,10 @@ export function registerIpc(): void {
       _e,
       rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
     ): void => updateSequenceNodeMusicMany(rows)
+  )
+  // 行の移動（0 = 本番のタイムライン / 1 以上 = 予備の行）
+  ipcMain.handle('seq:updateNodeLane', (_e, nodeId: number, lane: number): void =>
+    updateSequenceNodeLane(nodeId, lane)
   )
   // 音楽タイムラインのドロップ差し替え（ノードの区間だけ差し替え、配置・順路は保つ）
   ipcMain.handle('seq:replaceNodeSegment', (_e, nodeId: number, segmentId: number): void =>

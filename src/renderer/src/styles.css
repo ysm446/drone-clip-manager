@@ -2866,6 +2866,45 @@ body.resizing {
   color: var(--accent);
 }
 
+/* 予備の行（style-guide 5.12）。本番と**同じ時間軸の上**に置き、
+   高さと地の色だけで「本番ではない」を示す（札の色は素材色のまま）。 */
+.mtl-lane {
+  position: relative;
+  margin-top: 4px;
+  /* 本番の行（--bg + 実線）と地続きに見せつつ、破線で「置き場」であることを示す */
+  background: var(--hover);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-s);
+  cursor: default;
+}
+/* ドロップの受け先 / 行をまたぐドラッグの行き先（style-guide 8: 内側 1px の枠） */
+.mtl-lane.dropping,
+.mtl-lane.target,
+.mtl-clips.target {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* 行の名札。横スクロールしても左端に貼り付いたまま残す */
+.mtl-lane-name {
+  position: sticky;
+  left: 2px;
+  z-index: 2;
+  float: left;
+  margin: 2px;
+  padding: 1px 4px;
+  border-radius: var(--radius-s);
+  /* 札の上に重なっても読めるように、地の面を敷く（重なるのは曲の頭付近だけ） */
+  background: var(--surface);
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 予備の行の札。本番より低いので、文字は 1 行に収める */
+.mtl-clip.shelf {
+  top: 2px;
+  bottom: 2px;
+}
+
 /* ============================================================
    シーケンスモードのサイドバー（BGM のみ / 折りたたみ可）
    ============================================================ */

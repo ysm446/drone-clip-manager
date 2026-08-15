@@ -89,6 +89,7 @@ export interface SequenceNode {
   /**
    * 音楽タイムラインでの開始位置（秒 / Phase 2.6c）。曲の先頭からの絶対位置。
    * null は「未配置」で、音楽ビューを開いたときに前詰めの位置を書き込んで確定させる。
+   * **負なら予備（棚）に取り置き中**（`SHELF_START_SEC` / `isShelfNode`）。
    */
   startSec: number | null
   /**
@@ -98,6 +99,11 @@ export interface SequenceNode {
   durSec: number | null
   /** 元の区間のどこから使うか（秒）。尺を縮めたときの逃げ場 */
   srcOffset: number
+  /**
+   * どの行に置いているか（2026-08-15）。**0 = 本番のタイムライン / 1 以上 = 予備の行**。
+   * 予備の行も同じ時間軸の上にあり、順路（再生・書き出し）には入らない。
+   */
+  lane: number
   /** segment × video の結合（元 segment が消えていれば null） */
   clip: ClipItem | null
 }
@@ -119,7 +125,7 @@ export interface SequenceGraph {
 
 /**
  * Undo 用のグラフスナップショット行（ノード）。
- * 音楽タイムラインの配置（startSec / durSec / srcOffset）も含める。
+ * 音楽タイムラインの配置（startSec / durSec / srcOffset / lane）も含める。
  * 含めないと、グラフ操作を undo したときに配置が既定値へ戻ってしまう。
  */
 export interface GraphNodeSnap {
@@ -130,6 +136,8 @@ export interface GraphNodeSnap {
   startSec: number | null
   durSec: number | null
   srcOffset: number
+  /** 0 = 本番のタイムライン / 1 以上 = 予備の行 */
+  lane: number
 }
 
 /** Undo 用のグラフスナップショット行（エッジ） */
@@ -560,6 +568,8 @@ export interface DcmApi {
   updateSequenceNodeMusicMany: (
     rows: { nodeId: number; startSec: number | null; durSec: number | null; srcOffset: number }[]
   ) => Promise<void>
+  /** ノードを別の行へ移す（0 = 本番のタイムライン / 1 以上 = 予備の行） */
+  updateSequenceNodeLane: (nodeId: number, lane: number) => Promise<void>
   /** ノードの区間を差し替える（音楽タイムラインのドロップ差し替え。配置・順路は保つ） */
   replaceSequenceNodeSegment: (nodeId: number, segmentId: number) => Promise<void>
   /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */

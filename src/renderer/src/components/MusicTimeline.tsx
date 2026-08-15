@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
 import type {
   BeatAnalysis,
   BgmInfo,
@@ -67,6 +68,8 @@ const DRAG_LABELS: Record<'move' | 'dur' | 'trimL' | 'slip', string> = {
   trimL: 'イン点のトリム',
   slip: '使用範囲のスライド'
 }
+/** クリップパレットからのドラッグ。値は segment id。 */
+const MIME_CLIP = 'application/x-dcm-clip'
 const SNAP_KEY = 'dcm.mtl.snapSec'
 const SNAP_BEATS_KEY = 'dcm.mtl.snapBeats'
 const BEAT_GRID_KEY = 'dcm.mtl.beatGrid'
@@ -161,6 +164,29 @@ function snapToBeatGrid(
   return beats[idx]
 }
 
+/** タイムラインに出す 1 枚の札。本番の行と予備の行で同じ形にして、描画も操作も共通にする。 */
+interface MusicBlock {
+  /** ノード id */
+  key: number
+  clip: ClipItem
+  durSec: number
+  srcOffset: number
+  /** 元の区間のうち、使用開始位置より後ろに残っている尺 */
+  avail: number
+  startSec: number
+  endSec: number
+  /** 元の区間から捨てる秒数（縮めた分） */
+  trimmedSec: number
+  /** 元の素材が足りない（区間の外に出ている） */
+  short: boolean
+  /** 尺を手で決めているか（false なら自動） */
+  manual: boolean
+  /** 曲の終わりを越えているか */
+  overflow: boolean
+  /** 行の中での並び順（色分けに使う） */
+  index: number
+}
+
 /** 押し出しの解決対象（開始位置の昇順で渡す） */
 interface Placed {
   id: number
@@ -215,6 +241,11 @@ function tickLabel(sec: number, step: number): string {
 
 const RULER_H = 22 // 時間ルーラー
 const TRACK_H = 56 // 曲トラック / クリップ列
+/**
+ * 予備の行の高さ。本番より低くして、**高さだけでどちらの行か分かる**ようにする
+ * （札の色は素材色のままにしたいので、行の側で差を付ける）。
+ */
+const SHELF_ROW_H = 40
 const MIN_PPS = 6 // 最小ズーム（px / 秒）
 const MAX_PPS = 200
 /** 端ドラッグ / スライドの当たり判定（px） */
@@ -259,6 +290,15 @@ interface Props {
     maxDurSec: number | null
   ) => Promise<void>
   /**
+   * 札を**別の行へ移す**（本番 = lane 0 ⇄ 予備 = lane 1 以上）。位置はドラッグで決まった秒。
+   * maxDurSec は本番へ入れるときの空き（次のクリップの頭まで / onDropClip と同じ規則）。
+   */
+  onMoveClipsToLane?: (
+    moves: { nodeId: number; lane: number; startSec: number; maxDurSec?: number | null }[]
+  ) => Promise<void>
+  /** クリップパレットから予備の行へ直接置く */
+  onDropClipToShelf?: (segmentId: number, startSec: number, lane: number) => Promise<void>
+  /**
    * 上部プレイヤーの再生ボタンから引くための「いまの再生キューを返す関数」の置き場。
    * ここへ push するのではなく、**押された瞬間に引いてもらう**（常時装填はしない）。
    * 常時装填だと、尺のドラッグや並べ替えのたびに再生側の状態が差し替わって位置が飛ぶ。
@@ -290,6 +330,8 @@ export const MusicTimeline = memo(function MusicTimeline({
   runPlacementEdit,
   onDropClip,
   onReplaceClip,
+  onMoveClipsToLane,
+  onDropClipToShelf,
   queueRef,
   onSeek,
   onDeleteClips,
@@ -337,6 +379,12 @@ export const MusicTimeline = memo(function MusicTimeline({
   const scrubbingRef = useRef(false)
   const clipsRef = useRef<HTMLDivElement>(null)
   /**
+   * 行（lane）の DOM。0 = 本番 / 1 以上 = 予備。ドラッグ中に
+   * 「いまポインタがどの行にあるか」を矩形で判定するために持つ
+   * （高さの計算で求めると、余白やズームの変更で静かにズレるため）。
+   */
+  const laneElsRef = useRef(new Map<number, HTMLDivElement | null>())
+  /**
    * 再生ヘッド。React の再レンダリングを介さず DOM の transform だけを更新する
    * （SequenceView 内の NodeProgress と同じ方針。毎フレームの再描画を避ける）。
    */
@@ -355,10 +403,17 @@ export const MusicTimeline = memo(function MusicTimeline({
    * - dur  : 右端を引いて尺（秒）を変える。後ろの札は押し出される
    * - trimL: 左端を引いてイン点をトリムする。タイムライン上の右端は動かさない
    * - slip : Alt + 中身ドラッグで「元の区間のどこを使うか」をずらす（Resolve のスリップ編集）
+   *
+   * `move` は**縦にも動かせる**（本番 ⇄ 予備の行）。`baseLane` が掴んだ行、
+   * `lane` がいまポインタが指している行で、離した時点で両者が違えば行の移動になる。
    */
   const [drag, setDrag] = useState<{
     kind: 'move' | 'dur' | 'trimL' | 'slip'
     nodeId: number
+    /** 掴んだときの行（0 = 本番 / 1 以上 = 予備） */
+    baseLane: number
+    /** いまポインタが指している行。離すとここへ移る */
+    lane: number
     startX: number
     baseStart: number
     baseDur: number
@@ -372,8 +427,8 @@ export const MusicTimeline = memo(function MusicTimeline({
     /** 実際にドラッグされたか（クリックと区別する） */
     moved: boolean
   } | null>(null)
-  /** パレットからのドロップ位置（曲の時刻・秒）。null で非表示。 */
-  const [dropAt, setDropAt] = useState<number | null>(null)
+  /** パレットからのドロップ位置（曲の時刻・秒 / 行）。null で非表示。 */
+  const [dropAt, setDropAt] = useState<{ sec: number; lane: number } | null>(null)
   /** ドロップ差し替えの受け先（ノード id）。札の上にドラッグが乗っている間だけ立つ。 */
   const [replaceAt, setReplaceAt] = useState<number | null>(null)
   /**
@@ -552,10 +607,16 @@ export const MusicTimeline = memo(function MusicTimeline({
   const layout = useMemo(() => {
     if (!wave) return null
 
+    // 行をまたぐドラッグ中は、**行き先の行にだけ札を出す**（掴んだ行からは消す）。
+    // 両方に出すと、どちらが確定するのか読めないため。
+    const leavingMain = drag != null && drag.baseLane === 0 && drag.lane !== 0
+    const enteringMain = drag != null && drag.baseLane !== 0 && drag.lane === 0
+
     // 1. 各ノードの確定値を作る（ドラッグ中のものはドラッグ値を使う）
     let cursor = floorSec
     let needsPlacing = false
-    const base = items.map((it) => {
+    const src = leavingMain ? items.filter((it) => it.nodeId !== drag.nodeId) : items
+    const base = src.map((it) => {
       const node = nodeById.get(it.nodeId)
       // 保存待ちの値があればそれを優先する（反映されるまでのちらつき止め）
       const p = pending?.get(it.nodeId)
@@ -572,10 +633,13 @@ export const MusicTimeline = memo(function MusicTimeline({
       return { it, clip: it.clip, key: it.nodeId, srcOffset, avail, durSec, startSec }
     })
 
-    // 2. ドラッグ中なら押し出しを解く（手前は壁 / 後ろは隙間で吸収）
+    // 2. ドラッグ中なら押し出しを解く（手前は壁 / 後ろは隙間で吸収）。
+    //    **押し出しは本番の行の中で動かしているときだけ。** 行をまたいで持ち込むときは、
+    //    パレットからのドロップと同じく「空きに収める」だけにして、既にある札は動かさない。
     const moves = new Map<number, number>()
     let movedStart: number | null = null
-    const moved = drag ? base.find((b) => b.key === drag.nodeId) : undefined
+    const inMainLane = drag != null && drag.baseLane === 0 && drag.lane === 0
+    const moved = inMainLane ? base.find((b) => b.key === drag.nodeId) : undefined
     if (drag?.kind === 'move' && moved) {
       // 移動: 中心の比較で挿入位置が決まる（半分乗り越えたら順番が入れ替わる）
       const others: Placed[] = base
@@ -599,8 +663,24 @@ export const MusicTimeline = memo(function MusicTimeline({
       }
     }
 
-    // 3. 位置順に並べ替えてブロックにする（画面の並び = 時刻順）
-    const blocks = base
+    // 3. 予備の行から本番へ持ち込み中の札を足す（押し出しには参加させない）
+    const extra: { key: number; clip: ClipItem; srcOffset: number; avail: number; durSec: number; startSec: number }[] = []
+    if (enteringMain && drag) {
+      const clip = nodeById.get(drag.nodeId)?.clip
+      if (clip) {
+        extra.push({
+          key: drag.nodeId,
+          clip,
+          srcOffset: drag.offset,
+          avail: clipDuration(clip) - drag.offset,
+          durSec: drag.durSec,
+          startSec: drag.startSec
+        })
+      }
+    }
+
+    // 4. 位置順に並べ替えてブロックにする（画面の並び = 時刻順）
+    const blocks = [...base, ...extra]
       .map((b) => {
         const startSec = b.key === drag?.nodeId && movedStart != null ? movedStart : (moves.get(b.key) ?? b.startSec)
         return {
@@ -684,6 +764,55 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   /** 画面に出ているブロック（時刻順）。ドラッグ確定時の保存にも使う。 */
   const layoutBlocks = useMemo(() => layout?.blocks ?? [], [layout])
+
+  /**
+   * 予備の行。**本番と同じ時間軸の上に置く**ので、「この辺で使えそう」という位置の意味を
+   * 保ったまま取り置きできる。行は何行でも作れ、**一番下に必ず空の行を 1 行出す**
+   * （そこへ落とせば行が増える。行数を別に保存しなくて済む）。
+   * 予備の行では札どうしの押し出しをしない（重なってもよい。避けたければ行を分ける）。
+   */
+  const shelfRows = useMemo(() => {
+    const rows = new Map<number, MusicBlock[]>()
+    for (const n of nodes) {
+      const clip = n.clip
+      if (!clip) continue
+      const dragging = drag?.nodeId === n.id
+      const lane = dragging ? drag.lane : n.lane
+      if (lane <= 0) continue
+      const p = pending?.get(n.id)
+      const eff = p ?? { startSec: n.startSec, durSec: n.durSec, srcOffset: n.srcOffset }
+      const srcOffset = dragging ? drag.offset : eff.srcOffset
+      const avail = clipDuration(clip) - srcOffset
+      const durSec = dragging ? drag.durSec : (eff.durSec ?? avail)
+      const startSec = dragging ? drag.startSec : (eff.startSec ?? floorSec)
+      const list = rows.get(lane) ?? []
+      list.push({
+        key: n.id,
+        clip,
+        durSec,
+        srcOffset,
+        avail,
+        startSec,
+        endSec: startSec + durSec,
+        trimmedSec: Math.max(0, avail - durSec),
+        short: durSec > avail + 0.001,
+        manual: eff.durSec != null,
+        overflow: startSec >= songDurationSec,
+        index: 0
+      })
+      rows.set(lane, list)
+    }
+    const maxLane = rows.size ? Math.max(...rows.keys()) : 0
+    return Array.from({ length: maxLane + 1 }, (_, i) => {
+      const lane = i + 1
+      return {
+        lane,
+        blocks: (rows.get(lane) ?? [])
+          .sort((a, b) => a.startSec - b.startSec)
+          .map((b, idx) => ({ ...b, index: idx }))
+      }
+    })
+  }, [nodes, drag, pending, floorSec, songDurationSec])
 
   const totalSec = Math.max(songDurationSec, layout?.endSec ?? 0) + 2
   // canvas は幅 32767px 前後で描画に失敗する（超えると真っ白になる）。
@@ -773,10 +902,11 @@ export const MusicTimeline = memo(function MusicTimeline({
       setSelected(ids)
       if (ids.size !== 1) return
       const [only] = ids
-      const clip = items.find((it) => it.nodeId === only)?.clip
+      // 予備の行の札も対象にする（順路の items だけを見ると、予備を選んでも通知できない）
+      const clip = nodeById.get(only)?.clip
       if (clip) onSelectClip?.(clip)
     },
-    [items, onSelectClip]
+    [nodeById, onSelectClip]
   )
 
   /** クリップを 1 つだけ選ぶ（それまでの選択は捨てる）。 */
@@ -876,7 +1006,20 @@ export const MusicTimeline = memo(function MusicTimeline({
     window.addEventListener('mouseup', onUp)
   }
 
-  const startDrag = (e: React.MouseEvent, b: (typeof layoutBlocks)[number]): void => {
+  /**
+   * ポインタの縦位置がどの行にあるか（0 = 本番 / 1 以上 = 予備）。
+   * どの行の上にも無ければ null（＝掴んだ行のまま）。
+   */
+  const laneAtY = useCallback((clientY: number): number | null => {
+    for (const [lane, el] of laneElsRef.current) {
+      if (!el) continue
+      const r = el.getBoundingClientRect()
+      if (clientY >= r.top && clientY <= r.bottom) return lane
+    }
+    return null
+  }, [])
+
+  const startDrag = (e: React.MouseEvent, b: MusicBlock, lane: number): void => {
     if (!wave || e.button !== 0) return
     // Shift / Ctrl クリックは選択の足し引きだけ。配置の編集には入らない
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
@@ -899,10 +1042,16 @@ export const MusicTimeline = memo(function MusicTimeline({
     e.preventDefault()
     e.stopPropagation()
     // 手前の札の終端（左の壁）。trimL でこれより左へは出せない。
-    const prev = layoutBlocks.filter((o) => o.key !== b.key && o.endSec <= b.startSec + 0.001).pop()
+    // 予備の行は札どうしを押し合わないので、壁は曲の使い始めだけ。
+    const prev =
+      lane === 0
+        ? layoutBlocks.filter((o) => o.key !== b.key && o.endSec <= b.startSec + 0.001).pop()
+        : undefined
     setDrag({
       kind,
       nodeId: b.key,
+      baseLane: lane,
+      lane,
       startX: e.clientX,
       baseStart: b.startSec,
       baseDur: b.durSec,
@@ -922,6 +1071,12 @@ export const MusicTimeline = memo(function MusicTimeline({
     const onMove = (e: MouseEvent): void => {
       const dxSec = (e.clientX - drag.startX) / effPps
       if (drag.kind === 'move') {
+        // 縦は行の移動（本番 ⇄ 予備）。行の外へ出たときは直前の行のままにする
+        // （行の隙間を通っただけで元の行へ戻ると、手が震えるたびに行き先が入れ替わる）。
+        const overLane = onMoveClipsToLane ? laneAtY(e.clientY) : null
+        if (overLane != null && overLane !== drag.lane) {
+          setDrag((d) => (d ? { ...d, lane: overLane, moved: true } : d))
+        }
         // 置きたい位置。曲の使い始めより手前へは出さない（実際の当たりは押し出し側で解く）。
         // 吸着は札の**頭と尻の両方**をマーカーの候補にする
         const want = Math.max(
@@ -986,6 +1141,47 @@ export const MusicTimeline = memo(function MusicTimeline({
         selectOne(d.nodeId)
         return
       }
+      // 行が変わった = 行の移動（本番 ⇄ 予備 / 予備の行どうし）。位置はそのまま持っていく
+      if (d.lane !== d.baseLane && onMoveClipsToLane) {
+        // 本番へ入れるときは「次の札の頭まで」を上限に渡して、札どうしを重ねない
+        const next =
+          d.lane === 0
+            ? layoutBlocks.find((b) => b.key !== d.nodeId && b.startSec > d.startSec + 0.001)
+            : undefined
+        const maxDurSec = next ? next.startSec - d.startSec : null
+        // **まとめて動かせるのは予備へ退避するときだけ。** 本番へ入れるときは
+        // 空きに収める計算が札ごとに要るので、掴んだ 1 枚だけにする。
+        const ids = d.lane > 0 && selected.has(d.nodeId) ? [...selected] : [d.nodeId]
+        const delta = d.startSec - d.baseStart
+        void onMoveClipsToLane(
+          ids.map((id) => {
+            if (id === d.nodeId) return { nodeId: id, lane: d.lane, startSec: d.startSec, maxDurSec }
+            // 一緒に動かす札は、相対位置を保ったまま同じ行へ
+            const base = nodeById.get(id)?.startSec ?? d.baseStart
+            return { nodeId: id, lane: d.lane, startSec: Math.max(floorSec, base + delta) }
+          })
+        )
+        return
+      }
+      // 予備の行の中での編集: 押し出しも順路の張り直しも無いので、その 1 枚だけ保存する
+      if (d.baseLane > 0) {
+        const row = { nodeId: d.nodeId, startSec: d.startSec, durSec: d.durSec, srcOffset: d.offset }
+        setPending(new Map([[d.nodeId, row]]))
+        const run = runPlacementEdit
+          ? runPlacementEdit(DRAG_LABELS[d.kind], () =>
+              api.updateSequenceNodeMusic(row.nodeId, row.startSec, row.durSec, row.srcOffset)
+            )
+          : api
+              .updateSequenceNodeMusic(row.nodeId, row.startSec, row.durSec, row.srcOffset)
+              .then(() => onNodesChanged?.())
+        void run
+          .then(() => setPending(null))
+          .catch(() => {
+            setPending(null)
+            onStatus?.('配置を保存できませんでした', 'err')
+          })
+        return
+      }
       // 押し出しの結果も含めて、いま画面に出ている配置をそのまま保存する。
       // 押されただけの札は尺に触らない（自動のままのものを固定値に変えてしまわないように）。
       const rows = layoutBlocks.map((b) => ({
@@ -1034,6 +1230,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     floorSec,
     layoutBlocks,
     nodeById,
+    onMoveClipsToLane,
+    laneAtY,
+    selected,
     onNodesChanged,
     onStatus,
     runPlacementEdit,
@@ -1281,9 +1480,13 @@ export const MusicTimeline = memo(function MusicTimeline({
     window.addEventListener('mouseup', onUp)
   }
 
-  /** 尺の指定を捨てて自動（元の区間の残り全部）へ戻す。置いてある位置は動かさない。 */
+  /**
+   * 尺の指定を捨てて自動（元の区間の残り全部）へ戻す。置いてある位置は動かさない。
+   * 予備の行の札にも効かせるので、位置は保存値から引く（本番の行にしか無い
+   * `layoutBlocks` から引くと、予備の札で位置が null になって曲の頭へ飛ぶ）。
+   */
   const resetDur = (nodeId: number): void => {
-    const b = layoutBlocks.find((x) => x.key === nodeId)
+    const b = nodeById.get(nodeId)
     const apply = async (): Promise<void> => {
       await api.updateSequenceNodeMusic(nodeId, b?.startSec ?? null, null, 0)
     }
@@ -1517,6 +1720,109 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   /** 右クリックメニューの削除対象。選択の中を右クリックしたなら選択ぜんぶを消す。 */
   const menuTargets = menu ? (selected.has(menu.nodeId) ? [...selected] : [menu.nodeId]) : []
+
+  /**
+   * 札 1 枚。**本番の行と予備の行で同じ見た目・同じ操作**にする（違うのは行だけ）。
+   * 縦に掴んで動かせば行が変わり、離した時点の行が保存される。
+   */
+  const renderClip = (b: MusicBlock, lane: number): ReactElement => {
+    const left = Math.round(b.startSec * effPps)
+    const w = Math.max(2, Math.round((b.endSec - b.startSec) * effPps) - 1)
+    const cls = [
+      'mtl-clip',
+      lane > 0 ? 'shelf' : '',
+      b.overflow ? 'over' : '',
+      b.short ? 'short' : '',
+      selected.has(b.key) ? 'selected' : '',
+      drag?.nodeId === b.key ? 'dragging' : '',
+      replaceAt === b.key ? 'drop-replace' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const arranged = b.endSec - b.startSec
+    const srcDur = clipDuration(b.clip)
+    return (
+      <div
+        key={b.key}
+        className={cls}
+        style={{ left, width: w, background: colorForIndex(b.index) }}
+        onMouseDown={(e) => startDrag(e, b, lane)}
+        onDoubleClick={() => resetDur(b.key)}
+        // パレットからのドロップ差し替え。行側（新規配置）に渡さないよう伝播を止める
+        onDragOver={(e) => {
+          if (!onReplaceClip || !e.dataTransfer.types.includes(MIME_CLIP)) return
+          e.preventDefault()
+          e.stopPropagation()
+          e.dataTransfer.dropEffect = 'copy'
+          setDropAt(null)
+          setReplaceAt((cur) => (cur === b.key ? cur : b.key))
+        }}
+        onDragLeave={() => setReplaceAt((cur) => (cur === b.key ? null : cur))}
+        onDrop={(e) => {
+          const idStr = e.dataTransfer.getData(MIME_CLIP)
+          setReplaceAt(null)
+          if (!idStr || !onReplaceClip) return
+          e.preventDefault()
+          e.stopPropagation()
+          // 空き = 次の札の頭まで（尺 + 直後の隙間）。後続の札は動かさない。
+          // 予備の行は押し合わないので上限なし（元のクリップの全長で置き換える）。
+          const next = lane === 0 ? layoutBlocks[b.index + 1] : undefined
+          void onReplaceClip(b.key, Number(idStr), b.startSec, next ? next.startSec - b.startSec : null)
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          // 右ドラッグ（矩形選択）だったならメニューは出さない
+          if (marqueeMovedRef.current) return
+          // 選択の中の 1 枚なら選択を保つ（まとめて削除できるように）
+          if (!selected.has(b.key)) selectOne(b.key)
+          setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
+        }}
+        title={[
+          b.clip.label ?? `区間 #${b.clip.id}`,
+          lane > 0 ? `予備 ${lane}（再生・書き出しには入りません）` : '',
+          `${fmtSec(b.startSec)} から ${fmtSec(b.durSec)}${
+            b.manual ? '' : '（尺は自動: 元の長さのまま）'
+          }`,
+          `元の長さ ${fmtSec(srcDur)}${
+            b.srcOffset > 0.05 ? ` / ${fmtSec(b.srcOffset)} 目から使用` : ''
+          }`,
+          b.short
+            ? '⚠ 素材が足りません（元の区間の外に出ています）'
+            : b.trimmedSec > 0.05
+              ? `${fmtSec(b.trimmedSec)} 捨てています`
+              : '',
+          lane === 0
+            ? '本体ドラッグ: 位置を移動（重なった札は押し出される）'
+            : '本体ドラッグ: 位置を移動（予備の行では押し出さない）',
+          '上下にドラッグ: 本番の行 ⇄ 予備の行へ移す',
+          '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
+          'ダブルクリック: 尺を自動に戻す',
+          'パレットからクリップをドロップ: このクリップと差し替え'
+        ]
+          .filter(Boolean)
+          .join('\n')}
+      >
+        {/* サムネイル。狭いブロックでは絵が潰れるので幅で自動的に省く */}
+        {showThumbs && w >= THUMB_MIN_W && (
+          <BlockThumb
+            relPath={b.clip.videoRelPath}
+            timeSec={(b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset}
+          />
+        )}
+        <span className="mtl-clip-text">
+          <span className="mtl-clip-label">{b.clip.label ?? `#${b.clip.id}`}</span>
+          <span className="mtl-clip-unit">
+            {w >= DUR_MIN_W ? fmtSec(arranged) : ''}
+            {/* 元の長さも併記（縮めている / 伸ばしている量が分かる） */}
+            {w >= SRCDUR_MIN_W && Math.abs(srcDur - arranged) > 0.05 ? ` / 元${fmtSec(srcDur)}` : ''}
+          </span>
+        </span>
+        {/* 両端のトリムハンドル（見た目は出さず、カーソルと当たり判定だけ） */}
+        <span className="mtl-clip-handle left" />
+        <span className="mtl-clip-handle" />
+      </div>
+    )
+  }
 
   return (
     <div className="mtl">
@@ -1778,24 +2084,29 @@ export const MusicTimeline = memo(function MusicTimeline({
               <span className="mtl-head-marker" />
             </div>
 
-            {/* クリップ列（下）: 絶対位置。隙間を空けられる */}
+            {/* 本番の行（lane 0）: 絶対位置。隙間を空けられる。ここだけが再生・書き出しに乗る */}
             <div
-              className={`mtl-clips${dropAt != null ? ' dropping' : ''}`}
+              className={`mtl-clips${dropAt?.lane === 0 ? ' dropping' : ''}${
+                drag && drag.lane === 0 && drag.baseLane !== 0 ? ' target' : ''
+              }`}
               style={{ height: TRACK_H }}
-              ref={clipsRef}
+              ref={(el) => {
+                clipsRef.current = el
+                laneElsRef.current.set(0, el)
+              }}
               onMouseDown={startMarquee}
               // 右ドラッグは矩形選択なので、空きで離したときに素のメニューを出さない
               onContextMenu={(e) => e.preventDefault()}
               onDragOver={(e) => {
-                if (!onDropClip || !e.dataTransfer.types.includes('application/x-dcm-clip')) return
+                if (!onDropClip || !e.dataTransfer.types.includes(MIME_CLIP)) return
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'copy'
-                setDropAt(Math.max(floorSec, snapTime(secAtX(e.clientX))))
+                setDropAt({ sec: Math.max(floorSec, snapTime(secAtX(e.clientX))), lane: 0 })
               }}
               onDragLeave={() => setDropAt(null)}
               onDrop={(e) => {
-                const idStr = e.dataTransfer.getData('application/x-dcm-clip')
-                const at = dropAt ?? Math.max(floorSec, snapTime(secAtX(e.clientX)))
+                const idStr = e.dataTransfer.getData(MIME_CLIP)
+                const at = dropAt?.sec ?? Math.max(floorSec, snapTime(secAtX(e.clientX)))
                 setDropAt(null)
                 if (!idStr || !onDropClip) return
                 e.preventDefault()
@@ -1821,8 +2132,8 @@ export const MusicTimeline = memo(function MusicTimeline({
               ))}
 
               {/* ドロップ位置のインジケータ（掴んで動かす札は現物がその場に出るので不要） */}
-              {dropAt != null && (
-                <div className="mtl-insert" style={{ left: Math.round(dropAt * effPps) }} />
+              {dropAt?.lane === 0 && (
+                <div className="mtl-insert" style={{ left: Math.round(dropAt.sec * effPps) }} />
               )}
 
               {/* 矩形選択の枠。列の外へはみ出すと波形の上に乗るので、縦は列の中に収める */}
@@ -1843,104 +2154,52 @@ export const MusicTimeline = memo(function MusicTimeline({
                   )
                 })()}
 
-              {layout?.blocks.map((b) => {
-                const left = Math.round(b.startSec * effPps)
-                const w = Math.max(2, Math.round((b.endSec - b.startSec) * effPps) - 1)
-                const cls = [
-                  'mtl-clip',
-                  b.overflow ? 'over' : '',
-                  b.short ? 'short' : '',
-                  selected.has(b.key) ? 'selected' : '',
-                  drag?.nodeId === b.key ? 'dragging' : '',
-                  replaceAt === b.key ? 'drop-replace' : ''
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-                const arranged = b.endSec - b.startSec
-                const srcDur = clipDuration(b.clip)
-                return (
-                  <div
-                    key={b.key}
-                    className={cls}
-                    style={{ left, width: w, background: colorForIndex(b.index) }}
-                    onMouseDown={(e) => startDrag(e, b)}
-                    onDoubleClick={() => resetDur(b.key)}
-                    // パレットからのドロップ差し替え。列側（新規配置）に渡さないよう伝播を止める
-                    onDragOver={(e) => {
-                      if (!onReplaceClip || !e.dataTransfer.types.includes('application/x-dcm-clip'))
-                        return
-                      e.preventDefault()
-                      e.stopPropagation()
-                      e.dataTransfer.dropEffect = 'copy'
-                      setDropAt(null)
-                      setReplaceAt((cur) => (cur === b.key ? cur : b.key))
-                    }}
-                    onDragLeave={() => setReplaceAt((cur) => (cur === b.key ? null : cur))}
-                    onDrop={(e) => {
-                      const idStr = e.dataTransfer.getData('application/x-dcm-clip')
-                      setReplaceAt(null)
-                      if (!idStr || !onReplaceClip) return
-                      e.preventDefault()
-                      e.stopPropagation()
-                      // 空き = 次の札の頭まで（尺 + 直後の隙間）。後続の札は動かさない
-                      const next = layoutBlocks[b.index + 1]
-                      const maxDur = next ? next.startSec - b.startSec : null
-                      void onReplaceClip(b.key, Number(idStr), b.startSec, maxDur)
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      // 右ドラッグ（矩形選択）だったならメニューは出さない
-                      if (marqueeMovedRef.current) return
-                      // 選択の中の 1 枚なら選択を保つ（まとめて削除できるように）
-                      if (!selected.has(b.key)) selectOne(b.key)
-                      setMenu({ x: e.clientX, y: e.clientY, nodeId: b.key })
-                    }}
-                    title={[
-                      b.clip.label ?? `区間 #${b.clip.id}`,
-                      `${fmtSec(b.startSec)} から ${fmtSec(b.durSec)}${
-                        b.manual ? '' : '（尺は自動: 元の長さのまま）'
-                      }`,
-                      `元の長さ ${fmtSec(clipDuration(b.clip))}${
-                        b.srcOffset > 0.05 ? ` / ${fmtSec(b.srcOffset)} 目から使用` : ''
-                      }`,
-                      b.short
-                        ? '⚠ 素材が足りません（元の区間の外に出ています）'
-                        : b.trimmedSec > 0.05
-                          ? `${fmtSec(b.trimmedSec)} 捨てています`
-                          : '',
-                      '本体ドラッグ: 位置を移動（重なった札は押し出される）',
-                      '左端: イン点をトリム / 右端: 尺を変更 / Alt+ドラッグ: 使う範囲をずらす',
-                      'ダブルクリック: 尺を自動に戻す',
-                      '右ドラッグ: 矩形選択 / Shift / Ctrl+クリック: 選択に足す・外す',
-                      'パレットからクリップをドロップ: このクリップと差し替え'
-                    ]
-                      .filter(Boolean)
-                      .join('\n')}
-                  >
-                    {/* サムネイル。狭いブロックでは絵が潰れるので幅で自動的に省く */}
-                    {showThumbs && w >= THUMB_MIN_W && (
-                      <BlockThumb
-                        relPath={b.clip.videoRelPath}
-                        timeSec={(b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset}
-                      />
-                    )}
-                    <span className="mtl-clip-text">
-                      <span className="mtl-clip-label">{b.clip.label ?? `#${b.clip.id}`}</span>
-                      <span className="mtl-clip-unit">
-                        {w >= DUR_MIN_W ? fmtSec(arranged) : ''}
-                        {/* 元の長さも併記（縮めている / 伸ばしている量が分かる） */}
-                        {w >= SRCDUR_MIN_W && Math.abs(srcDur - arranged) > 0.05
-                          ? ` / 元${fmtSec(srcDur)}`
-                          : ''}
-                      </span>
-                    </span>
-                    {/* 両端のトリムハンドル（見た目は出さず、カーソルと当たり判定だけ） */}
-                    <span className="mtl-clip-handle left" />
-                    <span className="mtl-clip-handle" />
-                  </div>
-                )
-              })}
+              {layout?.blocks.map((b) => renderClip(b, 0))}
             </div>
+
+            {/*
+              予備の行（2026-08-15）。**本番と同じ時間軸の上**に置くので、
+              「この辺で使えそう」という位置の意味を保ったまま取り置きできる。
+              一番下は必ず空の行で、そこへ落とすと行が増える。
+            */}
+            {shelfRows.map((row) => (
+              <div
+                key={row.lane}
+                ref={(el) => {
+                  laneElsRef.current.set(row.lane, el)
+                }}
+                className={`mtl-lane${dropAt?.lane === row.lane ? ' dropping' : ''}${
+                  drag && drag.lane === row.lane && drag.baseLane !== row.lane ? ' target' : ''
+                }`}
+                style={{ height: SHELF_ROW_H }}
+                onMouseDown={(e) => {
+                  // 空きのクリックで選択解除（矩形選択は本番の行だけ）
+                  if (e.button === 0 && e.target === e.currentTarget) applySelection(new Set())
+                }}
+                onDragOver={(e) => {
+                  if (!onDropClipToShelf || !e.dataTransfer.types.includes(MIME_CLIP)) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'copy'
+                  setDropAt({ sec: Math.max(floorSec, snapTime(secAtX(e.clientX))), lane: row.lane })
+                }}
+                onDragLeave={() => setDropAt(null)}
+                onDrop={(e) => {
+                  const idStr = e.dataTransfer.getData(MIME_CLIP)
+                  const at = dropAt?.sec ?? Math.max(floorSec, snapTime(secAtX(e.clientX)))
+                  setDropAt(null)
+                  if (!idStr || !onDropClipToShelf) return
+                  e.preventDefault()
+                  void onDropClipToShelf(Number(idStr), at, row.lane)
+                }}
+              >
+                {/* 行の名札。横スクロールしても左端に貼り付いたまま残す */}
+                <span className="mtl-lane-name">予備 {row.lane}</span>
+                {dropAt?.lane === row.lane && (
+                  <div className="mtl-insert" style={{ left: Math.round(dropAt.sec * effPps) }} />
+                )}
+                {row.blocks.map((b) => renderClip(b, row.lane))}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1968,7 +2227,12 @@ export const MusicTimeline = memo(function MusicTimeline({
           items={[
             { label: '尺を自動に戻す', onClick: () => resetDur(menu.nodeId) },
             {
-              label: menuTargets.length > 1 ? `選択した ${menuTargets.length} 件を削除` : '順路から削除',
+              label:
+                menuTargets.length > 1
+                  ? `選択した ${menuTargets.length} 件を削除`
+                  : (nodeById.get(menu.nodeId)?.lane ?? 0) > 0
+                    ? '予備から削除'
+                    : '順路から削除',
               danger: true,
               onClick: () => deleteSelected(menuTargets)
             }

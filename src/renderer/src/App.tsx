@@ -127,6 +127,12 @@ export function App() {
    * 再生中かどうかではない（頭出しだけでも入る）ため、再生 / 停止ボタンはこちらで判定する。
    */
   const [seqPlaying, setSeqPlaying] = useState(false)
+  /**
+   * 再生中かどうかを、コールバックの中から即座に読むための控え。
+   * state を直接見ると、作り直されないコールバックが古い値を掴んでしまう。
+   */
+  const seqPlayingRef = useRef(false)
+  seqPlayingRef.current = seqPlaying
   /** 名前変更などでライブラリ内容が変わった回数。クリップ / シーケンス画面の再取得キーに使う。 */
   const [libVersion, setLibVersion] = useState(0)
   /** パネルサイズ（サイドバー幅 / プレイヤー高さ）。ドラッグで変更し localStorage に保存。 */
@@ -1451,25 +1457,6 @@ export function App() {
     ]
   )
 
-  /**
-   * 音楽タイムラインでクリップを選んだとき: in/out ナッジの対象をそのクリップにする。
-   * これが無いと、`loadSeqIndex` が立てた「再生中のクリップ」が対象のままになり、
-   * 選んでいるクリップではなく再生中のクリップが伸び縮みする。
-   *
-   * **プレイヤーには一切触らない。** 以前は別動画のクリップを選ぶと `selectVideo` で
-   * その動画を読み込んでいたが（ナッジが「開いている動画」の値を使う作りだったため）、
-   * 選んだだけで再生位置が 0 に戻ってシークバーが飛んでいた。いまはクリップを控えて
-   * キーフレームを relPath で引くので、動画を開き直す必要がない。
-   */
-  const selectMusicClip = useCallback(
-    (clip: ClipItem) => {
-      setSelectedSeg(clip.id)
-      setMusicSeg(clip)
-      // 押した瞬間に待たせないよう、キーフレームだけ先に引いておく（失敗しても押下時に再試行）
-      void getKeyframesFor(clip.videoRelPath).catch(() => void 0)
-    },
-    [getKeyframesFor]
-  )
 
   const deleteSeg = useCallback(
     async (id: number) => {
@@ -1605,6 +1592,30 @@ export function App() {
       }
     },
     [seek, selectVideo, setClipPlayRange, exitSequence]
+  )
+
+  /**
+   * 音楽タイムラインでクリップを選んだとき:
+   * 1. in/out ナッジの対象をそのクリップにする。これが無いと `loadSeqIndex` が立てた
+   *    「再生中のクリップ」が対象のままになり、選んでいるクリップではなく再生中の
+   *    クリップが伸び縮みする。
+   * 2. **停止中はそのクリップをプレイヤーに出す**（2026-08-15）。予備の行に置いた候補を
+   *    見比べるには、選んだものがすぐ画に出る必要があるため。
+   *
+   * **再生中は触らない。** 映像を切り替えると連続再生が壊れる。
+   * （以前は選んだだけで `selectVideo` していて、再生位置が 0 に戻ってシークバーが
+   * 飛んでいた。ナッジのためだけに動画を開く必要はもう無いので、ここでの読み込みは
+   * 「選んだものを見せる」ためだけに行う。）
+   */
+  const selectMusicClip = useCallback(
+    (clip: ClipItem) => {
+      setSelectedSeg(clip.id)
+      setMusicSeg(clip)
+      // 押した瞬間に待たせないよう、キーフレームだけ先に引いておく（失敗しても押下時に再試行）
+      void getKeyframesFor(clip.videoRelPath).catch(() => void 0)
+      if (!seqPlayingRef.current) openClip(clip)
+    },
+    [getKeyframesFor, openClip]
   )
 
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えて区間を開く */

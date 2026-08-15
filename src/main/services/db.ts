@@ -147,10 +147,15 @@ export function getDb(): Database.Database {
 //                音楽ビューを開いたときに前詰めの位置を書き込んで確定させる
 // - dur_sec    : 尺（秒）。null は「元の区間の残り全部を使う」
 // - src_offset : 元の区間のどこから使うか（秒）
+// - lane       : どの行に置いているか（2026-08-15）。0 = 本番のタイムライン、
+//                1 以上 = 予備の行（何行でも作れる）。**予備も同じ時間軸の上に置く**ので、
+//                「この辺で使えそう」という位置の意味を保ったまま取り置きできる。
+//                予備の行は順路（再生・書き出し）には入らない
 const SEQ_NODE_MUSIC_COLUMNS: [string, string][] = [
   ['start_sec', 'REAL'],
   ['dur_sec', 'REAL'],
-  ['src_offset', 'REAL NOT NULL DEFAULT 0']
+  ['src_offset', 'REAL NOT NULL DEFAULT 0'],
+  ['lane', 'INTEGER NOT NULL DEFAULT 0']
 ]
 
 function migrateSequenceNodeMusic(d: Database.Database): void {
@@ -781,6 +786,7 @@ interface SequenceNodeRow {
   start_sec: number | null
   dur_sec: number | null
   src_offset: number
+  lane: number | null
 }
 
 /** ノード行 + そのクリップ（segment × video 結合。無ければ null）を組み立てる。 */
@@ -794,8 +800,18 @@ function buildNode(r: SequenceNodeRow, clipBySeg: Map<number, ClipItem>): Sequen
     startSec: r.start_sec ?? null,
     durSec: r.dur_sec ?? null,
     srcOffset: r.src_offset ?? 0,
+    lane: r.lane ?? 0,
     clip: clipBySeg.get(r.segment_id) ?? null
   }
+}
+
+/**
+ * ノードを別の行へ移す（本番 ⇄ 予備 / 2026-08-15）。
+ * 位置（start_sec）は別で更新する。行だけを分けているのは、
+ * 「同じ時間軸の上で行を変えるだけ」という操作の意味をそのまま残すため。
+ */
+export function updateSequenceNodeLane(nodeId: number, lane: number): void {
+  getDb().prepare('UPDATE sequence_nodes SET lane = ? WHERE id = ?').run(lane, nodeId)
 }
 
 /**
@@ -992,6 +1008,7 @@ export function restoreSequenceGraph(
     startSec?: number | null
     durSec?: number | null
     srcOffset?: number
+    lane?: number
   }[],
   edges: { id: number; srcNodeId: number; dstNodeId: number }[]
 ): void {
@@ -999,10 +1016,10 @@ export function restoreSequenceGraph(
   const tx = d.transaction(() => {
     d.prepare('DELETE FROM sequence_edges WHERE sequence_id = ?').run(sequenceId)
     d.prepare('DELETE FROM sequence_nodes WHERE sequence_id = ?').run(sequenceId)
-    // 音楽タイムラインの配置も一緒に戻す（落とすと undo で配置が消える）
+    // 音楽タイムラインの配置（行を含む）も一緒に戻す（落とすと undo で配置が消える）
     const insN = d.prepare(
-      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sequence_nodes (id, sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset, lane)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const n of nodes) {
       insN.run(
@@ -1013,7 +1030,8 @@ export function restoreSequenceGraph(
         n.y,
         n.startSec ?? null,
         n.durSec ?? null,
-        n.srcOffset ?? 0
+        n.srcOffset ?? 0,
+        n.lane ?? 0
       )
     }
     const insE = d.prepare(

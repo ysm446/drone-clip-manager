@@ -13,7 +13,7 @@ import type {
   TagCount
 } from '../../../shared/types'
 import { pushUndo, registerUndoRefresh } from '../undo'
-import { fmtSec, fmtTime, nodeOrderFromEdges } from '../util'
+import { fmtSec, fmtTime, isShelfNode, nodeOrderFromEdges } from '../util'
 import { ContextMenu } from './ContextMenu'
 import type { ExportTarget } from './ExportModal'
 import { IconFilm, IconPause, IconPlay } from './icons'
@@ -322,7 +322,7 @@ export const SequenceView = memo(function SequenceView({
   const cueHead = useCallback(
     (ns: SequenceNode[], es: SequenceEdge[]) => {
       const order = nodeOrderFromEdges(
-        ns.map((n) => n.id),
+        ns.filter((n) => !isShelfNode(n)).map((n) => n.id),
         es
       )
       const byId = new Map(ns.map((n) => [n.id, n]))
@@ -397,7 +397,8 @@ export const SequenceView = memo(function SequenceView({
         y: n.y,
         startSec: n.startSec,
         durSec: n.durSec,
-        srcOffset: n.srcOffset
+        srcOffset: n.srcOffset,
+        lane: n.lane
       })),
       edges: edgesRef.current.map((e) => ({
         id: e.id,
@@ -422,7 +423,8 @@ export const SequenceView = memo(function SequenceView({
           y: n.y,
           startSec: n.startSec,
           durSec: n.durSec,
-          srcOffset: n.srcOffset
+          srcOffset: n.srcOffset,
+          lane: n.lane
         })),
         edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
       }
@@ -465,30 +467,35 @@ export const SequenceView = memo(function SequenceView({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  /**
+   * 順路の候補になるノード id。**予備（棚）のノードは外す。**
+   * 棚のノードは線を持たない孤立ノードなので、外さないと「順路 = 最長チェーン」の
+   * 取り合いに参加してしまう（本番の並びが 1 枚以下になったとき、棚の 1 枚が
+   * 勝手に順路として選ばれる）。
+   */
+  const liveNodeIds = useMemo(
+    () => nodes.filter((n) => !isShelfNode(n)).map((n) => n.id),
+    [nodes]
+  )
+
   // 再生順（最長チェーン）。ノードの並び番号バッジとハイライトに使う。
   const orderIndex = useMemo(() => {
-    const order = nodeOrderFromEdges(
-      nodes.map((n) => n.id),
-      edges
-    )
+    const order = nodeOrderFromEdges(liveNodeIds, edges)
     const map = new Map<number, number>()
     order.forEach((id, i) => map.set(id, i + 1))
     return map
-  }, [nodes, edges])
+  }, [liveNodeIds, edges])
 
   const playItems = useMemo<SeqPlayItem[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]))
-    const order = nodeOrderFromEdges(
-      nodes.map((n) => n.id),
-      edges
-    )
+    const order = nodeOrderFromEdges(liveNodeIds, edges)
     const items: SeqPlayItem[] = []
     for (const id of order) {
       const n = byId.get(id)
       if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
     }
     return items
-  }, [nodes, edges])
+  }, [nodes, liveNodeIds, edges])
   playItemsRef.current = playItems
 
   const totalDur = useMemo(
@@ -667,7 +674,8 @@ export const SequenceView = memo(function SequenceView({
             y: o?.y ?? n.y,
             startSec: n.startSec,
             durSec: n.durSec,
-            srcOffset: n.srcOffset
+            srcOffset: n.srcOffset,
+            lane: n.lane
           }
         }),
         edges: edgesRef.current.map((e) => ({
@@ -925,6 +933,91 @@ export const SequenceView = memo(function SequenceView({
       await api.setSequenceOrder(seqId, rest)
       await reload(seqId)
       await pushGraphUndo(ids.length > 1 ? `${ids.length} クリップの削除` : 'クリップの削除', before)
+    },
+    [graphSnapshot, pushGraphUndo, reload]
+  )
+
+  /**
+   * クリップを**別の行へ移す**（2026-08-15）。本番 ⇄ 予備、予備の行どうしのすべてを兼ねる。
+   * **位置（startSec）はドラッグで決まった値をそのまま使う**ので、
+   * 「この辺で使えそう」という位置の意味を保ったまま予備へ退避できる。
+   * 尺（durSec）と使用範囲（srcOffset）は動かさない。
+   */
+  const moveClipsToLane = useCallback(
+    async (
+      moves: { nodeId: number; lane: number; startSec: number; maxDurSec?: number | null }[]
+    ): Promise<void> => {
+      const seqId = activeIdRef.current
+      if (moves.length === 0 || seqId == null) return
+      const before = graphSnapshot()
+      const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
+      // 本番の行から出ていくノード。**その線を先に落とす**:
+      // `setSequenceOrder` は渡したノードの線しか消さないので、隣り合う 2 枚を同時に
+      // 予備へ移すと、その 2 枚を結ぶ線だけが残って孤立した順路として復活してしまう。
+      const leaving = new Set(
+        moves.filter((m) => m.lane > 0 && (byId.get(m.nodeId)?.lane ?? 0) === 0).map((m) => m.nodeId)
+      )
+      for (const e of edgesRef.current) {
+        if (leaving.has(e.srcNodeId) || leaving.has(e.dstNodeId)) await api.removeSequenceEdge(e.id)
+      }
+      for (const m of moves) {
+        const n = byId.get(m.nodeId)
+        if (!n?.clip) continue
+        // 本番へ入れるときだけ、空き（次のクリップの頭まで）に収まる長さへ詰める。
+        // 予備の行は重なってもよいので触らない。
+        const want = n.durSec ?? clipDuration(n.clip) - n.srcOffset
+        const durSec =
+          m.lane === 0 && m.maxDurSec != null && want > m.maxDurSec + 0.001
+            ? Math.max(MUSIC_MIN_DUR_SEC, m.maxDurSec)
+            : n.durSec
+        if (m.lane !== n.lane) await api.updateSequenceNodeLane(m.nodeId, m.lane)
+        await api.updateSequenceNodeMusic(m.nodeId, m.startSec, durSec, n.srcOffset)
+      }
+      // 本番の行の並びを時刻順に張り直す（移動後の行と位置で判断する）
+      const laneOf = new Map(nodesRef.current.map((n) => [n.id, n.lane]))
+      const startOf = new Map(
+        nodesRef.current.map((n) => [n.id, n.startSec ?? Number.POSITIVE_INFINITY])
+      )
+      for (const m of moves) {
+        laneOf.set(m.nodeId, m.lane)
+        startOf.set(m.nodeId, m.startSec)
+      }
+      const order = [
+        ...new Set([...playItemsRef.current.map((it) => it.nodeId), ...moves.map((m) => m.nodeId)])
+      ]
+        .filter((id) => (laneOf.get(id) ?? 0) === 0)
+        .sort((a, b) => (startOf.get(a) ?? Infinity) - (startOf.get(b) ?? Infinity))
+      await api.setSequenceOrder(seqId, order)
+      await reload(seqId)
+      const toShelf = moves.every((m) => m.lane > 0)
+      const label = toShelf
+        ? moves.length > 1
+          ? `${moves.length} クリップを予備へ`
+          : 'クリップを予備へ'
+        : moves.every((m) => m.lane === 0)
+          ? '予備からの配置'
+          : '行の移動'
+      await pushGraphUndo(label, before)
+    },
+    [graphSnapshot, pushGraphUndo, reload]
+  )
+
+  /**
+   * クリップパレットから**予備の行へ直接置く**（2026-08-15）。
+   * ノードは作るが順路には入れないので、再生にも書き出しにも入らない。
+   */
+  const dropClipToShelf = useCallback(
+    async (segmentId: number, startSec: number, lane: number): Promise<void> => {
+      const seqId = activeIdRef.current
+      if (seqId == null) return
+      const before = graphSnapshot()
+      // ノードグラフ側の座標は既存の右へ逃がす（あとでグラフを開いても重ならない）
+      const maxX = nodesRef.current.reduce((m, n) => Math.max(m, n.x), 0)
+      const node = await api.addSequenceNode(seqId, segmentId, Math.round(maxX + NODE_W + 40), 0)
+      await api.updateSequenceNodeLane(node.id, lane)
+      await api.updateSequenceNodeMusic(node.id, startSec, null, 0)
+      await reload(seqId)
+      await pushGraphUndo('予備への追加', before)
     },
     [graphSnapshot, pushGraphUndo, reload]
   )
@@ -1338,6 +1431,8 @@ export const SequenceView = memo(function SequenceView({
             runPlacementEdit={runPlacementEdit}
             onDropClip={dropClipIntoOrder}
             onReplaceClip={replaceMusicClip}
+            onMoveClipsToLane={moveClipsToLane}
+            onDropClipToShelf={dropClipToShelf}
             queueRef={musicQueueRef}
             onSeek={seekMusic}
             onDeleteClips={removeMusicClips}

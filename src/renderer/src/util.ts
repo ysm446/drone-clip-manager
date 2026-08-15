@@ -66,6 +66,15 @@ export function keyframeAfter(kfs: number[], t: number, duration: number): numbe
 }
 
 /**
+ * 予備の行（lane >= 1）に置いているか。**予備も本番と同じ時間軸の上にある**ので、
+ * 「この辺で使えそう」という位置の意味を保ったまま取り置きできる。
+ * 順路（再生・書き出し）に入るのは本番の行（lane 0）だけ。
+ */
+export function isShelfNode(n: { lane: number }): boolean {
+  return n.lane > 0
+}
+
+/**
  * 一本道シーケンスの再生順を導く。入力エッジの無いノードを起点に out エッジをたどり、
  * 最も長いチェーンのノード id 列を返す（分断・孤立ノードがある場合は最長チェーンのみ）。
  * 一本道制約（各ノードの out/in は 1 本）は追加時に main 側で強制済み。
