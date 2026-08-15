@@ -15,6 +15,14 @@ interface AppConfig {
   bgmDir: string | null
   /** これまで開いたルートフォルダ（新しい順、現在のルートも含む） */
   recentRoots: string[]
+  /**
+   * 再生エンジン（Phase 2.6e / 2026-08-16）。既定は 'video'。
+   * - 'video': Chromium の <video>（DOM 合成）。Electron 43 で DJI の HEVC 4K60 10bit HLG が
+   *   直接デコードできるようになったため、こちらを既定にした。UI を映像の上に重ねられる。
+   * - 'mpv'  : 従来のネイティブ埋め込み。HEVC が再生できない環境向けの退避先。
+   *   ネイティブ最前面のため DOM を重ねられず、HW アクセラレーションも切る必要がある。
+   */
+  playbackEngine: 'video' | 'mpv'
 }
 
 let cached: AppConfig | null = null
@@ -30,11 +38,24 @@ function readConfig(): AppConfig {
       : []
     // 履歴機能の追加前から使っている場合など、現在のルートが履歴に無ければ先頭に補う
     if (root && !recentRoots.includes(root)) recentRoots = [root, ...recentRoots]
-    cached = { root, bgmDir: parsed.bgmDir ?? null, recentRoots }
+    cached = {
+      root,
+      bgmDir: parsed.bgmDir ?? null,
+      recentRoots,
+      playbackEngine: parsed.playbackEngine === 'mpv' ? 'mpv' : 'video'
+    }
   } catch {
-    cached = { root: null, bgmDir: null, recentRoots: [] }
+    cached = { root: null, bgmDir: null, recentRoots: [], playbackEngine: 'video' }
   }
   return cached!
+}
+
+/**
+ * 再生エンジン。**app の ready より前（HW アクセラレーションを切るかの判断）にも呼ばれる。**
+ * UI からの切替は無い（mpv へ戻したいときは設定ファイルの `playbackEngine` を 'mpv' にする）。
+ */
+export function getPlaybackEngine(): 'video' | 'mpv' {
+  return readConfig().playbackEngine
 }
 
 function writeConfig(patch: Partial<AppConfig>): void {

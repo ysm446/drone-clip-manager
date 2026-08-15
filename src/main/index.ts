@@ -6,6 +6,7 @@ import appIcon from '../../assets/app-icon.png?asset'
 import { registerIpc } from './ipc'
 import {
   cleanTempProxies,
+  getPlaybackEngine,
   resolveInBgm,
   resolveInRoot,
   resolveInTempProxy,
@@ -27,13 +28,27 @@ import {
 import { saveAppScreenshot } from './services/screenshot'
 import type { MpvEvent } from '../shared/types'
 
-// mpv を子ウィンドウに埋め込むと Chromium の GPU コンポジタが前面を描画して mpv 映像が
-// 見えなくなる（真っ暗）。Chromium 側の HW アクセラレーションを切ると、埋め込んだネイティブ
-// mpv ウィンドウが正しく合成・表示される（mpv 自身は GPU でデコード/描画するので動画性能に影響なし）。
-// app ready より前に呼ぶ必要がある。
-app.disableHardwareAcceleration()
+/**
+ * 再生エンジン（Phase 2.6e / 2026-08-16）。既定は 'video'（Chromium の <video>）。
+ *
+ * mpv 埋め込みは「Electron 33 の Chromium が DJI の HEVC 4K60 10bit HLG をデコード
+ * できない」ことへの対処だったが、Electron 43 の Chromium では直接再生できることを
+ * 実機で確認した（60fps・正確シーク 20〜79ms・HLG のトーンマップ正常）。
+ * <video> ならプレイヤーが DOM に入るので、テロップやモーダルを普通に重ねられる。
+ *
+ * mpv（設定ファイルの `playbackEngine: 'mpv'`）は HEVC が再生できない環境向けの退避先。
+ */
+const PLAYBACK_ENGINE = getPlaybackEngine()
 
-// <video> フォールバック時のために Chromium の platform HEVC デコーダも有効化しておく。
+if (PLAYBACK_ENGINE === 'mpv') {
+  // mpv を子ウィンドウに埋め込むと Chromium の GPU コンポジタが前面を描画して mpv 映像が
+  // 見えなくなる（真っ暗）。Chromium 側の HW アクセラレーションを切ると、埋め込んだネイティブ
+  // mpv ウィンドウが正しく合成・表示される。app ready より前に呼ぶ必要がある。
+  // **'video' では絶対に切らないこと**（HEVC の HW デコードごと失われる）。
+  app.disableHardwareAcceleration()
+}
+
+// Chromium の platform HEVC デコーダを有効化する（'video' エンジンの前提）。
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport')
 
 /**
@@ -273,7 +288,8 @@ function createWindow(): void {
 }
 
 function registerMpvIpc(): void {
-  ipcMain.handle('mpv:available', () => detectMpv() !== null)
+  // 'video' エンジンでは mpv を「無い」ことにする。レンダラは既存の <video> 経路へ落ちる
+  ipcMain.handle('mpv:available', () => PLAYBACK_ENGINE === 'mpv' && detectMpv() !== null)
   ipcMain.handle('mpv:load', async (_e, relPath: string, startSec?: number) => {
     const ok = await ensureMpv()
     if (ok) mpvLoad(relPath, startSec)

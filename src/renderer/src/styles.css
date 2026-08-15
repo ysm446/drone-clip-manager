@@ -805,6 +805,15 @@ body.resizing {
   pointer-events: none;
   z-index: 3;
 }
+/* <video> 用の器（Phase 2.6e）。mpv-host と同じ位置づけで、player-gap /
+   proxy-overlay を映像領域だけに被せるための relative の親。 */
+.video-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #000;
+}
 .mpv-host {
   position: relative;
   flex: 1;

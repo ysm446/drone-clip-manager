@@ -604,6 +604,10 @@ export function App() {
     if (!usingProxy) setPlayError(true)
   }
   const onVideoPlay = () => {
+    // 共通コントロールバーの ▶ / ⏸ 表示（mpvPaused は「再生エンジンの一時停止状態」として
+    // <video> でも使い回す。Phase 2.6e で <video> が主経路になった）
+    setMpvPaused(false)
+    mpvPausedRef.current = false
     if (usingProxy) return
     const v = videoRef.current
     if (!v) return
@@ -614,6 +618,10 @@ export function App() {
         setPlayError(true)
       }
     }, 2200)
+  }
+  const onVideoPause = () => {
+    setMpvPaused(true)
+    mpvPausedRef.current = true
   }
 
   // シークバーのホバーサムネイル: 時刻をグリッドに量子化して ensureThumb（ffmpeg 1 フレーム +
@@ -2191,6 +2199,55 @@ export function App() {
                   */}
                   {gapHold && <div className="player-gap" />}
                 </div>
+              </>
+            ) : (
+              // mpv-host と同じ役割の器。player-gap / proxy-overlay を映像領域だけに被せる
+              <div className="video-host">
+                <VideoPlayer
+                  ref={videoRef}
+                  src={videoSrc}
+                  onTimeUpdate={onVideoTime}
+                  onDuration={setDuration}
+                  onError={onVideoError}
+                  onPlay={onVideoPlay}
+                  onPause={onVideoPause}
+                  onToggleFullscreen={toggleFullscreen}
+                />
+                {/* 隙間で黒のまま待つ間の覆い（<video> は直前のコマが残るため） */}
+                {gapHold && <div className="player-gap" />}
+                {proxyGen.active && (
+                  <div className="proxy-overlay">
+                    <div className="proxy-spin" />
+                    <div>一時プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
+                    <small>H.264 に変換して再生します（保存しません・終了時に自動削除）。</small>
+                  </div>
+                )}
+                {proxyGen.error && (
+                  <div className="proxy-overlay err">
+                    プロキシ生成に失敗しました
+                    <br />
+                    <small>{proxyGen.error}</small>
+                  </div>
+                )}
+                {playError && !usingProxy && !proxyGen.active && (
+                  <div className="proxy-overlay">
+                    <div>この素材を直接再生できませんでした（HEVC / 10bit の可能性）。</div>
+                    <small>
+                      Windows の「HEVC ビデオ拡張機能」を入れると原本のまま再生できる場合があります。
+                      <br />
+                      すぐ確認したい場合は、一時的に H.264 プロキシで再生できます（保存しません）。
+                    </small>
+                    <button className="btn primary" onClick={useTempProxy}>
+                      一時プロキシで再生
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {/*
+              コントロールバーは両エンジン共通（Phase 2.6e）。ハンドラは mpvModeRef で
+              分岐するので、<video> でもそのまま効く。クラス名は歴史的経緯で mpv- のまま。
+            */}
                 <div className="mpv-controls">
                   {/* シーケンス画面では動画未選択でも押せる（クリップ 0 枚で曲だけ再生する経路） */}
                   <button
@@ -2288,47 +2345,6 @@ export function App() {
                         : `${fmtTime(currentTime)} / ${fmtTime(duration || meta?.durationSec || 0)}`}
                   </span>
                 </div>
-              </>
-            ) : (
-              <>
-                <VideoPlayer
-                  ref={videoRef}
-                  src={videoSrc}
-                  onTimeUpdate={onVideoTime}
-                  onDuration={setDuration}
-                  onError={onVideoError}
-                  onPlay={onVideoPlay}
-                  onToggleFullscreen={toggleFullscreen}
-                />
-                {proxyGen.active && (
-                  <div className="proxy-overlay">
-                    <div className="proxy-spin" />
-                    <div>一時プロキシを生成中… {Math.round(proxyGen.percent * 100)}%</div>
-                    <small>H.264 に変換して再生します（保存しません・終了時に自動削除）。</small>
-                  </div>
-                )}
-                {proxyGen.error && (
-                  <div className="proxy-overlay err">
-                    プロキシ生成に失敗しました
-                    <br />
-                    <small>{proxyGen.error}</small>
-                  </div>
-                )}
-                {playError && !usingProxy && !proxyGen.active && (
-                  <div className="proxy-overlay">
-                    <div>この素材を直接再生できませんでした（HEVC / 10bit の可能性）。</div>
-                    <small>
-                      Windows の「HEVC ビデオ拡張機能」を入れると原本のまま再生できる場合があります。
-                      <br />
-                      すぐ確認したい場合は、一時的に H.264 プロキシで再生できます（保存しません）。
-                    </small>
-                    <button className="btn primary" onClick={useTempProxy}>
-                      一時プロキシで再生
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
             {selected && (
               // 動画切り替え中（meta 未取得）もバーを出したままにして高さを維持する。
               // メタバーが一瞬消えると動画領域が伸縮し、mpv ウィンドウのリサイズで
