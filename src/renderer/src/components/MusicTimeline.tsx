@@ -1184,7 +1184,8 @@ export const MusicTimeline = memo(function MusicTimeline({
   useEffect(() => {
     if (!queueRef) return
     queueRef.current = () => {
-      if (!seqBgm || !layout?.blocks.length) return null
+      if (!seqBgm) return null
+      // クリップが 0 枚でも曲があれば再生できる（items は空で返し、曲だけ鳴らしてもらう）
       return {
         items: buildPlayItems(),
         bgm: { relPath: seqBgm.relPath, startOffsetSec: seqBgm.startOffsetSec }

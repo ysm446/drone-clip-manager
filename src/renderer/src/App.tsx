@@ -679,7 +679,8 @@ export function App() {
     // パレットのプレビュー再生中は横取りしない（そのクリップの再生/停止のままにする）。
     if (willPlay && !clipPlayRef.current) {
       const q = musicQueueRef.current?.()
-      if (q && q.items.length) {
+      // クリップが 0 枚でも、曲があれば曲だけの再生に入る（黒画面のまま曲の終わりまで）
+      if (q && (q.items.length || q.bgm)) {
         playSequenceRef.current?.(q.items, q.bgm)
         return
       }
@@ -768,6 +769,9 @@ export function App() {
   const [seqIdx, setSeqIdx] = useState(0)
   /** シーケンスのループ再生（末尾まで来たら停止せず先頭へ戻る / Phase 2.6） */
   const [seqLoop, setSeqLoop] = useState(false)
+  /** 末尾ホールド（曲の終わりまで待つ）の interval からループ判定するための参照 */
+  const seqLoopRef = useRef(seqLoop)
+  seqLoopRef.current = seqLoop
   /** シーケンスモードで BGM パネルを畳んでいるか（幅をタイムラインへ譲る） */
   const [bgmCollapsed, setBgmCollapsed] = useState(false)
   /** シーケンスモードの左列（クリップパネル / シーケンス一覧）の幅 */
@@ -900,6 +904,49 @@ export function App() {
     [cancelGapHold]
   )
 
+  /**
+   * 末尾のクリップの後（またはクリップが 1 枚も無いとき）、**曲の終わりまで**黒のまま
+   * 曲だけ流し続ける。映像クリップが曲より短くても曲を最後まで聴けるようにする。
+   * 曲が終わったら停止し、ループ ON なら先頭へ戻る。
+   * 一時停止は隙間待ちと同じ経路（togglePlay の gapTimer 分岐）で曲だけが止まる。
+   */
+  const holdToSongEnd = useCallback(() => {
+    if (mpvModeRef.current) {
+      api.mpvPause()
+      mpvPausedRef.current = true
+      setMpvPaused(true)
+    } else {
+      videoRef.current?.pause()
+    }
+    setGapHold(true)
+    if (gapTimerRef.current != null) window.clearInterval(gapTimerRef.current)
+    gapTimerRef.current = window.setInterval(() => {
+      const audio = seqAudioRef.current
+      if (!audio || !seqActiveRef.current) return
+      // 待っている間も再生ヘッドを進める（曲の位置をそのまま渡す）
+      window.dispatchEvent(
+        new CustomEvent('dcm:seq-gap', { detail: { songSec: audio.currentTime } })
+      )
+      const end = Number.isFinite(audio.duration) ? audio.duration : null
+      if (!audio.ended && (end == null || audio.currentTime + 0.05 < end)) return
+      // 曲の終わりに到達
+      const q = seqQueueRef.current
+      const bgm = seqBgmRef.current
+      if (seqLoopRef.current && bgm) {
+        // ループ: 先頭へ戻る（クリップがあれば先頭クリップの曲位置、無ければ曲の使い始め）
+        audio.currentTime = q.length ? songPosAt(q, 0, bgm.startOffsetSec) : bgm.startOffsetSec
+        audio.play().catch(() => void 0)
+        if (q.length) {
+          cancelGapHold()
+          loadSeqIndexRef.current?.(0)
+        }
+        // クリップが無ければ、このホールドのまま黒画面で曲を回し続ける
+        return
+      }
+      stopSequence()
+    }, GAP_TICK_MS)
+  }, [cancelGapHold, stopSequence])
+
   // mpv/<video> の時刻更新から呼ぶ: 現クリップの out に達したら次へ送る
   const maybeAdvance = useCallback(
     (t: number) => {
@@ -940,22 +987,25 @@ export function App() {
             return
           }
           loadSeqIndex(next)
-        }
-        else if (seqLoop) {
-          // ループ ON: 末尾で止めずに先頭へ戻る。BGM も先頭クリップの曲位置へ巻き戻す。
+        } else {
+          // 末尾のクリップに達した。曲がまだ残っていれば、曲の終わりまで黒のまま鳴らし続ける
+          // （ループ ON でも曲を最後まで聴いてから先頭へ戻る。判定はホールド側で行う）。
           const bgm = seqBgmRef.current
-          if (bgm && seqAudioRef.current) {
-            seqAudioRef.current.currentTime = songPosAt(
-              seqQueueRef.current,
-              0,
-              bgm.startOffsetSec
-            )
-          }
-          loadSeqIndex(0)
-        } else stopSequence()
+          const audio = seqAudioRef.current
+          const end = audio && Number.isFinite(audio.duration) ? audio.duration : null
+          if (bgm && audio && end != null && audio.currentTime + 0.05 < end) {
+            holdToSongEnd()
+          } else if (seqLoop) {
+            // ループ ON: 末尾で止めずに先頭へ戻る。BGM も先頭クリップの曲位置へ巻き戻す。
+            if (bgm && audio) {
+              audio.currentTime = songPosAt(seqQueueRef.current, 0, bgm.startOffsetSec)
+            }
+            loadSeqIndex(0)
+          } else stopSequence()
+        }
       }
     },
-    [loadSeqIndex, stopSequence, seqLoop, holdForGap]
+    [loadSeqIndex, stopSequence, seqLoop, holdForGap, holdToSongEnd]
   )
   advanceRef.current = maybeAdvance
   // holdForGap は loadSeqIndex より前に定義されるので ref 越しに呼ぶ
@@ -963,7 +1013,29 @@ export function App() {
 
   const playSequence = useCallback(
     (items: SeqPlayItem[], bgm?: SeqPlayBgm | null) => {
-      if (items.length === 0) return
+      if (items.length === 0) {
+        // クリップが 1 枚も無くても、曲があれば黒画面のまま曲だけ再生する
+        // （曲を聴きながらマーカーを打つ・配置を考える用途。曲が終わったら止まる）。
+        if (!bgm) return
+        seqQueueRef.current = []
+        seqActiveRef.current = true
+        clipPlayRef.current = null
+        setClipPlay(null)
+        setSeqQueue(null)
+        setPlayingNodeId(null)
+        setSeqPlaying(true)
+        seqBgmRef.current = bgm
+        const audio = seqAudioRef.current
+        if (audio) {
+          const url = api.bgmUrl(bgm.relPath)
+          if (audio.src !== url) audio.src = url
+          audio.volume = 0.7
+          audio.currentTime = bgm.startOffsetSec
+          audio.play().catch(() => void 0)
+        }
+        holdToSongEnd()
+        return
+      }
       // 同じ並び・同じ尺のキューが既にあるなら、頭出しした位置から再開する
       // （停止 → シーク → 再生 で先頭に戻ってしまわないように）。
       const prev = seqQueueRef.current
@@ -1013,7 +1085,7 @@ export function App() {
         loadSeqIndex(0)
       }
     },
-    [loadSeqIndex, resumePlay]
+    [loadSeqIndex, resumePlay, holdToSongEnd]
   )
   // togglePlay（上で定義）から呼べるようにする
   playSequenceRef.current = playSequence
@@ -2099,7 +2171,12 @@ export function App() {
                   {gapHold && <div className="player-gap" />}
                 </div>
                 <div className="mpv-controls">
-                  <button className="mpv-play" onClick={togglePlay} disabled={!selected}>
+                  {/* シーケンス画面では動画未選択でも押せる（クリップ 0 枚で曲だけ再生する経路） */}
+                  <button
+                    className="mpv-play"
+                    onClick={togglePlay}
+                    disabled={!selected && view !== 'sequence'}
+                  >
                     {mpvPaused ? <IconPlay size={15} /> : <IconPause size={15} />}
                   </button>
                   {view === 'sequence' && (
