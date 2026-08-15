@@ -1007,7 +1007,7 @@ body.resizing {
   font-weight: 600;
   font-size: var(--fs-ui);
 }
-/* シークバー左右の in/out ナッジボタン（±0.5s。区間選択中のみ表示） */
+/* シークバー左右の in/out ナッジボタン（1 押しでキーフレーム 1 個分。区間選択中のみ表示） */
 .nudge-group {
   display: flex;
   gap: 2px;
