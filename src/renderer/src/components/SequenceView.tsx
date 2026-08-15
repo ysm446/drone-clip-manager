@@ -446,6 +446,10 @@ export const SequenceView = memo(function SequenceView({
 
   // ホイールでカーソル位置を中心にズーム。
   // React の onWheel は passive で preventDefault できないため native で登録する。
+  //
+  // **`mode` を依存に入れること。** 音楽ビューへ切り替えるとキャンバスは DOM ごと外れ、
+  // 戻ってくると別の要素として作り直される。初回マウント時だけ登録していると、
+  // 一度でも音楽ビューを見たあとはホイールズームが効かなくなる（再読み込みで復活する）。
   useEffect(() => {
     const el = canvasRef.current
     if (!el) return
@@ -465,7 +469,7 @@ export const SequenceView = memo(function SequenceView({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [mode])
 
   /**
    * 順路の候補になるノード id。**予備（棚）のノードは外す。**
