@@ -76,8 +76,8 @@ const MIME_CLIP = 'application/x-dcm-clip'
  * 実素材（4K / HLG）に Noto Serif JP で焼いて決めた値。数値はすべて 4K（高さ 2160）基準。
  * **HLG では純白（1023）が眩しい**ので、文字色は少し落としてある。
  */
-const CAPTION_STYLE_KEY = 'dcm.mtl.captionStyle'
-const DEFAULT_CAPTION_STYLE: CaptionStyle = {
+export const CAPTION_STYLE_KEY = 'dcm.mtl.captionStyle'
+export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   fontFile: 'C:/Windows/Fonts/NotoSerifJP-VF.ttf',
   fontSize: 150,
   subScale: 0.53,
@@ -343,7 +343,10 @@ interface Props {
    * クリップを選んだときの通知。上部プレイヤーの in/out ナッジの対象を、
    * 再生中のクリップではなく**選んだクリップ**にするために使う。
    */
-  onSelectClip?: (clip: ClipItem) => void
+  onSelectClip?: (
+    clip: ClipItem,
+    caption?: { text: string; durSec: number | null } | null
+  ) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (items: ConcatItem[], bgm: ConcatBgm, caption: CaptionStyle) => Promise<void>
   /** 書き出し実行中（ボタンを無効にする） */
@@ -534,6 +537,9 @@ export const MusicTimeline = memo(function MusicTimeline({
     setCapStyle((cur) => {
       const next = { ...cur, ...patch }
       localStorage.setItem(CAPTION_STYLE_KEY, JSON.stringify(next))
+      // プレイヤーのライブ表示（App 側）へも反映する。同一ウィンドウでは storage イベントが
+      // 飛ばないため、専用イベントで知らせる
+      window.dispatchEvent(new CustomEvent('dcm:caption-style', { detail: next }))
       return next
     })
   }, [])
@@ -1021,8 +1027,12 @@ export const MusicTimeline = memo(function MusicTimeline({
       if (ids.size !== 1) return
       const [only] = ids
       // 予備の行の札も対象にする（順路の items だけを見ると、予備を選んでも通知できない）
-      const clip = nodeById.get(only)?.clip
-      if (clip) onSelectClip?.(clip)
+      const n = nodeById.get(only)
+      if (n?.clip)
+        onSelectClip?.(
+          n.clip,
+          n.caption ? { text: n.caption, durSec: n.captionDurSec } : null
+        )
     },
     [nodeById, onSelectClip]
   )
@@ -1487,11 +1497,14 @@ export const MusicTimeline = memo(function MusicTimeline({
         clip: b.clip,
         inSec,
         outSec: inSec + (b.endSec - b.startSec),
+        // テロップのライブ表示用（プレイヤーがクリップの頭で出す）
+        caption: b.caption,
+        captionDurSec: nodeById.get(b.key)?.captionDurSec ?? null,
         // 隙間を飛ばしても曲とズレないように、曲のどこに置いてあるかも渡す
         songSec: b.startSec
       }
     })
-  }, [layout])
+  }, [layout, nodeById])
 
   /**
    * 上部プレイヤーの再生ボタン用に「いまの再生キューを返す関数」を置く。

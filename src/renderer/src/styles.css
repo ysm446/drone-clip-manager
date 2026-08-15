@@ -805,6 +805,24 @@ body.resizing {
   pointer-events: none;
   z-index: 3;
 }
+/* テロップのライブ表示（Phase 2.6e）。書き出しと同じ値から計算した位置・サイズで、
+   映像の上に DOM で重ねる。描画は CSS なので焼き上がりと 1px 単位では一致しないが、
+   フォント・サイズ・位置・影は同じ。z は player-gap(3) より上。 */
+.cap-live {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  font-family: 'dcm-caption-font', serif;
+  line-height: 1.25;
+  white-space: nowrap;
+  animation: cap-fadein 0.4s ease;
+}
+@keyframes cap-fadein {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 /* <video> 用の器（Phase 2.6e）。mpv-host と同じ位置づけで、player-gap /
    proxy-overlay を映像領域だけに被せるための relative の親。 */
 .video-host {

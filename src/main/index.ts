@@ -155,6 +155,15 @@ function registerMediaProtocol(): void {
     try {
       const url = new URL(request.url)
       const relPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+      // font はフォントファイルの絶対パスをそのまま受ける（テロップのライブ表示 / Phase 2.6e）。
+      // レンダラは dev 時 http://localhost なので file:// を fetch できず、FontFace の
+      // 読み込みにはこの経路が要る。フォント（.ttf/.ttc/.otf）以外は返さない。
+      if (url.host === 'font') {
+        if (!/\.(ttf|ttc|otf|otc)$/i.test(relPath)) {
+          return new Response('font のみ', { status: 403 })
+        }
+        return serveFile(relPath, request)
+      }
       const abs =
         url.host === 'bgm'
           ? resolveInBgm(relPath)

@@ -43,6 +43,12 @@ export interface SeqPlayItem {
   inSec?: number
   outSec?: number
   /**
+   * このクリップの頭に焼き付けるテロップ（Phase 2.6d/e）。
+   * 再生中はプレイヤーにライブ表示する（書き出しでは drawtext で焼かれる）。
+   */
+  caption?: string | null
+  captionDurSec?: number | null
+  /**
    * この項目が曲のどこに置かれているか（秒 / 音楽ビューの絶対位置）。
    * クリップの間に隙間があると「再生した尺の合計」と曲の位置がずれるため、
    * 曲を合わせ直す基準として渡す。未指定なら尺の合計から求める（従来どおり）。
@@ -101,7 +107,10 @@ interface Props {
    * 音楽タイムラインでクリップを選んだときの通知。
    * 上部プレイヤーの in/out ナッジの対象を、選んだクリップへ切り替えるために使う。
    */
-  onSelectClip?: (clip: ClipItem) => void
+  onSelectClip?: (
+    clip: ClipItem,
+    caption?: { text: string; durSec: number | null } | null
+  ) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
   onEditClip: (clip: ClipItem) => void
   /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
@@ -336,7 +345,8 @@ export const SequenceView = memo(function SequenceView({
       const items: SeqPlayItem[] = []
       for (const id of order) {
         const n = byId.get(id)
-        if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
+        if (n?.clip)
+        items.push({ nodeId: n.id, clip: n.clip, caption: n.caption, captionDurSec: n.captionDurSec })
       }
       if (items.length > 0) {
         onJumpToNode(items, items[0].nodeId)
@@ -507,7 +517,8 @@ export const SequenceView = memo(function SequenceView({
     const items: SeqPlayItem[] = []
     for (const id of order) {
       const n = byId.get(id)
-      if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
+      if (n?.clip)
+        items.push({ nodeId: n.id, clip: n.clip, caption: n.caption, captionDurSec: n.captionDurSec })
     }
     return items
   }, [nodes, liveNodeIds, edges])
