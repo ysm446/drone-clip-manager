@@ -135,6 +135,7 @@ export function getDb(): Database.Database {
   db.exec(SCHEMA)
   migrateSegmentColors(db)
   migrateSequenceNodeMusic(db)
+  migrateShelfSentinel(db)
   migrateDropBeatGrid(db)
   migrateSequenceBgmMeter(db)
   dbPath = target
@@ -165,6 +166,21 @@ function migrateSequenceNodeMusic(d: Database.Database): void {
   for (const [name, decl] of SEQ_NODE_MUSIC_COLUMNS) {
     if (!existing.has(name)) d.exec(`ALTER TABLE sequence_nodes ADD COLUMN ${name} ${decl}`)
   }
+}
+
+/**
+ * 旧「予備（棚）」の取り置きを、予備の行へ移す（2026-08-15）。
+ *
+ * 予備を最初に作ったときは時間軸の外の棚で、取り置き中の印を
+ * **`start_sec` が負**（-1）で表していた。そのあと「同じ時間軸の上の行（`lane`）」へ
+ * 作り直したため、負のまま残ったノードは**行 0 の孤立ノード**として画面から消えてしまう。
+ * 取り置きしていたクリップが行方不明になるので、予備の 1 行目・曲の頭へ移して拾い直す
+ * （元の棚は位置を持っていなかったので、位置は 0 秒にするしかない）。
+ *
+ * 正しい配置は 0 秒以降なので、負の `start_sec` はこの経緯でしか生まれない。冪等。
+ */
+function migrateShelfSentinel(d: Database.Database): void {
+  d.prepare('UPDATE sequence_nodes SET lane = 1, start_sec = 0 WHERE start_sec < 0').run()
 }
 
 // 拍・小節グリッドの廃止に伴う後始末（2026-08-15）。

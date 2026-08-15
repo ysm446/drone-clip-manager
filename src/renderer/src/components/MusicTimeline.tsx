@@ -144,7 +144,9 @@ function snapToBeatGrid(
   beat: BeatAnalysis,
   barPhase: number,
   stepBeats: number,
-  t: number
+  t: number,
+  /** `floor` は「t 以下で最も近い拍」。素材が足りず尺を詰めるときに使う */
+  mode: 'round' | 'floor' = 'round'
 ): number {
   const beats = beat.beats
   if (!beats.length || stepBeats <= 0) return t
@@ -158,7 +160,9 @@ function snapToBeatGrid(
     const i = beatIndexAt(beats, t)
     fi = i + (t - beats[i]) / (beats[i + 1] - beats[i])
   }
-  const idx = barPhase + Math.round((fi - barPhase) / stepBeats) * stepBeats
+  const steps = (fi - barPhase) / stepBeats
+  const idx =
+    barPhase + (mode === 'floor' ? Math.floor(steps + 1e-6) : Math.round(steps)) * stepBeats
   if (idx < 0) return beats[0] + idx * beatSec
   if (idx > last) return beats[last] + (idx - last) * beatSec
   return beats[idx]
@@ -872,6 +876,19 @@ export const MusicTimeline = memo(function MusicTimeline({
     [beatOn, beat, snapBeats, stepBeats, barPhase, snapSec]
   )
 
+  /**
+   * グリッドの「t 以下でいちばん近い点」。まとめて揃えるときに、
+   * **素材が足りないカードの尻を手前のグリッドへ短く寄せる**ために使う（マーカーは見ない）。
+   */
+  const gridFloorPoint = useCallback(
+    (t: number): number => {
+      if (beatOn && beat)
+        return snapBeats === 0 ? t : snapToBeatGrid(beat, barPhase, stepBeats, t, 'floor')
+      return snapSec > 0 ? Math.floor(t / snapSec + 1e-6) * snapSec : t
+    },
+    [beatOn, beat, snapBeats, stepBeats, barPhase, snapSec]
+  )
+
   /** 吸着。**マーカーが近ければグリッドより優先する**（手で置いた点が最優先）。 */
   const snapTime = useCallback(
     (t: number, offsets: number[] = [0]): number => {
@@ -1501,6 +1518,126 @@ export const MusicTimeline = memo(function MusicTimeline({
       : apply().then(() => onNodesChanged?.()))
   }
 
+  /** 一括で揃える先の呼び名（ボタンの文言とステータスに使う） */
+  const gridName = beatOn ? '拍' : 'グリッド'
+
+  /**
+   * 選択（無ければ本番の行の全部）を、まとめて吸着先へ揃える（2026-08-15）。
+   *
+   * **カードではなく「境目」を寄せるのが要点。** 頭だけ動かすと尺が変わらないぶん、
+   * 隣との間に隙間や重なりが生まれてしまう。頭と尻の両方を寄せて差を尺で吸収すると、
+   * 詰まって並んでいる所は**境目の時刻が同じなので同じ拍に寄り、詰まったまま**残る。
+   * 隙間が空いている所は両端が別々に寄るので、隙間は隙間のまま残る。
+   *
+   * 吸着先は普段のドラッグと同じ `snapTime`（マーカーが近ければそちらが優先）。
+   * 手で合わせた結果とボタンの結果が食い違わないようにするため。
+   */
+  const alignToGrid = useCallback((): void => {
+    if (!layout) return
+    const all = [
+      ...layoutBlocks.map((b) => ({ b, lane: 0 })),
+      ...shelfRows.flatMap((r) => r.blocks.map((b) => ({ b, lane: r.lane })))
+    ]
+    // 選択があればそれだけ（予備の行の札も対象）、無ければ本番の行の全部
+    const targetIds = new Set(
+      (selected.size ? all.filter((x) => selected.has(x.b.key)) : all.filter((x) => x.lane === 0)).map(
+        (x) => x.b.key
+      )
+    )
+    if (!targetIds.size) return
+
+    // 行ごとに時刻順で全部を舐める。**対象外の札も「壁」として効かせる**ので、
+    // 1 枚だけ選んで揃えても、動かさない隣の札に食い込まない。
+    const byLane = new Map<number, MusicBlock[]>()
+    for (const { b, lane } of all) {
+      const list = byLane.get(lane) ?? []
+      list.push(b)
+      byLane.set(lane, list)
+    }
+
+    // 同じ時刻の境目は必ず同じ吸着先にする（詰まっている所を詰まったまま保つため）
+    const memo = new Map<string, number>()
+    const snapEdge = (t: number): number => {
+      const key = t.toFixed(4)
+      const hit = memo.get(key)
+      if (hit != null) return hit
+      const v = Math.max(floorSec, snapTime(t))
+      memo.set(key, v)
+      return v
+    }
+
+    const rows: { nodeId: number; startSec: number; durSec: number; srcOffset: number }[] = []
+    for (const [lane, list] of byLane) {
+      list.sort((a, b) => a.startSec - b.startSec)
+      let prevEnd = floorSec
+      for (const b of list) {
+        if (!targetIds.has(b.key)) {
+          // 動かさない札。本番の行では壁として残す（予備の行は重なってよいので見ない）
+          if (lane === 0) prevEnd = Math.max(prevEnd, b.endSec)
+          continue
+        }
+        const wall = lane === 0 ? prevEnd : floorSec
+        const start = Math.max(snapEdge(b.startSec), wall)
+        let end = snapEdge(b.endSec)
+        // 素材が足りないぶんは**手前のグリッドへ短く寄せる**（拍の上に残す。後ろは隙間になる）。
+        // それでも最小の尺を割るときだけ、素材の限界で止める（そこは拍から外れる）。
+        const maxEnd = start + b.avail
+        if (end > maxEnd + 1e-6) {
+          const floored = gridFloorPoint(maxEnd)
+          end = floored > start + MIN_DUR_SEC ? floored : maxEnd
+        }
+        end = Math.max(end, start + MIN_DUR_SEC)
+        if (lane === 0) prevEnd = end
+        // 変わらない札は書かない（尺が「自動」のままのものを固定値に変えてしまわない）
+        if (Math.abs(start - b.startSec) < 1e-4 && Math.abs(end - start - b.durSec) < 1e-4) continue
+        rows.push({ nodeId: b.key, startSec: start, durSec: end - start, srcOffset: b.srcOffset })
+      }
+    }
+    if (!rows.length) {
+      onStatus?.(`すでに${gridName}に揃っています`)
+      return
+    }
+
+    setPending(new Map(rows.map((r) => [r.nodeId, r])))
+    const moved = new Map(rows.map((r) => [r.nodeId, r.startSec]))
+    const apply = async (): Promise<void> => {
+      await api.updateSequenceNodeMusicMany(rows)
+      // 本番の行の並びは時刻順に張り直す（ドラッグ確定と同じ扱い）
+      if (sequenceId != null) {
+        const order = layoutBlocks
+          .map((b) => ({ key: b.key, start: moved.get(b.key) ?? b.startSec }))
+          .sort((a, b) => a.start - b.start)
+          .map((x) => x.key)
+        await api.setSequenceOrder(sequenceId, order)
+      }
+    }
+    const run = runPlacementEdit
+      ? runPlacementEdit(`${gridName}に揃える`, apply)
+      : apply().then(() => onNodesChanged?.())
+    void run
+      .then(() => {
+        setPending(null)
+        onStatus?.(`${rows.length} 枚を${gridName}に揃えました`)
+      })
+      .catch(() => {
+        setPending(null)
+        onStatus?.('配置を保存できませんでした', 'err')
+      })
+  }, [
+    layout,
+    layoutBlocks,
+    shelfRows,
+    selected,
+    floorSec,
+    snapTime,
+    gridFloorPoint,
+    gridName,
+    sequenceId,
+    runPlacementEdit,
+    onNodesChanged,
+    onStatus
+  ])
+
   /**
    * 書き出し用の in / out を組み立てる（Phase 2.6c 段階 4）。
    *
@@ -1971,6 +2108,22 @@ export const MusicTimeline = memo(function MusicTimeline({
             </select>
           )}
         </label>
+
+        {/* 一括で揃える。吸着の設定に効くので、吸着セレクタの隣に置く */}
+        <button
+          className="mtl-zoom"
+          disabled={!wave || (!layoutBlocks.length && !selected.size)}
+          onClick={alignToGrid}
+          title={[
+            `選択したクリップ（選択が無ければ本番の行の全部）の頭と尻を、まとめて${gridName}へ寄せる`,
+            '詰まって並んでいる所は詰まったまま、隙間は隙間のまま残る',
+            'マーカーが近ければそちらが優先（手で置いた点が最優先）',
+            '素材が足りないカードは、手前のグリッドまで短くする',
+            'Ctrl+Z で元に戻せる'
+          ].join('\n')}
+        >
+          {gridName}に揃える
+        </button>
 
         <span className="clips-spacer" />
 
