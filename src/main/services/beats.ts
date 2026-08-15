@@ -203,6 +203,26 @@ function combScore(env: Float64Array, bpm: number): { score: number; phase: numb
   return { score: best / nBeats, phase: bestPhase }
 }
 
+/**
+ * グリッドが実オンセットのピークをどれだけ説明できるか（0〜1、強度加重）。
+ * ピークのうち、最寄りのグリッド線から ±0.15 拍以内にあるものの強度割合。
+ * コムスコアは疎なグリッドほど「強いオンセットだけを拾える」ぶん高く出るため、
+ * 大域テンポの最終選択ではこれを掛けて密度バイアスを打ち消す
+ * （実例: 3 拍子の曲が付点パルス = 2/3 倍テンポに乗る。plan.md Phase 2.6c 検証結果 2）。
+ */
+function gridCoverage(env: Float64Array, peaks: number[], bpm: number, phase: number): number {
+  const period = (60 / bpm) * FPS
+  let covered = 0
+  let total = 0
+  for (const p of peaks) {
+    const w = env[p]
+    total += w
+    const k = Math.round((p - phase) / period)
+    if (Math.abs(p - (phase + k * period)) / period <= 0.15) covered += w
+  }
+  return total ? covered / total : 0
+}
+
 function refineBpm(
   env: Float64Array,
   bpm0: number,
@@ -250,17 +270,20 @@ function globalTempo(env: Float64Array): { bpm: number; phase: number } {
   // そこで順位を決めると倍率を誤る。
   const from = Math.round(env.length * 0.3)
   const mid = env.subarray(from, Math.min(env.length, from + Math.round(60 * FPS)))
+  const midPeaks = onsetPeaks(mid)
   const tried = new Set<string>()
   let best = { ranked: -1, bpm: cands[0] }
   for (const c of cands) {
-    for (const mul of [0.5, 1, 2]) {
+    // 2/3・3/2 は 3 拍子の付点パルス対策（3 拍子の小節を 2 分割した刻みに乗る誤検出を戻す）
+    for (const mul of [0.5, 2 / 3, 1, 1.5, 2]) {
       const b0 = c * mul
       if (b0 < 55 || b0 > 210) continue
       const key = b0.toFixed(1)
       if (tried.has(key)) continue
       tried.add(key)
       const e = refineBpm(mid, b0, 2.0, 0.02)
-      const ranked = e.score * tempoPrior(e.bpm)
+      // coverage を掛けないとコムスコアの疎密バイアスで 2/3 倍テンポが勝つことがある
+      const ranked = e.score * tempoPrior(e.bpm) * gridCoverage(mid, midPeaks, e.bpm, e.phase)
       if (ranked > best.ranked) best = { ranked, bpm: e.bpm }
     }
   }
@@ -435,8 +458,9 @@ function cachePath(absPath: string): string | null {
   }
   const key = createHash('md5')
     // 解析の出力が変わったらキャッシュを作り直す
-    // （v2: 拍子候補 meters を追加 / v5: 代表 BPM を拍間隔の中央値から刈込平均に変更）
-    .update(`v5|${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
+    // （v2: 拍子候補 meters を追加 / v5: 代表 BPM を拍間隔の中央値から刈込平均に変更 /
+    //   v6: 大域テンポの最終選択に coverage 補正と倍率候補 2/3・3/2 を追加）
+    .update(`v6|${absPath}|${st.size}|${Math.round(st.mtimeMs)}`)
     .digest('hex')
     .slice(0, 20)
   const dir = join(metaDir(), 'beats')
