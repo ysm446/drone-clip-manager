@@ -815,6 +815,10 @@ export function App() {
    * ツリーやクリップ一覧からユーザーが明示的に別の動画 / クリップを開いたときに呼ぶ。
    */
   const exitSequence = useCallback(() => {
+    // **隙間の待ち合わせも必ず解く。** 隙間で止まっているときは mpv を隠して黒を見せている
+    // ので、ここで解かないと、別のクリップを開いても画面が黒いまま何も出ない
+    // （音楽ビューで札をクリックしたときに実際に起きた / 2026-08-15）。
+    cancelGapHold()
     seqActiveRef.current = false
     seqArmedRef.current = false
     setPlayingNodeId(null)
@@ -822,7 +826,7 @@ export function App() {
     // 別の動画を開いたときに BGM だけ鳴り続けないよう止める
     seqAudioRef.current?.pause()
     seqBgmRef.current = null
-  }, [])
+  }, [cancelGapHold])
 
   // キュー内の i 番目のクリップを開いて再生する（同一動画はシーク、別動画はロード後に自動再生）。
   // atSec を渡すと in 点ではなくその位置から再生する（シーケンスバーからのシーク用）。
@@ -1606,6 +1610,11 @@ export function App() {
    * （以前は選んだだけで `selectVideo` していて、再生位置が 0 に戻ってシークバーが
    * 飛んでいた。ナッジのためだけに動画を開く必要はもう無いので、ここでの読み込みは
    * 「選んだものを見せる」ためだけに行う。）
+   *
+   * ただし**隙間で黒のまま待っている間（`gapTimerRef`）は例外**で、再生中でも出す。
+   * そこには映す映像がそもそも無いので、壊れる連続再生が無い。ここを弾いていると、
+   * 「何も無いところにヘッドがあるとき、札をクリックしても画面が黒いまま」になる
+   * （2026-08-15 の報告）。曲の後ろの余り（最後のクリップより後ろ）も同じ状態。
    */
   const selectMusicClip = useCallback(
     (clip: ClipItem) => {
@@ -1613,7 +1622,8 @@ export function App() {
       setMusicSeg(clip)
       // 押した瞬間に待たせないよう、キーフレームだけ先に引いておく（失敗しても押下時に再試行）
       void getKeyframesFor(clip.videoRelPath).catch(() => void 0)
-      if (!seqPlayingRef.current) openClip(clip)
+      const inGap = gapTimerRef.current != null
+      if (!seqPlayingRef.current || inGap) openClip(clip)
     },
     [getKeyframesFor, openClip]
   )
