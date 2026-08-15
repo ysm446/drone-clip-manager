@@ -409,6 +409,12 @@ export interface CaptionStyle {
   shadowAlpha: number
   /** 影のずらし量（px / 4K 基準） */
   shadowOffset: number
+  /**
+   * 影のぼかし（px / 4K 基準。0 でくっきり）。
+   * drawtext の影はぼかせないため、0 より大きいときは**影を別レイヤーに描いてぼかし、
+   * 重ねてから本文を描く**（書き出しのフィルタが 1 段複雑になる）。
+   */
+  shadowBlur: number
   /** 画面の四隅からの余白（px / 4K 基準） */
   marginX: number
   marginY: number
@@ -416,8 +422,10 @@ export interface CaptionStyle {
   position: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
   /** 既定の表示秒数（ConcatItem.captionDurSec が無いとき） */
   defaultDurSec: number
-  /** フェードイン / アウト秒数（0 で無効） */
-  fadeSec: number
+  /** フェードイン秒数（0 で無効） */
+  fadeInSec: number
+  /** フェードアウト秒数（0 で無効） */
+  fadeOutSec: number
 }
 
 /**

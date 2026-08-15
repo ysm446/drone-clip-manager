@@ -346,13 +346,15 @@ function escapeFilterPath(p: string): string {
   return p.replace(/\\/g, '/').replace(/:/g, '\\:')
 }
 
-/** フェードの alpha 式（0 → 1 → 0）。fade が 0 なら出しっぱなし。 */
-function alphaExpr(showSec: number, fadeSec: number): string {
-  const f = Math.max(0, Math.min(fadeSec, showSec / 2))
-  if (f < 0.001) return '1'
-  const inEnd = f.toFixed(3)
-  const outStart = (showSec - f).toFixed(3)
-  return `if(lt(t,${inEnd}),t/${inEnd},if(lt(t,${outStart}),1,max(0\\,(${showSec.toFixed(3)}-t)/${inEnd})))`
+/** フェードの alpha 式（0 → 1 → 0）。イン / アウトは別々の秒数。0 のほうは省く。 */
+function alphaExpr(showSec: number, fadeInSec: number, fadeOutSec: number): string {
+  const fi = Math.max(0, Math.min(fadeInSec, showSec / 2))
+  const fo = Math.max(0, Math.min(fadeOutSec, showSec / 2))
+  const show = showSec.toFixed(3)
+  const outPart =
+    fo < 0.001 ? '1' : `if(lt(t,${(showSec - fo).toFixed(3)}),1,max(0\\,(${show}-t)/${fo.toFixed(3)}))`
+  if (fi < 0.001) return outPart
+  return `if(lt(t,${fi.toFixed(3)}),t/${fi.toFixed(3)},${outPart})`
 }
 
 /**
@@ -367,7 +369,9 @@ function captionFilters(
   style: CaptionStyle,
   files: { main: string; sub: string | null },
   spec: FillerSpec,
-  showSec: number
+  showSec: number,
+  /** 文字色と影の指定。'text' は通常描画、'shadow' はぼかし用レイヤー（黒一色・影なし） */
+  mode: 'text' | 'shadow' = 'text'
 ): string {
   const scale = spec.height / 2160
   const size = Math.max(8, Math.round(style.fontSize * scale))
@@ -376,23 +380,25 @@ function captionFilters(
   const my = Math.round(style.marginY * scale)
   const gap = Math.round(style.lineGap * scale)
   const shadow = Math.round(style.shadowOffset * scale)
+  const blurred = style.shadowBlur > 0.001
   const right = style.position.endsWith('right')
   const top = style.position.startsWith('top')
-  const alpha = alphaExpr(showSec, style.fadeSec)
+  const alpha = alphaExpr(showSec, style.fadeInSec, style.fadeOutSec)
   const hasSub = !!files.sub
 
   const one = (file: string, fontSize: number, y: string): string => {
     const parts = [
       `fontfile='${escapeFilterPath(style.fontFile)}'`,
       `textfile='${escapeFilterPath(file)}'`,
-      `fontcolor=${style.fontColor}`,
+      `fontcolor=${mode === 'shadow' ? `black@${style.shadowAlpha}` : style.fontColor}`,
       `fontsize=${fontSize}`,
       `x=${right ? `w-tw-${mx}` : String(mx)}`,
       `y=${y}`,
       `alpha='${alpha}'`,
       `enable='lt(t,${showSec.toFixed(3)})'`
     ]
-    if (style.shadowAlpha > 0.001 && shadow > 0) {
+    // ぼかし無しのときだけ drawtext 内蔵の影を使う（ぼかす場合は別レイヤーで描く）
+    if (mode === 'text' && !blurred && style.shadowAlpha > 0.001 && shadow > 0) {
       parts.push(`shadowcolor=black@${style.shadowAlpha}`, `shadowx=${shadow}`, `shadowy=${shadow}`)
     }
     return `drawtext=${parts.join(':')}`
@@ -404,6 +410,36 @@ function captionFilters(
   const out = [one(files.main, size, mainY)]
   if (files.sub) out.push(one(files.sub, subSize, subY))
   return out.join(',')
+}
+
+/**
+ * テロップの filter_complex グラフを組み立てる（入力ラベル `[0:V]` → 出力 `[vcap]`）。
+ *
+ * **影をぼかすとき**は drawtext 内蔵の影が使えない（ぼかせない）ため、
+ * 透明なキャンバスに黒い文字を描いて `gblur` でぼかし、映像へ影のずらし量だけ
+ * ずらして重ねてから、本文をくっきり描く。
+ * `overlay` は `format=` で処理形式を固定する（既定に任せると 10bit がここで 8bit に落ちる）。
+ */
+function captionGraph(
+  style: CaptionStyle,
+  files: { main: string; sub: string | null },
+  spec: FillerSpec,
+  showSec: number
+): string {
+  const text = captionFilters(style, files, spec, showSec, 'text')
+  const blurred = style.shadowBlur > 0.001 && style.shadowAlpha > 0.001
+  if (!blurred) return `[0:V]${text}[vcap]`
+  const scale = spec.height / 2160
+  const off = Math.round(style.shadowOffset * scale)
+  const sigma = Math.max(0.5, (style.shadowBlur * scale) / 2)
+  const shadowText = captionFilters(style, files, spec, showSec, 'shadow')
+  const fmt = spec.pixFmt.includes('10') ? 'yuv420p10' : 'yuv420'
+  return [
+    // 影レイヤー: 透明キャンバスに黒文字 → ぼかす（fps を合わせて alpha の t を同期させる）
+    `color=c=black@0.0:s=${spec.width}x${spec.height}:r=${spec.fpsFrac},format=rgba,${shadowText},gblur=sigma=${sigma.toFixed(2)}[capsh]`,
+    // 影を「ずらし量」だけずらして重ね、その上に本文を描く
+    `[0:V][capsh]overlay=x=${off}:y=${off}:format=${fmt}:enable='lt(t,${showSec.toFixed(3)})',${text}[vcap]`
+  ].join(';')
 }
 
 /**
@@ -460,8 +496,9 @@ async function cutWithCaption(
       '-i', absInput,
       '-t', String(dur + 1 / spec.fps),
       '-frames:v', String(frames),
-      '-vf', captionFilters(style, { main: mainFile, sub: subFile }, spec, showSec),
-      '-map', '0:V',
+      // 影をぼかすときは別レイヤーの合成が要るので filter_complex（出力ラベル [vcap]）
+      '-filter_complex', captionGraph(style, { main: mainFile, sub: subFile }, spec, showSec),
+      '-map', '[vcap]',
       ...(withAudio ? ['-map', '0:a?'] : []),
       '-c:v', enc,
       ...(profile ? ['-profile:v', profile] : []),
@@ -650,5 +687,11 @@ export async function captionPreviewFilter(
     subFile = nameOf(`s${subLine}`)
     await writeFile(subFile, subLine, 'utf8')
   }
-  return captionFilters({ ...style, fadeSec: 0 }, { main: mainFile, sub: subFile }, spec, 9999)
+  // 1 フレームに焼くだけなのでフェードは外し、常に見えるようにする
+  return captionGraph(
+    { ...style, fadeInSec: 0, fadeOutSec: 0 },
+    { main: mainFile, sub: subFile },
+    spec,
+    9999
+  )
 }

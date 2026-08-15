@@ -101,15 +101,11 @@ export async function renderCaptionPreview(
   if (existsSync(out)) return name
   const abs = resolveInRoot(videoRelPath)
   const tmp = `${out}.tmp.jpg`
-  // HLG のままだと眠く見えるので、表示用にトーンマップしてから縮める
-  const chain = [
-    filter,
-    'zscale=t=linear:npl=100',
-    'tonemap=hable',
-    'zscale=t=bt709:m=bt709:r=tv',
-    'format=yuv420p',
-    'scale=960:-2'
-  ].join(',')
+  // filter は「[0:V] → [vcap]」の filter_complex グラフ（影のぼかしで複数レイヤーを使うため）。
+  // HLG のままだと眠く見えるので、後段で表示用にトーンマップしてから縮める
+  const graph =
+    filter +
+    ';[vcap]zscale=t=linear:npl=100,tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,scale=960:-2[pout]'
   await acquire()
   try {
     await execFileP(FFMPEG, [
@@ -117,7 +113,8 @@ export async function renderCaptionPreview(
       '-ss', String(Math.max(0, timeSec)),
       '-i', abs,
       '-frames:v', '1',
-      '-vf', chain,
+      '-filter_complex', graph,
+      '-map', '[pout]',
       '-q:v', '3',
       tmp
     ])

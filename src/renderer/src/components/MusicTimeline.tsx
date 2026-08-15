@@ -85,11 +85,33 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   fontColor: '0xF5F5F5',
   shadowAlpha: 0.5,
   shadowOffset: 4,
+  shadowBlur: 6,
   marginX: 140,
   marginY: 120,
   position: 'bottom-left',
   defaultDurSec: 4,
-  fadeSec: 0.4
+  fadeInSec: 0.5,
+  fadeOutSec: 0.5
+}
+
+/**
+ * 保存済みのテロップスタイルを読む（App のライブ表示と共用）。
+ * 旧形式の `fadeSec`（イン / アウト共通）は両方へ引き継ぐ。
+ */
+export function loadCaptionStyle(): CaptionStyle {
+  try {
+    const raw = localStorage.getItem(CAPTION_STYLE_KEY)
+    if (!raw) return DEFAULT_CAPTION_STYLE
+    const parsed = JSON.parse(raw) as Partial<CaptionStyle> & { fadeSec?: number }
+    const merged = { ...DEFAULT_CAPTION_STYLE, ...parsed }
+    if (parsed.fadeSec != null && parsed.fadeInSec == null) {
+      merged.fadeInSec = parsed.fadeSec
+      merged.fadeOutSec = parsed.fadeSec
+    }
+    return merged
+  } catch {
+    return DEFAULT_CAPTION_STYLE
+  }
 }
 const SNAP_KEY = 'dcm.mtl.snapSec'
 const SNAP_BEATS_KEY = 'dcm.mtl.snapBeats'
@@ -514,14 +536,7 @@ export const MusicTimeline = memo(function MusicTimeline({
     durSec: string
   } | null>(null)
   /** 焼き付けスタイル（共通設定）。シーケンスごとではないので localStorage に持つ。 */
-  const [capStyle, setCapStyle] = useState<CaptionStyle>(() => {
-    try {
-      const raw = localStorage.getItem(CAPTION_STYLE_KEY)
-      return raw ? { ...DEFAULT_CAPTION_STYLE, ...JSON.parse(raw) } : DEFAULT_CAPTION_STYLE
-    } catch {
-      return DEFAULT_CAPTION_STYLE
-    }
-  })
+  const [capStyle, setCapStyle] = useState<CaptionStyle>(loadCaptionStyle)
   /** スタイル設定パネルを開いているか */
   const [capPanel, setCapPanel] = useState(false)
   /** 選べるフォント（インストール済み。ユーザーインストール分も含む） */
@@ -545,7 +560,15 @@ export const MusicTimeline = memo(function MusicTimeline({
   }, [])
 
   useEffect(() => {
-    if (capPanel && fonts.length === 0) void api.listFonts().then(setFonts)
+    if (!capPanel || fonts.length > 0) return
+    void api.listFonts().then((list) => {
+      setFonts(list)
+      // 保存済みパスが大文字小文字だけ違うと一覧と一致せず、セレクタが生のパス表示に
+      // なってしまう（%WINDIR% は環境によって WINDOWS / Windows が揺れる）。正規の表記へ寄せる
+      const hit = list.find((x) => x.path.toLowerCase() === capStyle.fontFile.toLowerCase())
+      if (hit && hit.path !== capStyle.fontFile) patchCapStyle({ fontFile: hit.path })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capPanel, fonts.length])
 
   /**
@@ -554,9 +577,9 @@ export const MusicTimeline = memo(function MusicTimeline({
    * 隠すと、見た目を調整している最中に映像が消えてしまう。
    */
   useEffect(() => {
-    onOverlayChange?.(capEdit != null)
+    onOverlayChange?.(capEdit != null || capPanel)
     return () => onOverlayChange?.(false)
-  }, [capEdit, onOverlayChange])
+  }, [capEdit, capPanel, onOverlayChange])
   /**
    * 切り替えポイント（マーカー）。曲の絶対時刻で持ち、クリップの吸着先になる。
    * 拍・小節の自動グリッドは廃止したので、その役目を手で置くこれが担う。
@@ -2723,17 +2746,20 @@ export const MusicTimeline = memo(function MusicTimeline({
         </>
       )}
 
-      {/* テロップの見た目（共通設定）。書き出しに効くので書き出しボタンの近くから開く */}
+      {/*
+        テロップの見た目（全シーケンス共通）。標準のモーダル部品（style-guide 5.6）で組む。
+        head / body / foot の 3 段、設定行は .modal-row（ラベル 110px + 入力）。
+        プレビューは書き出しと同じ drawtext で焼いた実物（ライブ表示は CSS 描画の目安）。
+      */}
       {capPanel && (
-        <>
-          <div className="mtl-cap-backdrop" onMouseDown={() => setCapPanel(false)} />
-          <div className="mtl-cap-panel">
-            <div className="mtl-cap-title">テロップの見た目（全シーケンス共通）</div>
-            {/*
-              焼き付け結果のプレビュー。**再生中の映像には出せない**ので（テロップは書き出し時に
-              焼くもので、mpv はネイティブ最前面のため DOM を重ねることもできない）、
-              実際の drawtext で 1 フレームに焼いたものを出す。
-            */}
+        <div className="modal-backdrop" onClick={() => setCapPanel(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span>テロップの見た目（全シーケンス共通）</span>
+              <button className="modal-close" onClick={() => setCapPanel(false)}>
+                ✕
+              </button>
+            </div>
             <div className="mtl-cap-preview">
               {capPreview && <img src={capPreview} alt="" />}
               {(!capPreview || capPreviewBusy) && (
@@ -2742,13 +2768,10 @@ export const MusicTimeline = memo(function MusicTimeline({
                 </div>
               )}
             </div>
-            <div className="mtl-cap-note">
-              実際に焼いた 1 フレームです（表示用に SDR へ変換しています）。
-              選んでいる札があればそのクリップ、無ければテロップの付いた最初のクリップを使います。
-            </div>
-            <label className="mtl-cap-row">
-              フォント
+            <div className="modal-row">
+              <label>フォント</label>
               <select
+                className="modal-input"
                 value={capStyle.fontFile}
                 onChange={(e) => patchCapStyle({ fontFile: e.target.value })}
               >
@@ -2762,10 +2785,11 @@ export const MusicTimeline = memo(function MusicTimeline({
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="mtl-cap-row">
-              文字サイズ
+            </div>
+            <div className="modal-row">
+              <label>文字サイズ</label>
               <input
+                className="modal-num"
                 type="number"
                 min={20}
                 max={400}
@@ -2773,10 +2797,10 @@ export const MusicTimeline = memo(function MusicTimeline({
                 value={capStyle.fontSize}
                 onChange={(e) => patchCapStyle({ fontSize: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">px（4K 基準）</span>
-            </label>
-            <label className="mtl-cap-row">
-              影
+              <span className="modal-hint">px（4K 基準。他の解像度では比率で拡縮）</span>
+            </div>
+            <div className="modal-row">
+              <label>影の濃さ</label>
               <input
                 type="range"
                 min={0}
@@ -2785,19 +2809,34 @@ export const MusicTimeline = memo(function MusicTimeline({
                 value={capStyle.shadowAlpha}
                 onChange={(e) => patchCapStyle({ shadowAlpha: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">{Math.round(capStyle.shadowAlpha * 100)}%</span>
+              <span className="modal-hint">{Math.round(capStyle.shadowAlpha * 100)}%</span>
+            </div>
+            <div className="modal-row">
+              <label>影のずらし</label>
               <input
+                className="modal-num"
                 type="number"
                 min={0}
-                max={20}
+                max={30}
                 step={1}
                 value={capStyle.shadowOffset}
                 onChange={(e) => patchCapStyle({ shadowOffset: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">px ずらし</span>
-            </label>
-            <label className="mtl-cap-row">
-              位置
+              <span className="modal-hint">px</span>
+              <label className="modal-sublabel">ぼかし</label>
+              <input
+                className="modal-num"
+                type="number"
+                min={0}
+                max={40}
+                step={1}
+                value={capStyle.shadowBlur}
+                onChange={(e) => patchCapStyle({ shadowBlur: Number(e.target.value) })}
+              />
+              <span className="modal-hint">px</span>
+            </div>
+            <div className="modal-row">
+              <label>位置</label>
               <select
                 value={capStyle.position}
                 onChange={(e) =>
@@ -2809,7 +2848,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                 <option value="top-left">左上</option>
                 <option value="top-right">右上</option>
               </select>
+              <label className="modal-sublabel">余白</label>
               <input
+                className="modal-num"
                 type="number"
                 min={0}
                 max={600}
@@ -2817,7 +2858,9 @@ export const MusicTimeline = memo(function MusicTimeline({
                 value={capStyle.marginX}
                 onChange={(e) => patchCapStyle({ marginX: Number(e.target.value) })}
               />
+              <span className="modal-hint">×</span>
               <input
+                className="modal-num"
                 type="number"
                 min={0}
                 max={600}
@@ -2825,11 +2868,12 @@ export const MusicTimeline = memo(function MusicTimeline({
                 value={capStyle.marginY}
                 onChange={(e) => patchCapStyle({ marginY: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">余白 px</span>
-            </label>
-            <label className="mtl-cap-row">
-              既定の秒数
+              <span className="modal-hint">px</span>
+            </div>
+            <div className="modal-row">
+              <label>表示秒数</label>
               <input
+                className="modal-num"
                 type="number"
                 min={0.5}
                 max={30}
@@ -2837,30 +2881,43 @@ export const MusicTimeline = memo(function MusicTimeline({
                 value={capStyle.defaultDurSec}
                 onChange={(e) => patchCapStyle({ defaultDurSec: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">フェード</span>
+              <span className="modal-hint">秒（クリップごとに上書き可）</span>
+            </div>
+            <div className="modal-row">
+              <label>フェード</label>
+              <span className="modal-hint">イン</span>
               <input
+                className="modal-num"
                 type="number"
                 min={0}
-                max={3}
+                max={5}
                 step={0.1}
-                value={capStyle.fadeSec}
-                onChange={(e) => patchCapStyle({ fadeSec: Number(e.target.value) })}
+                value={capStyle.fadeInSec}
+                onChange={(e) => patchCapStyle({ fadeInSec: Number(e.target.value) })}
               />
-              <span className="mtl-cap-unit">秒</span>
-            </label>
-            <div className="mtl-cap-note">
-              テロップを入れたクリップだけ再エンコードされます（他は無劣化のまま）。
-              可変フォント（VF）は既定のウェイトで焼かれるので、太さを変えたいときは
-              その太さのフォントファイルを選んでください。
+              <span className="modal-hint">秒 / アウト</span>
+              <input
+                className="modal-num"
+                type="number"
+                min={0}
+                max={5}
+                step={0.1}
+                value={capStyle.fadeOutSec}
+                onChange={(e) => patchCapStyle({ fadeOutSec: Number(e.target.value) })}
+              />
+              <span className="modal-hint">秒</span>
             </div>
-            <div className="mtl-cap-actions">
-              <span className="clips-spacer" />
-              <button className="btn small" onClick={() => setCapPanel(false)}>
+            <div className="modal-foot">
+              <span className="modal-summary">
+                テロップを入れたクリップだけ再エンコードされます（他は無劣化のまま）。
+                可変フォント（VF）は既定のウェイトで焼かれます。
+              </span>
+              <button className="btn primary" onClick={() => setCapPanel(false)}>
                 閉じる
               </button>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {markerMenu && (

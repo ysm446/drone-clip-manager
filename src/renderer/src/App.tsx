@@ -26,7 +26,7 @@ import {
   type SeqPlayBgm,
   type SeqPlayItem
 } from './components/SequenceView'
-import { CAPTION_STYLE_KEY, DEFAULT_CAPTION_STYLE } from './components/MusicTimeline'
+import { loadCaptionStyle } from './components/MusicTimeline'
 import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
@@ -403,14 +403,7 @@ export function App() {
   // そのまま映像の上に重ねて出せる。描画は CSS なので drawtext と 1px までは一致しないが、
   // フォント・サイズ・位置・影は同じ値から計算する（正確な焼き上がりは書き出しで確認）。
   /** テロップの見た目（音楽ビューの「テロップ設定」と同じ保存値。変更はイベントで届く） */
-  const [capStyle, setCapStyle] = useState<CaptionStyle>(() => {
-    try {
-      const raw = localStorage.getItem(CAPTION_STYLE_KEY)
-      return raw ? { ...DEFAULT_CAPTION_STYLE, ...JSON.parse(raw) } : DEFAULT_CAPTION_STYLE
-    } catch {
-      return DEFAULT_CAPTION_STYLE
-    }
-  })
+  const [capStyle, setCapStyle] = useState<CaptionStyle>(loadCaptionStyle)
   useEffect(() => {
     const onStyle = (e: Event): void => setCapStyle((e as CustomEvent).detail as CaptionStyle)
     window.addEventListener('dcm:caption-style', onStyle)
@@ -2120,9 +2113,12 @@ export function App() {
     const top = capStyle.position.startsWith('top')
     const [main, ...rest] = text.split('\n')
     const sub = rest.join(' ').trim()
+    // 影。ぼかしは CSS の text-shadow の 3 つ目の値でそのまま表現できる
+    const sOff = Math.max(1, Math.round(capStyle.shadowOffset * k))
+    const sBlur = Math.round(capStyle.shadowBlur * k)
     const shadow =
       capStyle.shadowAlpha > 0.001 && capStyle.shadowOffset > 0
-        ? `${Math.max(1, Math.round(capStyle.shadowOffset * k))}px ${Math.max(1, Math.round(capStyle.shadowOffset * k))}px 0 rgba(0,0,0,${capStyle.shadowAlpha})`
+        ? `${sOff}px ${sOff}px ${sBlur}px rgba(0,0,0,${capStyle.shadowAlpha})`
         : 'none'
     return {
       key: `${text}|${seqMode ? seqPlayback?.idx : 'clip'}`,
@@ -2139,14 +2135,24 @@ export function App() {
         gap: Math.round(capStyle.lineGap * k),
         color: capStyle.fontColor.replace(/^0x/i, '#'),
         textShadow: shadow,
-        animationDuration: capStyle.fadeSec > 0.001 ? `${capStyle.fadeSec}s` : '0s'
+        // フェードイン + アウトを CSS アニメーション 2 本で（アウトは表示終了に合わせて遅延開始）。
+        // 一時停止中は進めない（止めて見ている間にテロップだけ消えてしまわないように）
+        animation: [
+          capStyle.fadeInSec > 0.001 ? `cap-fadein ${capStyle.fadeInSec}s ease` : '',
+          capStyle.fadeOutSec > 0.001
+            ? `cap-fadeout ${capStyle.fadeOutSec}s ease ${Math.max(0, showSec - capStyle.fadeOutSec).toFixed(2)}s forwards`
+            : ''
+        ]
+          .filter(Boolean)
+          .join(', '),
+        animationPlayState: mpvPaused ? 'paused' : 'running'
       } as CSSProperties,
       mainStyle: { fontSize: Math.max(8, Math.round(capStyle.fontSize * k)) } as CSSProperties,
       subStyle: {
         fontSize: Math.max(8, Math.round(capStyle.fontSize * capStyle.subScale * k))
       } as CSSProperties
     }
-  }, [mpvMode, hostSize, seqMode, seqQueue, seqPlayback, currentTime, clipPlay, musicCaption, capStyle, meta])
+  }, [mpvMode, hostSize, seqMode, seqQueue, seqPlayback, currentTime, clipPlay, musicCaption, capStyle, meta, mpvPaused])
   // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置
   let seqTime = 0
   if (seqPlayback && seqQueue) {
