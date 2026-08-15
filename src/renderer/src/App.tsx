@@ -516,6 +516,7 @@ export function App() {
     setSelected(relPath)
     currentRelRef.current = relPath
     setSelectedSeg(null)
+    setMusicSeg(null) // 音楽ビューのナッジ対象も外す（別の動画を開いた時点で無関係）
     // 通常の動画選択ではクリップのループ範囲を解除（openClip の跨ぎ時は直後に再設定される）
     clipPlayRef.current = null
     setClipPlay(null)
@@ -1222,12 +1223,29 @@ export function App() {
     [selected, keyframes, duration, segments.length, showStatus]
   )
 
-  // 区間のリサイズ/移動: 新しい in/out をキーフレームスナップして永続化
+  /**
+   * 区間のリサイズ/移動: 新しい in/out をキーフレームスナップして永続化。
+   *
+   * `opts` は**開いていない動画の区間を編集するとき**に渡す（音楽ビューのナッジ）。
+   * 省略すると、いま開いている動画のキーフレーム / 尺 / 区間一覧を使う（従来の経路）。
+   */
   const updateSegmentTimes = useCallback(
-    (id: number, inT: number, outT: number) => {
-      const inSnapped = keyframes.length ? keyframeBefore(keyframes, inT) : inT
-      const outSnapped = keyframes.length ? keyframeAfter(keyframes, outT, duration || outT) : outT
-      const prev = segmentsRef.current.find((s) => s.id === id)
+    (
+      id: number,
+      inT: number,
+      outT: number,
+      opts?: {
+        keyframes?: number[]
+        durationSec?: number
+        /** undo に積む変更前の値。開いている動画に無い区間はここから取る */
+        prev?: { inTime: number; outTime: number; inSnapped: number | null; outSnapped: number | null }
+      }
+    ) => {
+      const kf = opts?.keyframes ?? keyframes
+      const dur = opts?.durationSec ?? duration
+      const inSnapped = kf.length ? keyframeBefore(kf, inT) : inT
+      const outSnapped = kf.length ? keyframeAfter(kf, outT, dur || outT) : outT
+      const prev = segmentsRef.current.find((s) => s.id === id) ?? opts?.prev
       setSegments((prev) =>
         prev
           .map((s) =>
@@ -1255,6 +1273,27 @@ export function App() {
     [keyframes, duration]
   )
 
+  /**
+   * 音楽タイムラインで選んだクリップ（ナッジの対象）。
+   *
+   * **プレイヤーが別の動画を映していても編集できるように、選んだクリップを丸ごと控える。**
+   * これが無いと「対象の区間は開いている動画の `segments` から引く」しかなく、選ぶたびに
+   * その動画を読み込む必要があった（= 選んだだけで再生位置が 0 に戻っていた）。
+   */
+  const [musicSeg, setMusicSeg] = useState<ClipItem | null>(null)
+  /**
+   * 動画ごとのキーフレーム。ナッジは開いていない動画も対象にするので relPath で引く。
+   * 本体（main）側も DB キャッシュを持つが、ここで持てば IPC 自体を省ける。
+   */
+  const kfCacheRef = useRef(new Map<string, number[]>())
+  const getKeyframesFor = useCallback(async (relPath: string): Promise<number[]> => {
+    const hit = kfCacheRef.current.get(relPath)
+    if (hit) return hit
+    const kf = await api.getKeyframes(relPath)
+    kfCacheRef.current.set(relPath, kf)
+    return kf
+  }, [])
+
   /** クリップ一覧（ClipsView）へ区間の時刻変更をその場で反映するためのパッチ */
   const [segPatch, setSegPatch] = useState<{
     id: number
@@ -1270,35 +1309,45 @@ export function App() {
    * キーフレーム 1 個分（秒数指定の微調整はキーフレームを跨がない限り結果に現れない）。
    */
   const nudgeSelectedSeg = useCallback(
-    (edge: 'in' | 'out', dir: -1 | 1) => {
-      if (selectedSeg == null || keyframes.length === 0) return
-      const s = segments.find((x) => x.id === selectedSeg)
+    async (edge: 'in' | 'out', dir: -1 | 1) => {
+      if (selectedSeg == null) return
+      // 対象は「開いている動画の区間」を優先し、無ければ音楽ビューで選んだクリップ。
+      // 後者はプレイヤーが別の動画を映していても編集できる（選んでも動画を切り替えないため）。
+      const open = segments.find((x) => x.id === selectedSeg)
+      const s = open ?? (musicSeg?.id === selectedSeg ? musicSeg : null)
       if (!s) return
-      const dur = duration || meta?.durationSec || 0
+      const kf = open ? keyframes : await getKeyframesFor(s.videoRelPath)
+      if (kf.length === 0) return
+      // 尺は out 側の頭打ちにだけ使う。開いていない動画では控えたクリップの値を使う
+      const dur = open ? duration || meta?.durationSec || 0 : musicSeg?.videoDurationSec || 0
       const EPS = 0.001
       let inT = s.inTime
       let outT = s.outTime
       if (edge === 'in') {
-        const cur = s.inSnapped ?? keyframeBefore(keyframes, s.inTime)
+        const cur = s.inSnapped ?? keyframeBefore(kf, s.inTime)
         const target =
-          dir < 0
-            ? keyframeBefore(keyframes, cur - EPS)
-            : keyframeAfter(keyframes, cur + EPS, dur || cur)
+          dir < 0 ? keyframeBefore(kf, cur - EPS) : keyframeAfter(kf, cur + EPS, dur || cur)
         if (Math.abs(target - cur) < EPS) return // 先頭 / 末尾でこれ以上動けない
         if (target >= outT - 0.05) return // out を跨がない
         inT = target
       } else {
-        const cur = s.outSnapped ?? keyframeAfter(keyframes, s.outTime, dur || s.outTime)
+        const cur = s.outSnapped ?? keyframeAfter(kf, s.outTime, dur || s.outTime)
         const target =
-          dir < 0
-            ? keyframeBefore(keyframes, cur - EPS)
-            : keyframeAfter(keyframes, cur + EPS, dur || cur)
+          dir < 0 ? keyframeBefore(kf, cur - EPS) : keyframeAfter(kf, cur + EPS, dur || cur)
         if (Math.abs(target - cur) < EPS) return
         if (target <= inT + 0.05) return // in を跨がない
         outT = dur > 0 ? Math.min(target, dur) : target
       }
-      const snapped = updateSegmentTimes(selectedSeg, inT, outT)
+      const snapped = updateSegmentTimes(selectedSeg, inT, outT, {
+        keyframes: kf,
+        durationSec: dur,
+        prev: s
+      })
       setSegPatch({ id: selectedSeg, inTime: inT, outTime: outT, ...snapped })
+      // 控えも進めておく。そうしないと続けて押したときに毎回同じ値から計算してしまう
+      setMusicSeg((cur) =>
+        cur && cur.id === selectedSeg ? { ...cur, inTime: inT, outTime: outT, ...snapped } : cur
+      )
       // クリップ再生中はループ範囲も新しいスナップ値に追従させる（再生位置はそのまま）。
       // クリップ画面とシーケンス画面（パレットのプレビュー再生）の両方が対象。
       if ((view === 'clips' || view === 'sequence') && clipPlayRef.current) {
@@ -1316,30 +1365,38 @@ export function App() {
         setSeqQueue((cur) => (cur ? patched : cur))
       }
     },
-    [selectedSeg, segments, keyframes, duration, meta, updateSegmentTimes, setClipPlayRange, view]
+    [
+      selectedSeg,
+      segments,
+      musicSeg,
+      keyframes,
+      duration,
+      meta,
+      getKeyframesFor,
+      updateSegmentTimes,
+      setClipPlayRange,
+      view
+    ]
   )
 
   /**
    * 音楽タイムラインでクリップを選んだとき: in/out ナッジの対象をそのクリップにする。
    * これが無いと、`loadSeqIndex` が立てた「再生中のクリップ」が対象のままになり、
    * 選んでいるクリップではなく再生中のクリップが伸び縮みする。
+   *
+   * **プレイヤーには一切触らない。** 以前は別動画のクリップを選ぶと `selectVideo` で
+   * その動画を読み込んでいたが（ナッジが「開いている動画」の値を使う作りだったため）、
+   * 選んだだけで再生位置が 0 に戻ってシークバーが飛んでいた。いまはクリップを控えて
+   * キーフレームを relPath で引くので、動画を開き直す必要がない。
    */
   const selectMusicClip = useCallback(
     (clip: ClipItem) => {
       setSelectedSeg(clip.id)
-      // ナッジは「いま開いている動画」のキーフレームと区間を使うので、別動画なら読み込む。
-      // 再生中に映像を切り替えると連続再生が壊れるので、そのときは触らない
-      // （その場合 `nudgeSelectedSeg` は対象の区間を見つけられず何もしない）。
-      const playingNow = mpvModeRef.current
-        ? !mpvPausedRef.current
-        : !!videoRef.current && !videoRef.current.paused
-      if (!playingNow && currentRelRef.current !== clip.videoRelPath) {
-        void selectVideo(clip.videoRelPath).then(() => {
-          if (currentRelRef.current === clip.videoRelPath) setSelectedSeg(clip.id)
-        })
-      }
+      setMusicSeg(clip)
+      // 押した瞬間に待たせないよう、キーフレームだけ先に引いておく（失敗しても押下時に再試行）
+      void getKeyframesFor(clip.videoRelPath).catch(() => void 0)
     },
-    [selectVideo]
+    [getKeyframesFor]
   )
 
   const deleteSeg = useCallback(
@@ -1842,6 +1899,11 @@ export function App() {
   // クリップ画面 / シーケンス画面でクリップを開いている間は、シークバーをクリップ範囲 [in,out] 表示にする
   const clipMode = (view === 'clips' || view === 'sequence') && clipPlay != null
   const fullDur = duration || meta?.durationSec || 0
+  /**
+   * ナッジできない状態。開いている動画の区間はキーフレームが要るが、
+   * 音楽ビューで選んだクリップは押されたときに relPath で引くので、開いていなくても押せる。
+   */
+  const nudgeDisabled = keyframes.length === 0 && musicSeg?.id !== selectedSeg
 
   // シーケンス再生中（および停止後もキューを保持している間）は、
   // シークバーを「クリップを連結した仮想タイムライン（0..合計）」にする
@@ -2057,15 +2119,15 @@ export function App() {
                     >
                       <button
                         className="nudge-btn"
-                        disabled={keyframes.length === 0}
-                        onClick={() => nudgeSelectedSeg('in', -1)}
+                        disabled={nudgeDisabled}
+                        onClick={() => void nudgeSelectedSeg('in', -1)}
                       >
                         ◀
                       </button>
                       <button
                         className="nudge-btn"
-                        disabled={keyframes.length === 0}
-                        onClick={() => nudgeSelectedSeg('in', 1)}
+                        disabled={nudgeDisabled}
+                        onClick={() => void nudgeSelectedSeg('in', 1)}
                       >
                         ▶
                       </button>
@@ -2102,15 +2164,15 @@ export function App() {
                     >
                       <button
                         className="nudge-btn"
-                        disabled={keyframes.length === 0}
-                        onClick={() => nudgeSelectedSeg('out', -1)}
+                        disabled={nudgeDisabled}
+                        onClick={() => void nudgeSelectedSeg('out', -1)}
                       >
                         ◀
                       </button>
                       <button
                         className="nudge-btn"
-                        disabled={keyframes.length === 0}
-                        onClick={() => nudgeSelectedSeg('out', 1)}
+                        disabled={nudgeDisabled}
+                        onClick={() => void nudgeSelectedSeg('out', 1)}
                       >
                         ▶
                       </button>
