@@ -2909,8 +2909,8 @@ export const MusicTimeline = memo(function MusicTimeline({
             </div>
             <div className="modal-foot">
               <span className="modal-summary">
-                テロップを入れたクリップだけ再エンコードされます（他は無劣化のまま）。
-                可変フォント（VF）は既定のウェイトで焼かれます。
+                テロップのあるクリップだけ再エンコード（他は無劣化のまま）。
+                可変フォントは既定のウェイトで焼かれます。
               </span>
               <button className="btn primary" onClick={() => setCapPanel(false)}>
                 閉じる
