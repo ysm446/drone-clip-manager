@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import { basename, extname, join } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -8,6 +9,31 @@ import type { CaptionStyle, ConcatBgm, ConcatItem, ExportJob, ExportOptions } fr
 
 // ロスレス書き出し（stream copy / spec §6.3）。再エンコードしない。
 const FFMPEG = 'ffmpeg'
+const FFPROBE = 'ffprobe'
+const execFileP = promisify(execFile)
+
+/**
+ * 映像ストリームの実尺（秒）。取得できなければ null。
+ *
+ * stream copy はパケット境界でしか切れないため、連結結果の映像の長さは
+ * レイアウト上の総尺と僅かにずれる。BGM 合成の長さ合わせには、レイアウトの値ではなく
+ * この実尺を使う（詳細は bgmArgs の解説を参照）。
+ */
+async function probeVideoDurationSec(absPath: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileP(FFPROBE, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=duration',
+      '-of', 'csv=p=0',
+      absPath
+    ])
+    const v = Number.parseFloat(stdout.trim())
+    return Number.isFinite(v) && v > 0 ? v : null
+  } catch {
+    return null
+  }
+}
 
 /** Windows で無効なファイル名文字を除去 */
 function sanitize(name: string): string {
@@ -60,14 +86,26 @@ function uniquePath(dir: string, stem: string, ext: string): string {
 /**
  * 連結結果に BGM を載せる ffmpeg 引数（Phase 2.6b）。
  * 映像は copy のまま、音声は BGM で上書きする（元音声は出力に含めない）。
- * 曲が総尺 T より短い場合は apad で無音を足し、長い場合は -t で切る。
+ * 曲が実尺 durSec より短い場合は apad で無音を足し、長い場合は -t で切る。
+ *
+ * `durSec` には**連結後の映像の実尺**（probeVideoDurationSec の値）を渡すこと。
+ *
+ * 音声は映像より **1ms 短く**終わらせる。mp4 の一部のヘッダ（エディットリスト等）は
+ * ミリ秒精度でしか長さを持てず、映像と同尺の音声はそこで映像より長い値へ切り上がる。
+ * DaVinci Resolve はその値からフレーム数を数えるため、存在しない最終フレームが
+ * 1 枚できて「メディアオフライン」になる（実測）。1ms 短ければどの丸め方でも
+ * 音声のミリ秒値 ≤ 映像の実尺になり、フレーム数が映像を超えない。聴感上の影響はない。
  */
-function bgmArgs(concatPath: string, bgm: ConcatBgm, totalDur: number, outPath: string): string[] {
-  const filters = [`apad=whole_dur=${totalDur.toFixed(3)}`]
+function bgmArgs(concatPath: string, bgm: ConcatBgm, durSec: number, outPath: string): string[] {
+  const audioDur = Math.max(0, durSec - 0.001)
+  const filters = [
+    `atrim=end=${audioDur.toFixed(6)}`,
+    `apad=whole_dur=${audioDur.toFixed(6)}`
+  ]
   if (bgm.fadeInSec > 0) filters.push(`afade=t=in:st=0:d=${bgm.fadeInSec.toFixed(3)}`)
   if (bgm.fadeOutSec > 0) {
-    const st = Math.max(0, totalDur - bgm.fadeOutSec)
-    filters.push(`afade=t=out:st=${st.toFixed(3)}:d=${bgm.fadeOutSec.toFixed(3)}`)
+    const st = Math.max(0, audioDur - bgm.fadeOutSec)
+    filters.push(`afade=t=out:st=${st.toFixed(6)}:d=${bgm.fadeOutSec.toFixed(3)}`)
   }
   return [
     '-i', concatPath,
@@ -80,7 +118,7 @@ function bgmArgs(concatPath: string, bgm: ConcatBgm, totalDur: number, outPath: 
     '-c:a', 'aac',
     '-b:a', '256k',
     '-af', filters.join(','),
-    '-t', totalDur.toFixed(3),
+    '-t', durSec.toFixed(6),
     '-movflags', '+faststart',
     outPath
   ]
@@ -645,8 +683,10 @@ export async function exportConcat(
 
     // 3. BGM を合成（映像は copy のまま、音声だけ BGM で上書き）
     if (bgm) {
+      // 長さ合わせはレイアウト総尺ではなく連結結果の実尺で（末尾の読めないフレーム対策）
+      const videoDur = (await probeVideoDurationSec(concatOut)) ?? totalDur
       await runFfmpeg(
-        bgmArgs(concatOut, bgm, totalDur, outPath),
+        bgmArgs(concatOut, bgm, videoDur, outPath),
         (sec) =>
           onProgress(
             'bgm',
