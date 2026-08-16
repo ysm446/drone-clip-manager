@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  CaptionStyle,
   ClipItem,
   ConcatBgm,
   ConcatItem,
@@ -42,12 +41,6 @@ export interface SeqPlayItem {
    */
   inSec?: number
   outSec?: number
-  /**
-   * このクリップの頭に焼き付けるテロップ（Phase 2.6d/e）。
-   * 再生中はプレイヤーにライブ表示する（書き出しでは drawtext で焼かれる）。
-   */
-  caption?: string | null
-  captionDurSec?: number | null
   /**
    * この項目が曲のどこに置かれているか（秒 / 音楽ビューの絶対位置）。
    * クリップの間に隙間があると「再生した尺の合計」と曲の位置がずれるため、
@@ -107,10 +100,7 @@ interface Props {
    * 音楽タイムラインでクリップを選んだときの通知。
    * 上部プレイヤーの in/out ナッジの対象を、選んだクリップへ切り替えるために使う。
    */
-  onSelectClip?: (
-    clip: ClipItem,
-    caption?: { text: string; durSec: number | null } | null
-  ) => void
+  onSelectClip?: (clip: ClipItem) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこのクリップを開く */
   onEditClip: (clip: ClipItem) => void
   /** 右クリックメニュー「ライブラリで元動画を編集」: ライブラリ画面へ切り替えて元動画 + この区間を開く */
@@ -239,14 +229,11 @@ export const SequenceView = memo(function SequenceView({
   /** シーケンス一覧の「…」メニュー（複製 / 削除） */
   const [seqMenu, setSeqMenu] = useState<{ x: number; y: number; seq: Sequence } | null>(null)
 
-  /** 音楽ビューが出しているパネル（テロップ設定など）。mpv を隠す判断に混ぜる。 */
-  const [musicOverlay, setMusicOverlay] = useState(false)
-
   // モーダル / パネルの表示中は mpv（ネイティブ最前面）に覆われないよう App へ通知して隠してもらう
   useEffect(() => {
-    onModalOpenChange(exporting != null || exportResult != null || musicOverlay)
+    onModalOpenChange(exporting != null || exportResult != null)
     return () => onModalOpenChange(false) // アンマウント（タブ切替）時は解除
-  }, [exporting, exportResult, musicOverlay, onModalOpenChange])
+  }, [exporting, exportResult, onModalOpenChange])
   // 列の幅とその境界（スプリッタ）は App 側が持つ（.main.view-sequence のグリッドで配置するため）
   /** 接続中のドラッグ（出力ポート → 入力ポート）。座標はキャンバス内容座標。 */
   const [connecting, setConnecting] = useState<{ srcNodeId: number; x: number; y: number } | null>(
@@ -345,8 +332,7 @@ export const SequenceView = memo(function SequenceView({
       const items: SeqPlayItem[] = []
       for (const id of order) {
         const n = byId.get(id)
-        if (n?.clip)
-        items.push({ nodeId: n.id, clip: n.clip, caption: n.caption, captionDurSec: n.captionDurSec })
+        if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
       }
       if (items.length > 0) {
         onJumpToNode(items, items[0].nodeId)
@@ -415,9 +401,7 @@ export const SequenceView = memo(function SequenceView({
         startSec: n.startSec,
         durSec: n.durSec,
         srcOffset: n.srcOffset,
-        lane: n.lane,
-        caption: n.caption,
-        captionDurSec: n.captionDurSec
+        lane: n.lane
       })),
       edges: edgesRef.current.map((e) => ({
         id: e.id,
@@ -443,9 +427,7 @@ export const SequenceView = memo(function SequenceView({
           startSec: n.startSec,
           durSec: n.durSec,
           srcOffset: n.srcOffset,
-          lane: n.lane,
-          caption: n.caption,
-          captionDurSec: n.captionDurSec
+          lane: n.lane
         })),
         edges: g.edges.map((e) => ({ id: e.id, srcNodeId: e.srcNodeId, dstNodeId: e.dstNodeId }))
       }
@@ -517,8 +499,7 @@ export const SequenceView = memo(function SequenceView({
     const items: SeqPlayItem[] = []
     for (const id of order) {
       const n = byId.get(id)
-      if (n?.clip)
-        items.push({ nodeId: n.id, clip: n.clip, caption: n.caption, captionDurSec: n.captionDurSec })
+      if (n?.clip) items.push({ nodeId: n.id, clip: n.clip })
     }
     return items
   }, [nodes, liveNodeIds, edges])
@@ -701,9 +682,7 @@ export const SequenceView = memo(function SequenceView({
             startSec: n.startSec,
             durSec: n.durSec,
             srcOffset: n.srcOffset,
-            lane: n.lane,
-            caption: n.caption,
-            captionDurSec: n.captionDurSec
+            lane: n.lane
           }
         }),
         edges: edgesRef.current.map((e) => ({
@@ -1157,11 +1136,7 @@ export const SequenceView = memo(function SequenceView({
    * in / out は拍に合わせて算出済みのものを受け取り、BGM を合成して 1 本に出す。
    * 既存の「連結書き出し」「分割書き出し」の挙動には影響しない。
    */
-  const runMusicExport = async (
-    items: ConcatItem[],
-    bgm: ConcatBgm,
-    caption: CaptionStyle
-  ): Promise<void> => {
+  const runMusicExport = async (items: ConcatItem[], bgm: ConcatBgm): Promise<void> => {
     if (items.length === 0 || activeId == null || exporting) return
     if (!checkConcatCompatible()) return
     const dir = await api.pickExportDir()
@@ -1170,7 +1145,7 @@ export const SequenceView = memo(function SequenceView({
     setExporting({ phase: 'cut', index: 0, total: items.length, percent: 0 })
     const off = api.onConcatProgress(setExporting)
     try {
-      setExportResult(await api.exportSequenceConcat(items, dir, name, bgm, caption))
+      setExportResult(await api.exportSequenceConcat(items, dir, name, bgm))
     } finally {
       off()
       setExporting(null)
@@ -1473,7 +1448,6 @@ export const SequenceView = memo(function SequenceView({
             onExport={runMusicExport}
             exporting={exporting != null}
             onStatus={onStatus}
-            onOverlayChange={setMusicOverlay}
           />
         ) : (
         <div

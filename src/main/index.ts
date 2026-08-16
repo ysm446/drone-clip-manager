@@ -34,7 +34,7 @@ import type { MpvEvent } from '../shared/types'
  * mpv 埋め込みは「Electron 33 の Chromium が DJI の HEVC 4K60 10bit HLG をデコード
  * できない」ことへの対処だったが、Electron 43 の Chromium では直接再生できることを
  * 実機で確認した（60fps・正確シーク 20〜79ms・HLG のトーンマップ正常）。
- * <video> ならプレイヤーが DOM に入るので、テロップやモーダルを普通に重ねられる。
+ * <video> ならプレイヤーが DOM に入るので、モーダルなどを普通に重ねられる。
  *
  * mpv（設定ファイルの `playbackEngine: 'mpv'`）は HEVC が再生できない環境向けの退避先。
  */
@@ -155,15 +155,6 @@ function registerMediaProtocol(): void {
     try {
       const url = new URL(request.url)
       const relPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
-      // font はフォントファイルの絶対パスをそのまま受ける（テロップのライブ表示 / Phase 2.6e）。
-      // レンダラは dev 時 http://localhost なので file:// を fetch できず、FontFace の
-      // 読み込みにはこの経路が要る。フォント（.ttf/.ttc/.otf）以外は返さない。
-      if (url.host === 'font') {
-        if (!/\.(ttf|ttc|otf|otc)$/i.test(relPath)) {
-          return new Response('font のみ', { status: 403 })
-        }
-        return serveFile(relPath, request)
-      }
       const abs =
         url.host === 'bgm'
           ? resolveInBgm(relPath)

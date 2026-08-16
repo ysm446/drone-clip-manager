@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
-  CaptionStyle,
   ClipItem,
   RootInfo,
   Segment,
@@ -26,7 +25,6 @@ import {
   type SeqPlayBgm,
   type SeqPlayItem
 } from './components/SequenceView'
-import { loadCaptionStyle } from './components/MusicTimeline'
 import { Splitter } from './components/Splitter'
 import { PlayerSeek } from './components/PlayerSeek'
 import { TagEditor } from './components/TagEditor'
@@ -437,54 +435,6 @@ export function App() {
    * 映像だけ止め、曲は鳴らし続けて、次のクリップの曲位置に届いたら読み込む。
    * `gapHold`（state）は mpv を隠す / 黒い覆いを出すために使う。
    */
-
-  // --- テロップのライブ表示（Phase 2.6e）---
-  // 再生エンジンが <video> になり映像が DOM に入ったので、書き出しで焼かれるテロップを
-  // そのまま映像の上に重ねて出せる。描画は CSS なので drawtext と 1px までは一致しないが、
-  // フォント・サイズ・位置・影は同じ値から計算する（正確な焼き上がりは書き出しで確認）。
-  /** テロップの見た目（音楽ビューの「テロップ設定」と同じ保存値。変更はイベントで届く） */
-  const [capStyle, setCapStyle] = useState<CaptionStyle>(loadCaptionStyle)
-  useEffect(() => {
-    const onStyle = (e: Event): void => setCapStyle((e as CustomEvent).detail as CaptionStyle)
-    window.addEventListener('dcm:caption-style', onStyle)
-    return () => window.removeEventListener('dcm:caption-style', onStyle)
-  }, [])
-  /**
-   * 設定されたフォントを FontFace で読み込む。**dcm-media://font/ 経由**にしている:
-   * dev のレンダラは http://localhost なので file:// のフォントを fetch できない。
-   */
-  useEffect(() => {
-    let alive = true
-    const url = `dcm-media://font/${encodeURIComponent(capStyle.fontFile.replace(/\\/g, '/'))}`
-    const face = new FontFace('dcm-caption-font', `url("${url}")`)
-    face
-      .load()
-      .then((fc) => {
-        if (alive) document.fonts.add(fc)
-      })
-      .catch(() => void 0)
-    return () => {
-      alive = false
-      document.fonts.delete(face)
-    }
-  }, [capStyle.fontFile])
-  /** 音楽ビューで選んだクリップのテロップ（クリップ単体プレビューで出す） */
-  const [musicCaption, setMusicCaption] = useState<{
-    text: string
-    durSec: number | null
-  } | null>(null)
-  /** <video> の器。テロップの位置計算（レターボックス補正）に使う */
-  const videoHostRef = useRef<HTMLDivElement>(null)
-  const [hostSize, setHostSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
-  useEffect(() => {
-    const el = videoHostRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setHostSize({ w: el.clientWidth, h: el.clientHeight }))
-    ro.observe(el)
-    setHostSize({ w: el.clientWidth, h: el.clientHeight })
-    return () => ro.disconnect()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mpvMode])
 
   const [gapHold, setGapHold] = useState(false)
   const gapTimerRef = useRef<number | null>(null)
@@ -1701,7 +1651,6 @@ export function App() {
   const openClip = useCallback(
     (clip: Segment) => {
       exitSequence() // クリップ単体の再生に切り替えるのでシーケンス表示を解除
-      setMusicCaption(null) // 別のクリップのテロップを持ち越さない（selectMusicClip が後から設定する）
       const t = clip.inSnapped ?? clip.inTime
       const range = { in: t, out: clip.outSnapped ?? clip.outTime }
       if (currentRelRef.current === clip.videoRelPath) {
@@ -1743,15 +1692,13 @@ export function App() {
    * （2026-08-15 の報告）。曲の後ろの余り（最後のクリップより後ろ）も同じ状態。
    */
   const selectMusicClip = useCallback(
-    (clip: ClipItem, caption?: { text: string; durSec: number | null } | null) => {
+    (clip: ClipItem) => {
       setSelectedSeg(clip.id)
       setMusicSeg(clip)
       // 押した瞬間に待たせないよう、キーフレームだけ先に引いておく（失敗しても押下時に再試行）
       void getKeyframesFor(clip.videoRelPath).catch(() => void 0)
       const inGap = gapTimerRef.current != null
       if (!seqPlayingRef.current || inGap) openClip(clip)
-      // openClip が控えを消すので、そのあとに設定する（ライブ表示用）
-      setMusicCaption(caption ?? null)
     },
     [getKeyframesFor, openClip]
   )
@@ -2140,83 +2087,6 @@ export function App() {
   }, [seqQueue, seqIdx])
   const seqMode = seqPlayback != null
 
-  /**
-   * いま出すべきテロップ（シーケンス再生中 > 選んだクリップの単体プレビュー）。
-   * 表示ウィンドウ（クリップの頭から N 秒）は書き出しと同じ規則で判定する。
-   * 位置と大きさは 4K（高さ 2160）基準の設定値を、表示中の映像の実寸へ換算する
-   * （object-fit: contain のレターボックスを補正）。
-   */
-  const liveCaption = useMemo(() => {
-    if (mpvMode || hostSize.w <= 0) return null
-    let text: string | null = null
-    let durSec: number | null = null
-    let elapsed = -1
-    if (seqMode && seqQueue && seqPlayback) {
-      const item = seqQueue[seqPlayback.idx]
-      if (item?.caption) {
-        text = item.caption
-        durSec = item.captionDurSec ?? null
-        elapsed = currentTime - itemIn(item)
-      }
-    } else if (clipPlay && musicCaption) {
-      text = musicCaption.text
-      durSec = musicCaption.durSec
-      elapsed = currentTime - clipPlay.in
-    }
-    if (!text) return null
-    const showSec = durSec ?? capStyle.defaultDurSec
-    if (elapsed < -0.05 || elapsed >= showSec) return null
-
-    const vw = meta?.width || 3840
-    const vh = meta?.height || 2160
-    const fit = Math.min(hostSize.w / vw, hostSize.h / vh)
-    const offX = (hostSize.w - vw * fit) / 2
-    const offY = (hostSize.h - vh * fit) / 2
-    const k = (vh * fit) / 2160 // 4K 基準の px → 表示 px
-    const right = capStyle.position.endsWith('right')
-    const top = capStyle.position.startsWith('top')
-    const [main, ...rest] = text.split('\n')
-    const sub = rest.join(' ').trim()
-    // 影。ぼかしは CSS の text-shadow の 3 つ目の値でそのまま表現できる
-    const sOff = Math.max(1, Math.round(capStyle.shadowOffset * k))
-    const sBlur = Math.round(capStyle.shadowBlur * k)
-    const shadow =
-      capStyle.shadowAlpha > 0.001 && capStyle.shadowOffset > 0
-        ? `${sOff}px ${sOff}px ${sBlur}px rgba(0,0,0,${capStyle.shadowAlpha})`
-        : 'none'
-    return {
-      key: `${text}|${seqMode ? seqPlayback?.idx : 'clip'}`,
-      main,
-      sub,
-      container: {
-        ...(right
-          ? { right: Math.round(offX + capStyle.marginX * k) }
-          : { left: Math.round(offX + capStyle.marginX * k) }),
-        ...(top
-          ? { top: Math.round(offY + capStyle.marginY * k) }
-          : { bottom: Math.round(offY + capStyle.marginY * k) }),
-        alignItems: right ? 'flex-end' : 'flex-start',
-        gap: Math.round(capStyle.lineGap * k),
-        color: capStyle.fontColor.replace(/^0x/i, '#'),
-        textShadow: shadow,
-        // フェードイン + アウトを CSS アニメーション 2 本で（アウトは表示終了に合わせて遅延開始）。
-        // 一時停止中は進めない（止めて見ている間にテロップだけ消えてしまわないように）
-        animation: [
-          capStyle.fadeInSec > 0.001 ? `cap-fadein ${capStyle.fadeInSec}s ease` : '',
-          capStyle.fadeOutSec > 0.001
-            ? `cap-fadeout ${capStyle.fadeOutSec}s ease ${Math.max(0, showSec - capStyle.fadeOutSec).toFixed(2)}s forwards`
-            : ''
-        ]
-          .filter(Boolean)
-          .join(', '),
-        animationPlayState: mpvPaused ? 'paused' : 'running'
-      } as CSSProperties,
-      mainStyle: { fontSize: Math.max(8, Math.round(capStyle.fontSize * k)) } as CSSProperties,
-      subStyle: {
-        fontSize: Math.max(8, Math.round(capStyle.fontSize * capStyle.subScale * k))
-      } as CSSProperties
-    }
-  }, [mpvMode, hostSize, seqMode, seqQueue, seqPlayback, currentTime, clipPlay, musicCaption, capStyle, meta, mpvPaused])
   // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置
   let seqTime = 0
   if (seqPlayback && seqQueue) {
@@ -2398,7 +2268,7 @@ export function App() {
               </>
             ) : (
               // mpv-host と同じ役割の器。player-gap / proxy-overlay を映像領域だけに被せる
-              <div className="video-host" ref={videoHostRef}>
+              <div className="video-host">
                 <VideoPlayer
                   ref={videoRef}
                   src={videoSrc}
@@ -2411,13 +2281,6 @@ export function App() {
                 />
                 {/* 隙間で黒のまま待つ間の覆い（<video> は直前のコマが残るため） */}
                 {gapHold && <div className="player-gap" />}
-                {/* テロップのライブ表示（書き出しと同じ値から計算。正確な焼き上がりは書き出しで） */}
-                {liveCaption && (
-                  <div key={liveCaption.key} className="cap-live" style={liveCaption.container}>
-                    <div style={liveCaption.mainStyle}>{liveCaption.main}</div>
-                    {liveCaption.sub && <div style={liveCaption.subStyle}>{liveCaption.sub}</div>}
-                  </div>
-                )}
                 {proxyGen.active && (
                   <div className="proxy-overlay">
                     <div className="proxy-spin" />

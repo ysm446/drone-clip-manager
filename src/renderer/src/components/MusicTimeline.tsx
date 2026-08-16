@@ -3,7 +3,6 @@ import type { ReactElement } from 'react'
 import type {
   BeatAnalysis,
   BgmInfo,
-  CaptionStyle,
   ClipItem,
   ConcatBgm,
   ConcatItem,
@@ -71,48 +70,6 @@ const DRAG_LABELS: Record<'move' | 'dur' | 'trimL' | 'slip', string> = {
 }
 /** クリップパレットからのドラッグ。値は segment id。 */
 const MIME_CLIP = 'application/x-dcm-clip'
-/**
- * 焼き付けテロップの既定スタイル（Phase 2.6d）。
- * 実素材（4K / HLG）に Noto Serif JP で焼いて決めた値。数値はすべて 4K（高さ 2160）基準。
- * **HLG では純白（1023）が眩しい**ので、文字色は少し落としてある。
- */
-export const CAPTION_STYLE_KEY = 'dcm.mtl.captionStyle'
-export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
-  fontFile: 'C:/Windows/Fonts/NotoSerifJP-VF.ttf',
-  fontSize: 150,
-  subScale: 0.53,
-  lineGap: 30,
-  fontColor: '0xF5F5F5',
-  shadowAlpha: 0.5,
-  shadowOffset: 4,
-  shadowBlur: 6,
-  marginX: 140,
-  marginY: 120,
-  position: 'bottom-left',
-  defaultDurSec: 4,
-  fadeInSec: 0.5,
-  fadeOutSec: 0.5
-}
-
-/**
- * 保存済みのテロップスタイルを読む（App のライブ表示と共用）。
- * 旧形式の `fadeSec`（イン / アウト共通）は両方へ引き継ぐ。
- */
-export function loadCaptionStyle(): CaptionStyle {
-  try {
-    const raw = localStorage.getItem(CAPTION_STYLE_KEY)
-    if (!raw) return DEFAULT_CAPTION_STYLE
-    const parsed = JSON.parse(raw) as Partial<CaptionStyle> & { fadeSec?: number }
-    const merged = { ...DEFAULT_CAPTION_STYLE, ...parsed }
-    if (parsed.fadeSec != null && parsed.fadeInSec == null) {
-      merged.fadeInSec = parsed.fadeSec
-      merged.fadeOutSec = parsed.fadeSec
-    }
-    return merged
-  } catch {
-    return DEFAULT_CAPTION_STYLE
-  }
-}
 const SNAP_KEY = 'dcm.mtl.snapSec'
 const SNAP_BEATS_KEY = 'dcm.mtl.snapBeats'
 const BEAT_GRID_KEY = 'dcm.mtl.beatGrid'
@@ -121,8 +78,6 @@ const THUMB_KEY = 'dcm.mtl.showThumbs'
 const THUMB_MIN_W = 64
 /** 尺（秒）を出す最小のブロック幅 */
 const DUR_MIN_W = 52
-/** テロップの印を出す最小のブロック幅（px） */
-const CAPTION_MARK_MIN_W = 90
 /** 元の長さを併記する最小のブロック幅 */
 const SRCDUR_MIN_W = 120
 
@@ -234,8 +189,6 @@ interface MusicBlock {
   overflow: boolean
   /** 行の中での並び順（色分けに使う） */
   index: number
-  /** 焼き付けるテロップ（1 行目 = 地名 / 2 行目 = 地域名）。null で無し */
-  caption: string | null
 }
 
 /** 押し出しの解決対象（開始位置の昇順で渡す） */
@@ -365,21 +318,12 @@ interface Props {
    * クリップを選んだときの通知。上部プレイヤーの in/out ナッジの対象を、
    * 再生中のクリップではなく**選んだクリップ**にするために使う。
    */
-  onSelectClip?: (
-    clip: ClipItem,
-    caption?: { text: string; durSec: number | null } | null
-  ) => void
+  onSelectClip?: (clip: ClipItem) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
-  onExport?: (items: ConcatItem[], bgm: ConcatBgm, caption: CaptionStyle) => Promise<void>
+  onExport?: (items: ConcatItem[], bgm: ConcatBgm) => Promise<void>
   /** 書き出し実行中（ボタンを無効にする） */
   exporting?: boolean
   onStatus?: (text: string, kind?: 'ok' | 'err') => void
-  /**
-   * パネル（テロップの設定 / 入力）の開閉を伝える。
-   * **mpv はネイティブ最前面で DOM の上に出るため、開いている間は隠してもらう必要がある。**
-   * これを繋がないと、パネルはプレイヤーの裏に描かれて「押しても何も起きない」ように見える。
-   */
-  onOverlayChange?: (open: boolean) => void
 }
 
 export const MusicTimeline = memo(function MusicTimeline({
@@ -399,8 +343,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   onSelectClip,
   onExport,
   exporting,
-  onStatus,
-  onOverlayChange
+  onStatus
 }: Props) {
   const [bgmInfo, setBgmInfo] = useState<BgmInfo>({ dir: null, tracks: [] })
   const [seqBgm, setSeqBgm] = useState<SequenceBgm | null>(null)
@@ -523,63 +466,6 @@ export const MusicTimeline = memo(function MusicTimeline({
   const marqueeMovedRef = useRef(false)
   /** クリップの右クリックメニュー */
   const [menu, setMenu] = useState<{ x: number; y: number; nodeId: number } | null>(null)
-  /**
-   * テロップの編集（Phase 2.6d）。`main` が地名、`sub` が地域名。
-   * 保存は改行区切りの 1 つの文字列（1 行目 = 大 / 2 行目 = 小）。
-   */
-  const [capEdit, setCapEdit] = useState<{
-    nodeId: number
-    x: number
-    y: number
-    main: string
-    sub: string
-    durSec: string
-  } | null>(null)
-  /** 焼き付けスタイル（共通設定）。シーケンスごとではないので localStorage に持つ。 */
-  const [capStyle, setCapStyle] = useState<CaptionStyle>(loadCaptionStyle)
-  /** スタイル設定パネルを開いているか */
-  const [capPanel, setCapPanel] = useState(false)
-  /** 選べるフォント（インストール済み。ユーザーインストール分も含む） */
-  const [fonts, setFonts] = useState<{ name: string; path: string }[]>([])
-  /**
-   * 焼き付け結果のプレビュー画像。**再生中の映像には出せない**ので（テロップは書き出し時に
-   * 焼くもので、mpv はネイティブ最前面で DOM も重ねられない）、実際に焼いた 1 フレームを出す。
-   */
-  const [capPreview, setCapPreview] = useState<string | null>(null)
-  const [capPreviewBusy, setCapPreviewBusy] = useState(false)
-
-  const patchCapStyle = useCallback((patch: Partial<CaptionStyle>): void => {
-    setCapStyle((cur) => {
-      const next = { ...cur, ...patch }
-      localStorage.setItem(CAPTION_STYLE_KEY, JSON.stringify(next))
-      // プレイヤーのライブ表示（App 側）へも反映する。同一ウィンドウでは storage イベントが
-      // 飛ばないため、専用イベントで知らせる
-      window.dispatchEvent(new CustomEvent('dcm:caption-style', { detail: next }))
-      return next
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!capPanel || fonts.length > 0) return
-    void api.listFonts().then((list) => {
-      setFonts(list)
-      // 保存済みパスが大文字小文字だけ違うと一覧と一致せず、セレクタが生のパス表示に
-      // なってしまう（%WINDIR% は環境によって WINDOWS / Windows が揺れる）。正規の表記へ寄せる
-      const hit = list.find((x) => x.path.toLowerCase() === capStyle.fontFile.toLowerCase())
-      if (hit && hit.path !== capStyle.fontFile) patchCapStyle({ fontFile: hit.path })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capPanel, fonts.length])
-
-  /**
-   * パネルの開閉を伝える。**mpv を隠すのは入力欄（テロップの編集）を開くときだけ**。
-   * 設定パネルは画面下（タイムライン側）に置いて mpv と重ならないようにしてあるので隠さない。
-   * 隠すと、見た目を調整している最中に映像が消えてしまう。
-   */
-  useEffect(() => {
-    onOverlayChange?.(capEdit != null || capPanel)
-    return () => onOverlayChange?.(false)
-  }, [capEdit, capPanel, onOverlayChange])
   /**
    * 切り替えポイント（マーカー）。曲の絶対時刻で持ち、クリップの吸着先になる。
    * 拍・小節の自動グリッドは廃止したので、その役目を手で置くこれが担う。
@@ -822,9 +708,7 @@ export const MusicTimeline = memo(function MusicTimeline({
           /** 尺を手で決めているか（false なら自動） */
           manual: (pending?.get(b.key) ?? nodeById.get(b.key))?.durSec != null,
           /** 曲の終わりを越えているか */
-          overflow: startSec >= songDurationSec,
-          /** 焼き付けるテロップ（Phase 2.6d） */
-          caption: nodeById.get(b.key)?.caption ?? null
+          overflow: startSec >= songDurationSec
         }
       })
       .sort((a, b) => a.startSec - b.startSec)
@@ -931,8 +815,7 @@ export const MusicTimeline = memo(function MusicTimeline({
         short: durSec > avail + 0.001,
         manual: eff.durSec != null,
         overflow: startSec >= songDurationSec,
-        index: 0,
-        caption: n.caption
+        index: 0
       })
       rows.set(lane, list)
     }
@@ -1054,11 +937,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       const [only] = ids
       // 予備の行の札も対象にする（順路の items だけを見ると、予備を選んでも通知できない）
       const n = nodeById.get(only)
-      if (n?.clip)
-        onSelectClip?.(
-          n.clip,
-          n.caption ? { text: n.caption, durSec: n.captionDurSec } : null
-        )
+      if (n?.clip) onSelectClip?.(n.clip)
     },
     [nodeById, onSelectClip]
   )
@@ -1523,9 +1402,6 @@ export const MusicTimeline = memo(function MusicTimeline({
         clip: b.clip,
         inSec,
         outSec: inSec + (b.endSec - b.startSec),
-        // テロップのライブ表示用（プレイヤーがクリップの頭で出す）
-        caption: b.caption,
-        captionDurSec: nodeById.get(b.key)?.captionDurSec ?? null,
         // 隙間を飛ばしても曲とズレないように、曲のどこに置いてあるかも渡す
         songSec: b.startSec
       }
@@ -1651,64 +1527,6 @@ export const MusicTimeline = memo(function MusicTimeline({
       ? runPlacementEdit('尺を自動に戻す', apply)
       : apply().then(() => onNodesChanged?.()))
   }
-
-  /**
-   * テロップを保存する（Phase 2.6d）。**undo に載せる**（配置編集と同じ扱い）。
-   * 1 行目 = 地名、2 行目 = 地域名。どちらも空なら解除。
-   */
-  const saveCaption = useCallback(
-    (nodeId: number, main: string, sub: string, durSec: number | null): void => {
-      const text = [main.trim(), sub.trim()].filter(Boolean).join('\n')
-      const apply = async (): Promise<void> => {
-        await api.updateSequenceNodeCaption(nodeId, text || null, text ? durSec : null)
-      }
-      void (runPlacementEdit
-        ? runPlacementEdit(text ? 'テロップの設定' : 'テロップの削除', apply)
-        : apply().then(() => onNodesChanged?.()))
-    },
-    [runPlacementEdit, onNodesChanged]
-  )
-
-  /**
-   * プレビューに使う札。選択中 → テロップのある最初の札 → 先頭、の順で選ぶ。
-   * テロップが無ければ見本の文言で焼いて、見た目だけ確かめられるようにする。
-   */
-  const capPreviewTarget = useMemo(() => {
-    if (!layoutBlocks.length) return null
-    const sel = layoutBlocks.find((b) => selected.has(b.key) )
-    const b = sel ?? layoutBlocks.find((x) => x.caption) ?? layoutBlocks[0]
-    return {
-      relPath: b.clip.videoRelPath,
-      timeSec: (b.clip.inSnapped ?? b.clip.inTime) + b.srcOffset + 0.5,
-      text: b.caption ?? '地名\n地域名'
-    }
-  }, [layoutBlocks, selected])
-
-  // 設定を変えるたびに焼き直す（連続で動かすので少し待ってからまとめて 1 回）
-  useEffect(() => {
-    if (!capPanel || !capPreviewTarget) return
-    let alive = true
-    setCapPreviewBusy(true)
-    const t = window.setTimeout(() => {
-      void api
-        .captionPreview(
-          capPreviewTarget.relPath,
-          capPreviewTarget.timeSec,
-          capPreviewTarget.text,
-          capStyle
-        )
-        .then((name) => {
-          if (!alive) return
-          setCapPreview(name ? api.thumbUrl(name) : null)
-          setCapPreviewBusy(false)
-        })
-        .catch(() => alive && setCapPreviewBusy(false))
-    }, 350)
-    return () => {
-      alive = false
-      window.clearTimeout(t)
-    }
-  }, [capPanel, capPreviewTarget, capStyle])
 
   /** 一括で揃える先の呼び名（ボタンの文言とステータスに使う） */
   const gridName = beatOn ? '拍' : 'グリッド'
@@ -1925,12 +1743,7 @@ export const MusicTimeline = memo(function MusicTimeline({
         videoRelPath: c.videoRelPath,
         inSec,
         outSec: inSec + dur,
-        gapBeforeSec,
-        // テロップが付いた項目だけ、書き出し側で再エンコードされる（Phase 2.6d）
-        ...(b.caption ? { caption: b.caption } : {}),
-        ...(nodeById.get(b.key)?.captionDurSec != null
-          ? { captionDurSec: nodeById.get(b.key)!.captionDurSec! }
-          : {})
+        gapBeforeSec
       })
     }
     return out
@@ -2203,12 +2016,6 @@ export const MusicTimeline = memo(function MusicTimeline({
             {w >= SRCDUR_MIN_W && Math.abs(srcDur - arranged) > 0.05 ? ` / 元${fmtSec(srcDur)}` : ''}
           </span>
         </span>
-        {/* テロップ有りの印。狭い札では省く（style-guide 5.12 の段階的な省略） */}
-        {b.caption && w >= CAPTION_MARK_MIN_W && (
-          <span className="mtl-clip-caption" title={`テロップ: ${b.caption.replace('\n', ' / ')}`}>
-            {b.caption.split('\n')[0]}
-          </span>
-        )}
         {/* 両端のトリムハンドル（見た目は出さず、カーソルと当たり判定だけ） */}
         <span className="mtl-clip-handle left" />
         <span className="mtl-clip-handle" />
@@ -2219,272 +2026,265 @@ export const MusicTimeline = memo(function MusicTimeline({
   return (
     <div className="mtl">
       <div className="mtl-head">
-        <select
-          className="mtl-pick"
-          value={seqBgm?.relPath ?? ''}
-          onChange={(e) => void pickTrack(e.target.value)}
-          title="このシーケンスに合わせる曲"
-        >
-          <option value="">曲を選択…</option>
-          {bgmInfo.tracks.map((t) => (
-            <option key={t.relPath} value={t.relPath}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        {/* 上段: 曲の選択と情報表示（曲の長さ / BPM / 余り / 隙間・重なり） */}
+        <div className="mtl-head-row">
+          <select
+            className="mtl-pick"
+            value={seqBgm?.relPath ?? ''}
+            onChange={(e) => void pickTrack(e.target.value)}
+            title="このシーケンスに合わせる曲"
+          >
+            <option value="">曲を選択…</option>
+            {bgmInfo.tracks.map((t) => (
+              <option key={t.relPath} value={t.relPath}>
+                {t.name}
+              </option>
+            ))}
+          </select>
 
-        {loading && <span className="mtl-meta">読み込み中…</span>}
-        {wave && !loading && <span className="mtl-meta">曲の長さ {fmtSec(wave.durationSec)}</span>}
-        {beatGrid && analyzing && <span className="mtl-meta">ビート解析中…</span>}
-        {beatOn && beat && (
-          <>
-            <span
-              className="mtl-meta"
-              title={`平均ズレ ${beat.meanDeviationMs.toFixed(0)}ms / テンポ変動 ${beat.tempoVariationPct.toFixed(0)}%`}
-            >
-              {beat.bpm.toFixed(1)} BPM・全 {Math.floor(beat.beats.length / beatsPerBar)} 小節
-            </span>
-            {beat.warning && <span className="mtl-warn">{beat.warning}</span>}
-          </>
-        )}
-
-        <button
-          className="mtl-zoom"
-          disabled={!wave}
-          onClick={addMarkerAtHead}
-          title="再生位置に切り替えポイント（マーカー）を打つ（M）。クリップはここに吸着します"
-        >
-          マーカー
-        </button>
-
-        <button
-          className={`mtl-zoom${showThumbs ? ' on' : ''}`}
-          onClick={() => {
-            const v = !showThumbs
-            setShowThumbs(v)
-            localStorage.setItem(THUMB_KEY, v ? '1' : '0')
-          }}
-          title="クリップにサムネイルを表示する（狭いブロックでは自動的に省かれます）"
-        >
-          サムネ
-        </button>
-
-        {/*
-          拍グリッドのトグル。ON で拍・小節線を表示し、吸着先が秒から拍に変わる。
-          保存される位置・尺はどちらのモードでも秒のまま（吸着と表示のレイヤー）。
-        */}
-        <button
-          className={`mtl-zoom${beatGrid ? ' on' : ''}`}
-          disabled={!seqBgm}
-          onClick={() => {
-            const v = !beatGrid
-            setBeatGrid(v)
-            localStorage.setItem(BEAT_GRID_KEY, v ? '1' : '0')
-          }}
-          title="検出した拍・小節のグリッドを表示し、吸着先を秒から拍に切り替える（クリップの位置・尺は秒のまま保存されます）"
-        >
-          拍グリッド
-        </button>
-
-        {/*
-          拍子。自動判定は目安にすぎず耳と食い違う例があるので、手動で選び直せるようにする。
-          小節線・小節番号・「1小節」吸着がこの値に連動する。
-        */}
-        {beatOn && beat && (
-          <label className="mtl-snap" title="拍子（自動判定は目安。小節線が合わなければ選び直す）">
-            拍子
-            <select
-              value={seqBgm?.beatsPerBar ?? 0}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                void setMeter(v === 0 ? null : v)
-              }}
-            >
-              <option value={0}>自動（{beat.beatsPerBar}/4）</option>
-              {[2, 3, 4, 6].map((n) => (
-                <option key={n} value={n}>
-                  {n}/4
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {/* 吸着単位。秒モードは秒の倍数、拍グリッドでは拍・小節単位に丸める */}
-        <label
-          className="mtl-snap"
-          title={
-            beatOn
-              ? 'クリップの位置と尺を吸着させる拍の単位。「なし」なら丸めずそのまま取る'
-              : 'クリップの尺と頭出しを吸着させる単位。「なし」なら丸めずそのまま取る'
-          }
-        >
-          吸着
-          {beatOn ? (
-            <select
-              value={snapBeats}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setSnapBeats(v)
-                localStorage.setItem(SNAP_BEATS_KEY, String(v))
-              }}
-            >
-              {SNAP_BEAT_UNITS.map((u) => (
-                <option key={u.beats} value={u.beats}>
-                  {u.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <select
-              value={snapSec}
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setSnapSec(v)
-                localStorage.setItem(SNAP_KEY, String(v))
-              }}
-            >
-              {SNAP_SECS.map((u) => (
-                <option key={u.sec} value={u.sec}>
-                  {u.label}
-                </option>
-              ))}
-            </select>
+          {loading && <span className="mtl-meta">読み込み中…</span>}
+          {wave && !loading && <span className="mtl-meta">曲の長さ {fmtSec(wave.durationSec)}</span>}
+          {beatGrid && analyzing && <span className="mtl-meta">ビート解析中…</span>}
+          {beatOn && beat && (
+            <>
+              <span
+                className="mtl-meta"
+                title={`平均ズレ ${beat.meanDeviationMs.toFixed(0)}ms / テンポ変動 ${beat.tempoVariationPct.toFixed(0)}%`}
+              >
+                {beat.bpm.toFixed(1)} BPM・全 {Math.floor(beat.beats.length / beatsPerBar)} 小節
+              </span>
+              {beat.warning && <span className="mtl-warn">{beat.warning}</span>}
+            </>
           )}
-        </label>
+          <span className="clips-spacer" />
 
-        {/* 一括で揃える。吸着の設定に効くので、吸着セレクタの隣に置く */}
-        <button
-          className="mtl-zoom"
-          disabled={!wave || (!layoutBlocks.length && !selected.size)}
-          onClick={alignToGrid}
-          title={[
-            `選択したクリップ（選択が無ければ本番の行の全部）の頭と尻を、まとめて${gridName}へ寄せる`,
-            '詰まって並んでいる所は詰まったまま、隙間は隙間のまま残る',
-            'マーカーが近ければそちらが優先（手で置いた点が最優先）',
-            '素材が足りないカードは、手前のグリッドまで短くする',
-            'Ctrl+Z で元に戻せる'
-          ].join('\n')}
-        >
-          {gridName}に揃える
-        </button>
-
-        <span className="clips-spacer" />
-
-        {layout && wave && (
-          <span
-            className={`mtl-slack${layout.slackSec < 0 ? ' over' : ''}`}
-            title="クリップの合計と曲の長さの差"
-          >
-            {layout.slackSec >= 0
-              ? `曲が ${fmtSec(layout.slackSec)} 余り`
-              : `曲より ${fmtSec(-layout.slackSec)} 長い`}
-          </span>
-        )}
-        {/*
-          並びの健康状態。**問題が無いことも出す**（無表示だと「まだ調べていない」のか
-          「問題が無い」のかが分からない）。数か所ある場合はクリックで先頭へ送る。
-        */}
-        {!!layout?.blocks.length && !layout.gaps.length && !layout.overlaps.length && (
-          <span className="mtl-meta" title="本番の行に隙間も重なりもありません">
-            隙間・重なりなし
-          </span>
-        )}
-        {/* 隙間があることの明示。書き出しでは黒で埋まる（plan.md の Phase 2.6c「隙間の扱い」） */}
-        {!!layout?.gaps.length && (
-          <span
-            className="mtl-meta clickable"
-            onClick={() => jumpToIssue('gap')}
-            title={`書き出しでは黒で埋まります。**クリックすると 1 か所ずつ順番に送ります。**\n${layout.gaps
-              .map((g, i) => `${i + 1}. ${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
-              .join('\n')}`}
-          >
-            隙間 {layout.gaps.length} か所（黒で埋める）
-          </span>
-        )}
-        {/* 重なりは書き出しを止める（このまま出すと以降のカットが曲から遅れる） */}
-        {!!layout?.overlaps.length && (
-          <span
-            className="mtl-meta bad clickable"
-            onClick={() => jumpToIssue('overlap')}
-            title={`重なったぶん、以降のカットが曲から遅れます。直すまで書き出せません。\nクリックすると 1 か所ずつ順番に送ります。\n${layout.overlaps
-              .map((o, i) => `${i + 1}. ${fmtSec(o.startSec)} 〜 ${fmtSec(o.endSec)}`)
-              .join('\n')}`}
-          >
-            重なり {layout.overlaps.length} か所
-          </span>
-        )}
-        <button className="mtl-zoom" onClick={() => setPps((v) => Math.max(MIN_PPS, v / 1.5))}>
-          −
-        </button>
-        <button className="mtl-zoom" onClick={() => setPps((v) => Math.min(MAX_PPS, v * 1.5))}>
-          ＋
-        </button>
-
-        {/* 再生ボタンは置かない。上部プレイヤーの再生ボタンに一本化している（queueRef 参照） */}
-
-        {onExport && (
-          <>
-            <label className="mtl-fade" title="BGM のフェードイン / フェードアウト秒数">
-              フェード
-              <input
-                type="number"
-                min={0}
-                max={30}
-                step={0.5}
-                value={fadeIn}
-                onChange={(e) => setFadeIn(Math.max(0, Number(e.target.value)))}
-              />
-              /
-              <input
-                type="number"
-                min={0}
-                max={30}
-                step={0.5}
-                value={fadeOut}
-                onChange={(e) => setFadeOut(Math.max(0, Number(e.target.value)))}
-              />
-              秒
-            </label>
-            <button
-              className="mtl-zoom"
-              onClick={() => setCapPanel(true)}
-              title="焼き付けるテロップの見た目（フォント・影・位置・秒数）。テロップは札の右クリックから入れる"
+          {layout && wave && (
+            <span
+              className={`mtl-slack${layout.slackSec < 0 ? ' over' : ''}`}
+              title="クリップの合計と曲の長さの差"
             >
-              テロップ設定
-            </button>
-            <button
-              className="btn primary"
-              disabled={
-                !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout.overlaps.length
-              }
-              onClick={() => {
-                if (!seqBgm || !layout) return
-                void buildExportItems().then((exportItems) =>
-                  onExport(
-                    exportItems,
-                    {
+              {layout.slackSec >= 0
+                ? `曲が ${fmtSec(layout.slackSec)} 余り`
+                : `曲より ${fmtSec(-layout.slackSec)} 長い`}
+            </span>
+          )}
+          {/*
+            並びの健康状態。**問題が無いことも出す**（無表示だと「まだ調べていない」のか
+            「問題が無い」のかが分からない）。数か所ある場合はクリックで先頭へ送る。
+          */}
+          {!!layout?.blocks.length && !layout.gaps.length && !layout.overlaps.length && (
+            <span className="mtl-meta" title="本番の行に隙間も重なりもありません">
+              隙間・重なりなし
+            </span>
+          )}
+          {/* 隙間があることの明示。書き出しでは黒で埋まる（plan.md の Phase 2.6c「隙間の扱い」） */}
+          {!!layout?.gaps.length && (
+            <span
+              className="mtl-meta clickable"
+              onClick={() => jumpToIssue('gap')}
+              title={`書き出しでは黒で埋まります。**クリックすると 1 か所ずつ順番に送ります。**\n${layout.gaps
+                .map((g, i) => `${i + 1}. ${fmtSec(g.startSec)} 〜 ${fmtSec(g.endSec)}`)
+                .join('\n')}`}
+            >
+              隙間 {layout.gaps.length} か所（黒で埋める）
+            </span>
+          )}
+          {/* 重なりは書き出しを止める（このまま出すと以降のカットが曲から遅れる） */}
+          {!!layout?.overlaps.length && (
+            <span
+              className="mtl-meta bad clickable"
+              onClick={() => jumpToIssue('overlap')}
+              title={`重なったぶん、以降のカットが曲から遅れます。直すまで書き出せません。\nクリックすると 1 か所ずつ順番に送ります。\n${layout.overlaps
+                .map((o, i) => `${i + 1}. ${fmtSec(o.startSec)} 〜 ${fmtSec(o.endSec)}`)
+                .join('\n')}`}
+            >
+              重なり {layout.overlaps.length} か所
+            </span>
+          )}
+        </div>
+        {/* 下段: 編集操作（マーカー / 表示 / 吸着 / 揃える / ズーム）と書き出し */}
+        <div className="mtl-head-row">
+          <button
+            className="mtl-zoom"
+            disabled={!wave}
+            onClick={addMarkerAtHead}
+            title="再生位置に切り替えポイント（マーカー）を打つ（M）。クリップはここに吸着します"
+          >
+            マーカー
+          </button>
+
+          <button
+            className={`mtl-zoom${showThumbs ? ' on' : ''}`}
+            onClick={() => {
+              const v = !showThumbs
+              setShowThumbs(v)
+              localStorage.setItem(THUMB_KEY, v ? '1' : '0')
+            }}
+            title="クリップにサムネイルを表示する（狭いブロックでは自動的に省かれます）"
+          >
+            サムネ
+          </button>
+
+          {/*
+            拍グリッドのトグル。ON で拍・小節線を表示し、吸着先が秒から拍に変わる。
+            保存される位置・尺はどちらのモードでも秒のまま（吸着と表示のレイヤー）。
+          */}
+          <button
+            className={`mtl-zoom${beatGrid ? ' on' : ''}`}
+            disabled={!seqBgm}
+            onClick={() => {
+              const v = !beatGrid
+              setBeatGrid(v)
+              localStorage.setItem(BEAT_GRID_KEY, v ? '1' : '0')
+            }}
+            title="検出した拍・小節のグリッドを表示し、吸着先を秒から拍に切り替える（クリップの位置・尺は秒のまま保存されます）"
+          >
+            拍グリッド
+          </button>
+
+          {/*
+            拍子。自動判定は目安にすぎず耳と食い違う例があるので、手動で選び直せるようにする。
+            小節線・小節番号・「1小節」吸着がこの値に連動する。
+          */}
+          {beatOn && beat && (
+            <label className="mtl-snap" title="拍子（自動判定は目安。小節線が合わなければ選び直す）">
+              拍子
+              <select
+                value={seqBgm?.beatsPerBar ?? 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  void setMeter(v === 0 ? null : v)
+                }}
+              >
+                <option value={0}>自動（{beat.beatsPerBar}/4）</option>
+                {[2, 3, 4, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n}/4
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {/* 吸着単位。秒モードは秒の倍数、拍グリッドでは拍・小節単位に丸める */}
+          <label
+            className="mtl-snap"
+            title={
+              beatOn
+                ? 'クリップの位置と尺を吸着させる拍の単位。「なし」なら丸めずそのまま取る'
+                : 'クリップの尺と頭出しを吸着させる単位。「なし」なら丸めずそのまま取る'
+            }
+          >
+            吸着
+            {beatOn ? (
+              <select
+                value={snapBeats}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setSnapBeats(v)
+                  localStorage.setItem(SNAP_BEATS_KEY, String(v))
+                }}
+              >
+                {SNAP_BEAT_UNITS.map((u) => (
+                  <option key={u.beats} value={u.beats}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={snapSec}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setSnapSec(v)
+                  localStorage.setItem(SNAP_KEY, String(v))
+                }}
+              >
+                {SNAP_SECS.map((u) => (
+                  <option key={u.sec} value={u.sec}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
+
+          {/* 一括で揃える。吸着の設定に効くので、吸着セレクタの隣に置く */}
+          <button
+            className="mtl-zoom"
+            disabled={!wave || (!layoutBlocks.length && !selected.size)}
+            onClick={alignToGrid}
+            title={[
+              `選択したクリップ（選択が無ければ本番の行の全部）の頭と尻を、まとめて${gridName}へ寄せる`,
+              '詰まって並んでいる所は詰まったまま、隙間は隙間のまま残る',
+              'マーカーが近ければそちらが優先（手で置いた点が最優先）',
+              '素材が足りないカードは、手前のグリッドまで短くする',
+              'Ctrl+Z で元に戻せる'
+            ].join('\n')}
+          >
+            {gridName}に揃える
+          </button>
+          <button className="mtl-zoom" onClick={() => setPps((v) => Math.max(MIN_PPS, v / 1.5))}>
+            −
+          </button>
+          <button className="mtl-zoom" onClick={() => setPps((v) => Math.min(MAX_PPS, v * 1.5))}>
+            ＋
+          </button>
+
+          {/* 再生ボタンは置かない。上部プレイヤーの再生ボタンに一本化している（queueRef 参照） */}
+          <span className="clips-spacer" />
+          {onExport && (
+            <>
+              <label className="mtl-fade" title="BGM のフェードイン / フェードアウト秒数">
+                フェード
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  step={0.5}
+                  value={fadeIn}
+                  onChange={(e) => setFadeIn(Math.max(0, Number(e.target.value)))}
+                />
+                /
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  step={0.5}
+                  value={fadeOut}
+                  onChange={(e) => setFadeOut(Math.max(0, Number(e.target.value)))}
+                />
+                秒
+              </label>
+              <button
+                className="btn primary"
+                disabled={
+                  !wave || !layout?.blocks.length || !seqBgm || exporting || !!layout.overlaps.length
+                }
+                onClick={() => {
+                  if (!seqBgm || !layout) return
+                  void buildExportItems().then((exportItems) =>
+                    onExport(exportItems, {
                       relPath: seqBgm.relPath,
                       startOffsetSec: seqBgm.startOffsetSec,
                       fadeInSec: fadeIn,
                       fadeOutSec: fadeOut
-                    },
-                    capStyle
+                    })
                   )
-                )
-              }}
-              title={
-                layout?.overlaps.length
-                  ? `札が ${layout.overlaps.length} か所で重なっています。重なったぶん以降のカットが曲から遅れるため、直すまで書き出せません`
-                  : layout?.gaps.length
-                    ? '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す（隙間は黒で埋める）'
-                    : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
-              }
-            >
-              書き出し…
-            </button>
-          </>
-        )}
+                }}
+                title={
+                  layout?.overlaps.length
+                    ? `札が ${layout.overlaps.length} か所で重なっています。重なったぶん以降のカットが曲から遅れるため、直すまで書き出せません`
+                    : layout?.gaps.length
+                      ? '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す（隙間は黒で埋める）'
+                      : '指定した長さで無劣化連結し、BGM を載せて 1 本に書き出す'
+                }
+              >
+                書き出し…
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
 
@@ -2665,264 +2465,6 @@ export const MusicTimeline = memo(function MusicTimeline({
         </div>
       )}
 
-      {/*
-        テロップの編集（Phase 2.6d）。**1 行目 = 地名（大）/ 2 行目 = 地域名（小）**の 2 段組みで、
-        Resolve の Text+ で作っていた形に合わせている。右クリックした位置に出す。
-      */}
-      {capEdit && (
-        <>
-          <div className="mtl-cap-backdrop" onMouseDown={() => setCapEdit(null)} />
-          <div
-            className="mtl-cap-edit"
-            style={{ left: Math.min(capEdit.x, window.innerWidth - 320), top: capEdit.y }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setCapEdit(null)
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                saveCaption(
-                  capEdit.nodeId,
-                  capEdit.main,
-                  capEdit.sub,
-                  capEdit.durSec ? Number(capEdit.durSec) : null
-                )
-                setCapEdit(null)
-              }
-            }}
-          >
-            <label className="mtl-cap-row">
-              地名
-              <input
-                autoFocus
-                value={capEdit.main}
-                placeholder="アルブラ峠"
-                onChange={(e) => setCapEdit({ ...capEdit, main: e.target.value })}
-              />
-            </label>
-            <label className="mtl-cap-row">
-              地域
-              <input
-                value={capEdit.sub}
-                placeholder="スイス・グラウビュンデン州"
-                onChange={(e) => setCapEdit({ ...capEdit, sub: e.target.value })}
-              />
-            </label>
-            <label className="mtl-cap-row">
-              秒数
-              <input
-                type="number"
-                min={0.5}
-                step={0.5}
-                value={capEdit.durSec}
-                placeholder={String(capStyle.defaultDurSec)}
-                onChange={(e) => setCapEdit({ ...capEdit, durSec: e.target.value })}
-              />
-            </label>
-            <div className="mtl-cap-actions">
-              <button
-                className="btn small"
-                onClick={() => {
-                  saveCaption(capEdit.nodeId, '', '', null)
-                  setCapEdit(null)
-                }}
-              >
-                削除
-              </button>
-              <span className="clips-spacer" />
-              <button className="btn small" onClick={() => setCapEdit(null)}>
-                キャンセル
-              </button>
-              <button
-                className="btn small primary"
-                onClick={() => {
-                  saveCaption(
-                    capEdit.nodeId,
-                    capEdit.main,
-                    capEdit.sub,
-                    capEdit.durSec ? Number(capEdit.durSec) : null
-                  )
-                  setCapEdit(null)
-                }}
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/*
-        テロップの見た目（全シーケンス共通）。標準のモーダル部品（style-guide 5.6）で組む。
-        head / body / foot の 3 段、設定行は .modal-row（ラベル 110px + 入力）。
-        プレビューは書き出しと同じ drawtext で焼いた実物（ライブ表示は CSS 描画の目安）。
-      */}
-      {capPanel && (
-        <div className="modal-backdrop" onClick={() => setCapPanel(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <span>テロップの見た目（全シーケンス共通）</span>
-              <button className="modal-close" onClick={() => setCapPanel(false)}>
-                ✕
-              </button>
-            </div>
-            <div className="mtl-cap-preview">
-              {capPreview && <img src={capPreview} alt="" />}
-              {(!capPreview || capPreviewBusy) && (
-                <div className="mtl-cap-preview-note">
-                  {capPreviewBusy ? '焼き付け中…' : 'プレビューを作れませんでした'}
-                </div>
-              )}
-            </div>
-            <div className="modal-row">
-              <label>フォント</label>
-              <select
-                className="modal-input"
-                value={capStyle.fontFile}
-                onChange={(e) => patchCapStyle({ fontFile: e.target.value })}
-              >
-                {/* 保存済みのフォントが一覧に無い場合も選択を保つ */}
-                {!fonts.some((f) => f.path === capStyle.fontFile) && (
-                  <option value={capStyle.fontFile}>{capStyle.fontFile}</option>
-                )}
-                {fonts.map((f) => (
-                  <option key={f.path} value={f.path}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="modal-row">
-              <label>文字サイズ</label>
-              <input
-                className="modal-num"
-                type="number"
-                min={20}
-                max={400}
-                step={5}
-                value={capStyle.fontSize}
-                onChange={(e) => patchCapStyle({ fontSize: Number(e.target.value) })}
-              />
-              <span className="modal-hint">px（4K 基準。他の解像度では比率で拡縮）</span>
-            </div>
-            <div className="modal-row">
-              <label>影の濃さ</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={capStyle.shadowAlpha}
-                onChange={(e) => patchCapStyle({ shadowAlpha: Number(e.target.value) })}
-              />
-              <span className="modal-hint">{Math.round(capStyle.shadowAlpha * 100)}%</span>
-            </div>
-            <div className="modal-row">
-              <label>影のずらし</label>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={30}
-                step={1}
-                value={capStyle.shadowOffset}
-                onChange={(e) => patchCapStyle({ shadowOffset: Number(e.target.value) })}
-              />
-              <span className="modal-hint">px</span>
-              <label className="modal-sublabel">ぼかし</label>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={40}
-                step={1}
-                value={capStyle.shadowBlur}
-                onChange={(e) => patchCapStyle({ shadowBlur: Number(e.target.value) })}
-              />
-              <span className="modal-hint">px</span>
-            </div>
-            <div className="modal-row">
-              <label>位置</label>
-              <select
-                value={capStyle.position}
-                onChange={(e) =>
-                  patchCapStyle({ position: e.target.value as CaptionStyle['position'] })
-                }
-              >
-                <option value="bottom-left">左下</option>
-                <option value="bottom-right">右下</option>
-                <option value="top-left">左上</option>
-                <option value="top-right">右上</option>
-              </select>
-              <label className="modal-sublabel">余白</label>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={600}
-                step={10}
-                value={capStyle.marginX}
-                onChange={(e) => patchCapStyle({ marginX: Number(e.target.value) })}
-              />
-              <span className="modal-hint">×</span>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={600}
-                step={10}
-                value={capStyle.marginY}
-                onChange={(e) => patchCapStyle({ marginY: Number(e.target.value) })}
-              />
-              <span className="modal-hint">px</span>
-            </div>
-            <div className="modal-row">
-              <label>表示秒数</label>
-              <input
-                className="modal-num"
-                type="number"
-                min={0.5}
-                max={30}
-                step={0.5}
-                value={capStyle.defaultDurSec}
-                onChange={(e) => patchCapStyle({ defaultDurSec: Number(e.target.value) })}
-              />
-              <span className="modal-hint">秒（クリップごとに上書き可）</span>
-            </div>
-            <div className="modal-row">
-              <label>フェード</label>
-              <span className="modal-hint">イン</span>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={5}
-                step={0.1}
-                value={capStyle.fadeInSec}
-                onChange={(e) => patchCapStyle({ fadeInSec: Number(e.target.value) })}
-              />
-              <span className="modal-hint">秒 / アウト</span>
-              <input
-                className="modal-num"
-                type="number"
-                min={0}
-                max={5}
-                step={0.1}
-                value={capStyle.fadeOutSec}
-                onChange={(e) => patchCapStyle({ fadeOutSec: Number(e.target.value) })}
-              />
-              <span className="modal-hint">秒</span>
-            </div>
-            <div className="modal-foot">
-              <span className="modal-summary">
-                テロップのあるクリップだけ再エンコード（他は無劣化のまま）。
-                可変フォントは既定のウェイトで焼かれます。
-              </span>
-              <button className="btn primary" onClick={() => setCapPanel(false)}>
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {markerMenu && (
         <ContextMenu
           x={markerMenu.x}
@@ -2944,21 +2486,6 @@ export const MusicTimeline = memo(function MusicTimeline({
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
-            {
-              label: nodeById.get(menu.nodeId)?.caption ? 'テロップを編集…' : 'テロップを入れる…',
-              onClick: () => {
-                const n = nodeById.get(menu.nodeId)
-                const [main = '', ...rest] = (n?.caption ?? '').split('\n')
-                setCapEdit({
-                  nodeId: menu.nodeId,
-                  x: menu.x,
-                  y: menu.y,
-                  main,
-                  sub: rest.join(' '),
-                  durSec: n?.captionDurSec != null ? String(n.captionDurSec) : ''
-                })
-              }
-            },
             { label: '尺を自動に戻す', onClick: () => resetDur(menu.nodeId) },
             {
               label:

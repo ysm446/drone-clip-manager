@@ -104,13 +104,6 @@ export interface SequenceNode {
    * 予備の行も同じ時間軸の上にあり、順路（再生・書き出し）には入らない。
    */
   lane: number
-  /**
-   * クリップの頭に焼き付けるテロップ（地名など / Phase 2.6d）。null で無し。
-   * **これが付いたクリップだけ再エンコードされる**（他は stream copy のまま）。
-   */
-  caption: string | null
-  /** テロップの表示秒数。null なら共通設定の既定値 */
-  captionDurSec: number | null
   /** segment × video の結合（元 segment が消えていれば null） */
   clip: ClipItem | null
 }
@@ -145,9 +138,6 @@ export interface GraphNodeSnap {
   srcOffset: number
   /** 0 = 本番のタイムライン / 1 以上 = 予備の行 */
   lane: number
-  /** 焼き付けるテロップ（Phase 2.6d）。落とすと undo でテロップが消える */
-  caption: string | null
-  captionDurSec: number | null
 }
 
 /** Undo 用のグラフスナップショット行（エッジ） */
@@ -381,51 +371,6 @@ export interface ConcatItem {
    * 隙間があるときは音声トラックを落とすので、**BGM 合成と併用すること**（映像だけの連結になる）。
    */
   gapBeforeSec?: number
-  /**
-   * このクリップの頭に焼き付けるテロップ（地名など / Phase 2.6d）。
-   * **これが付いたクリップだけ再エンコードされる**（他は従来どおり stream copy）。
-   */
-  caption?: string
-  /** テロップの表示秒数。未指定なら `CaptionStyle.defaultDurSec` を使う */
-  captionDurSec?: number
-}
-
-/**
- * 焼き付けるテロップの見た目（Phase 2.6d）。シーケンスごとではなく共通設定。
- * スタイルは決め打ち 1 つで、調整できるのはここにある項目だけ（アニメーションは持たない）。
- */
-export interface CaptionStyle {
-  /** フォントファイルの絶対パス（例: `C:/Windows/Fonts/YuGothB.ttc`） */
-  fontFile: string
-  /** 4K を基準にした文字サイズ（px）。他の解像度では高さの比で拡縮する（1 行目 = 地名） */
-  fontSize: number
-  /** 2 行目（地域名など）の文字サイズ比。1 行目に対する倍率 */
-  subScale: number
-  /** 1 行目と 2 行目の間隔（px / 4K 基準） */
-  lineGap: number
-  /** 文字色（`0xRRGGBB`）。HLG では純白が眩しいので少し落とすのが既定 */
-  fontColor: string
-  /** 影の濃さ（0 で影なし） */
-  shadowAlpha: number
-  /** 影のずらし量（px / 4K 基準） */
-  shadowOffset: number
-  /**
-   * 影のぼかし（px / 4K 基準。0 でくっきり）。
-   * drawtext の影はぼかせないため、0 より大きいときは**影を別レイヤーに描いてぼかし、
-   * 重ねてから本文を描く**（書き出しのフィルタが 1 段複雑になる）。
-   */
-  shadowBlur: number
-  /** 画面の四隅からの余白（px / 4K 基準） */
-  marginX: number
-  marginY: number
-  /** 表示位置 */
-  position: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
-  /** 既定の表示秒数（ConcatItem.captionDurSec が無いとき） */
-  defaultDurSec: number
-  /** フェードイン秒数（0 で無効） */
-  fadeInSec: number
-  /** フェードアウト秒数（0 で無効） */
-  fadeOutSec: number
 }
 
 /**
@@ -625,15 +570,6 @@ export interface DcmApi {
   ) => Promise<void>
   /** ノードを別の行へ移す（0 = 本番のタイムライン / 1 以上 = 予備の行） */
   updateSequenceNodeLane: (nodeId: number, lane: number) => Promise<void>
-  /**
-   * クリップに焼き付けるテロップを設定する（Phase 2.6d）。
-   * 1 行目 = 地名（大）/ 2 行目 = 地域名（小）。空文字 / null で解除。
-   */
-  updateSequenceNodeCaption: (
-    nodeId: number,
-    caption: string | null,
-    captionDurSec: number | null
-  ) => Promise<void>
   /** ノードの区間を差し替える（音楽タイムラインのドロップ差し替え。配置・順路は保つ） */
   replaceSequenceNodeSegment: (nodeId: number, segmentId: number) => Promise<void>
   /** 順路の並び順を、与えられたノード列そのままの一本道に置き換える（音楽タイムラインの並べ替え） */
@@ -648,21 +584,8 @@ export interface DcmApi {
     items: ConcatItem[],
     outDir: string,
     name: string,
-    bgm?: ConcatBgm,
-    caption?: CaptionStyle
+    bgm?: ConcatBgm
   ) => Promise<ConcatResult>
-  /**
-   * テロップの焼き付けプレビュー（Phase 2.6d）。書き出しと同じ drawtext で 1 フレームに焼き、
-   * 表示用に SDR へトーンマップした画像の名前を返す（thumbUrl で表示）。失敗時は null。
-   */
-  captionPreview: (
-    videoRelPath: string,
-    timeSec: number,
-    caption: string,
-    style: CaptionStyle
-  ) => Promise<string | null>
-  /** 焼き付けに使えるフォントの一覧（インストール済みから拾う / Phase 2.6d） */
-  listFonts: () => Promise<{ name: string; path: string }[]>
   /** 連結書き出しの進捗イベントを購読。返り値で解除する。 */
   onConcatProgress: (cb: (p: ConcatProgress) => void) => () => void
   // --- mpv ネイティブ再生 ---
