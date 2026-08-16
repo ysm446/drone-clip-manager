@@ -971,12 +971,15 @@ export const MusicTimeline = memo(function MusicTimeline({
    * `offsets` は「t から見て、マーカーに乗せたい点までの距離」。
    * 例: 札を移動するときは `[0, 尺]` を渡すと、**頭と尻の両方**が吸着の候補になる
    * （末尾をサビ頭に合わせたい場面が必ずあるため）。
+   *
+   * 曲末も暗黙のマーカーとして扱う（最後の札の尻を曲の終わりへ合わせる操作が主用途）。
    */
   const nearestMarker = useCallback(
     (t: number, offsets: number[] = [0]): number | null => {
       let best: number | null = null
       let bestPx = MARKER_SNAP_PX
-      for (const m of markerSecs) {
+      const cands = songDurationSec > 0 ? [...markerSecs, songDurationSec] : markerSecs
+      for (const m of cands) {
         for (const off of offsets) {
           const cand = m - off
           const px = Math.abs(cand - t) * effPps
@@ -988,7 +991,7 @@ export const MusicTimeline = memo(function MusicTimeline({
       }
       return best
     },
-    [markerSecs, effPps]
+    [markerSecs, songDurationSec, effPps]
   )
 
   /** モードに応じたグリッド吸着（マーカーは含まない）。拍グリッド ON なら拍へ、OFF なら秒単位へ。 */
