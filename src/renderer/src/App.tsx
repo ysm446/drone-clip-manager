@@ -93,6 +93,14 @@ function BulkTagBar({
   )
 }
 
+/**
+ * デコード済みのフレーム数。**HEVC を再生できない環境では「再生中なのに増えない」**ので、
+ * 直接再生できたかどうかの判定はこれを根拠にする（時刻の進み方では見ない / Phase 2.6e）。
+ */
+function decodedFrames(v: HTMLVideoElement): number {
+  return v.getVideoPlaybackQuality?.().totalVideoFrames ?? 0
+}
+
 export function App() {
   const [root, setRoot] = useState<RootInfo>({ root: null, tree: null, recent: [] })
   const [selected, setSelected] = useState<string | null>(null)
@@ -229,6 +237,20 @@ export function App() {
   const [mpvPaused, setMpvPaused] = useState(true)
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  // --- 直接再生できたかの判定（Phase 2.6e） ---
+  /** 判定待ちのタイマー。一時停止・動画切替では必ず解除する（古い時限を発火させない） */
+  const decodeCheckRef = useRef<number | null>(null)
+  /** 失敗と判定した時点のフレーム数。以降に増えたら誤判定なので覆いを下ろす */
+  const errorFramesRef = useRef(0)
+  /** タイマーの中から今の状態を見るための控え（クロージャは古い値を掴むため） */
+  const usingProxyRef = useRef(false)
+  const playErrorRef = useRef(false)
+  const clearDecodeCheck = useCallback(() => {
+    if (decodeCheckRef.current !== null) {
+      window.clearTimeout(decodeCheckRef.current)
+      decodeCheckRef.current = null
+    }
+  }, [])
   const currentRelRef = useRef<string | null>(null)
   /** クリップから開いたときの遷移先秒（動画のロード完了後にシークする） */
   const pendingSeekRef = useRef<number | null>(null)
@@ -535,6 +557,14 @@ export function App() {
     })
   }, [])
 
+  useEffect(() => {
+    usingProxyRef.current = usingProxy
+    playErrorRef.current = playError
+  }, [usingProxy, playError])
+
+  // 動画が切り替わったら判定待ちを捨てる（前の動画の時限が次の動画に対して発火しないように）
+  useEffect(() => clearDecodeCheck, [videoSrc, clearDecodeCheck])
+
   const resetPlayback = () => {
     setVideoSrc(null)
     setUsingProxy(false)
@@ -654,6 +684,7 @@ export function App() {
   const useTempProxy = useCallback(async () => {
     const relPath = currentRelRef.current
     if (!relPath) return
+    clearDecodeCheck()
     setPlayError(false)
     setProxyGen({ active: true, percent: 0, error: null })
     const st = await api.proxyEnsure(relPath, meta?.durationSec ?? duration ?? 0)
@@ -664,33 +695,45 @@ export function App() {
       setProxyGen({ active: false, percent: 0, error: null })
     }
     // 生成中なら onProxyUpdate で done を受けて切り替わる
-  }, [meta, duration])
+  }, [meta, duration, clearDecodeCheck])
 
   // 再生失敗の検出:
   //  1) <video> の error イベント
-  //  2) 再生開始後に時間が進まない（HEVC デコーダ非対応でフレームが出ないケース）
+  //  2) 再生開始後、一定時間たっても**デコード済みフレームが 1 枚も増えない**
+  // **時刻の進み方では見ない。** クリップ再生の頭出しやシーケンスの送りで後ろへシークすると
+  // 経過が負になり、正常に再生できていても失敗と判定していた（Phase 2.6e で <video> が
+  // 主経路になり、フォールバック時代の粗い推定が毎回走るようになったため表面化）。
   const onVideoError = () => {
-    if (!usingProxy) setPlayError(true)
+    if (usingProxyRef.current) return
+    clearDecodeCheck()
+    const v = videoRef.current
+    errorFramesRef.current = v ? decodedFrames(v) : 0
+    setPlayError(true)
   }
   const onVideoPlay = () => {
     // 共通コントロールバーの ▶ / ⏸ 表示（mpvPaused は「再生エンジンの一時停止状態」として
     // <video> でも使い回す。Phase 2.6e で <video> が主経路になった）
     setMpvPaused(false)
     mpvPausedRef.current = false
+    clearDecodeCheck()
     if (usingProxy) return
     const v = videoRef.current
     if (!v) return
-    const startAt = v.currentTime
-    window.setTimeout(() => {
+    const before = decodedFrames(v)
+    // 4K60 HEVC はシーク直後のデコーダ再同期に時間がかかるので、しきい値は長めに取る
+    decodeCheckRef.current = window.setTimeout(() => {
+      decodeCheckRef.current = null
       const vv = videoRef.current
-      if (vv && !vv.paused && vv.currentTime - startAt < 0.1 && !usingProxy) {
-        setPlayError(true)
-      }
-    }, 2200)
+      if (!vv || vv.paused || usingProxyRef.current) return
+      if (decodedFrames(vv) > before) return // 1 枚でも出ていればデコードはできている
+      errorFramesRef.current = before
+      setPlayError(true)
+    }, 4000)
   }
   const onVideoPause = () => {
     setMpvPaused(true)
     mpvPausedRef.current = true
+    clearDecodeCheck() // 止めている間は判定しない
   }
 
   // シークバーのホバーサムネイル: 時刻をグリッドに量子化して ensureThumb（ffmpeg 1 フレーム +
@@ -1338,6 +1381,11 @@ export function App() {
   // <video> の時刻更新（シーケンス自動送り / クリップのループを兼ねる）
   const onVideoTime = useCallback(
     (t: number) => {
+      // 覆いを出したあとにフレームが出てきたら誤判定。実際に再生できているので下ろす
+      if (playErrorRef.current) {
+        const v = videoRef.current
+        if (v && decodedFrames(v) > errorFramesRef.current) setPlayError(false)
+      }
       if (seqActiveRef.current) {
         pushTime(t)
         advanceRef.current(t)
