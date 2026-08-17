@@ -24,14 +24,18 @@ export function Splitter({
     document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
     document.body.classList.add('resizing')
     const move = (ev: PointerEvent) => onDelta((axis === 'x' ? ev.clientX : ev.clientY) - start)
+    // pointercancel も見張る（OS にドラッグを打ち切られると pointerup が来ず、
+    // body のリサイズカーソルが残留するため）
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
       document.body.style.cursor = ''
       document.body.classList.remove('resizing')
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
   return (
     <div

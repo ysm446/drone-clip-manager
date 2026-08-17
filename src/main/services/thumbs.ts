@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { resolveInRoot, thumbsDir } from '../util/paths'
@@ -10,9 +10,15 @@ import { resolveInRoot, thumbsDir } from '../util/paths'
 const FFMPEG = 'ffmpeg'
 const execFileP = promisify(execFile)
 
-/** (動画相対パス, 秒) からキャッシュファイル名を決める。時刻を含むので区間移動時は別名になる。 */
-function thumbName(videoRelPath: string, timeSec: number): string {
-  const h = createHash('md5').update(`${videoRelPath}|${timeSec.toFixed(3)}`).digest('hex').slice(0, 20)
+/**
+ * (動画相対パス, 秒, mtime) からキャッシュファイル名を決める。時刻を含むので区間移動時は
+ * 別名になる。mtime も混ぜ、同名で中身の違うファイルに差し替えられたら作り直す。
+ */
+function thumbName(videoRelPath: string, timeSec: number, mtime: number): string {
+  const h = createHash('md5')
+    .update(`${videoRelPath}|${timeSec.toFixed(3)}|${mtime}`)
+    .digest('hex')
+    .slice(0, 20)
   return `${h}.jpg`
 }
 
@@ -41,7 +47,8 @@ function release(): void {
  * 返り値は thumbnails ディレクトリ内のファイル名（dcm-media://thumb/<name> で表示）。
  */
 export function ensureThumb(videoRelPath: string, timeSec: number): Promise<string> {
-  const name = thumbName(videoRelPath, timeSec)
+  const src = resolveInRoot(videoRelPath)
+  const name = thumbName(videoRelPath, timeSec, Math.round(statSync(src).mtimeMs))
   const abs = join(thumbsDir(), name)
   if (existsSync(abs)) return Promise.resolve(name)
 
@@ -50,7 +57,6 @@ export function ensureThumb(videoRelPath: string, timeSec: number): Promise<stri
   if (existing) return existing
 
   const p = (async () => {
-    const src = resolveInRoot(videoRelPath)
     const tmp = `${abs}.tmp.jpg`
     await acquire()
     try {

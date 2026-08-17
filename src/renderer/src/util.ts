@@ -3,18 +3,22 @@
 /** 秒 → mm:ss.mmm 表示 */
 export function fmtTime(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) sec = 0
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
-  const ms = Math.round((sec - Math.floor(sec)) * 1000)
+  // 先に総ミリ秒へ丸めてから分解する（別々に丸めると 59.9996 → "00:59.1000" になる）
+  const t = Math.round(sec * 1000)
+  const m = Math.floor(t / 60000)
+  const s = Math.floor((t % 60000) / 1000)
+  const ms = t % 1000
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
 }
 
 /** 秒 → 短い長さ表示。60 秒未満は `12.3s`、以上は `1:23.4`。クリップの長さ表示用。 */
 export function fmtSec(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) sec = 0
-  if (sec < 60) return `${sec.toFixed(1)}s`
-  const m = Math.floor(sec / 60)
-  const s = sec - m * 60
+  // 先に 0.1 秒単位へ丸めてから分解する（別々に丸めると 119.97 → "1:60.0" になる）
+  const d = Math.round(sec * 10)
+  if (d < 600) return `${(d / 10).toFixed(1)}s`
+  const m = Math.floor(d / 600)
+  const s = (d % 600) / 10
   return `${m}:${s.toFixed(1).padStart(4, '0')}`
 }
 

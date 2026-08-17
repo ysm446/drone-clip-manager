@@ -606,6 +606,10 @@ export const SequenceView = memo(function SequenceView({
     const onKey = (e: KeyboardEvent) => {
       const t0 = document.activeElement as HTMLElement | null
       if (t0 && (t0.tagName === 'INPUT' || t0.tagName === 'TEXTAREA' || t0.isContentEditable)) return
+      // 音楽ビューのときは、キー操作はタイムライン側（選択中のクリップ）に任せる。
+      // Ctrl+C / Ctrl+V も対象（グラフ側の見えていない選択に効いて、
+      // 「何も起きていないように見えて札が増えている」状態になるため）。
+      if (mode === 'music') return
       if (e.ctrlKey || e.metaKey) {
         const ck = e.key.toLowerCase()
         if (ck === 'c' && selectedIds.size > 0) {
@@ -618,11 +622,7 @@ export const SequenceView = memo(function SequenceView({
         return
       }
       if (e.altKey) return
-      const t = document.activeElement as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const k = e.key.toLowerCase()
-      // 音楽ビューのときは、キー操作はタイムライン側（選択中のクリップ）に任せる
-      if (mode === 'music') return
       if (e.key === 'Delete') {
         removeNodes([...selectedIds])
       } else if (k === 'a') {

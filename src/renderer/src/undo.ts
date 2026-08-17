@@ -67,6 +67,10 @@ export async function performUndo(): Promise<string | null> {
     redoStack.push(entry)
     notifyRefresh()
     return entry.label
+  } catch (err) {
+    // 失敗（IPC の一時エラー等）でエントリを消さない。積み直して再試行できるようにする
+    undoStack.push(entry)
+    throw err
   } finally {
     busy = false
   }
@@ -83,6 +87,9 @@ export async function performRedo(): Promise<string | null> {
     undoStack.push(entry)
     notifyRefresh()
     return entry.label
+  } catch (err) {
+    redoStack.push(entry)
+    throw err
   } finally {
     busy = false
   }

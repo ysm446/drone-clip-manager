@@ -115,7 +115,6 @@ const api: DcmApi = {
   mpvPlay: () => ipcRenderer.send('mpv:play'),
   mpvPause: () => ipcRenderer.send('mpv:pause'),
   mpvSeek: (sec) => ipcRenderer.send('mpv:seek', sec),
-  mpvVolume: (v0to1) => ipcRenderer.send('mpv:volume', v0to1),
   mpvSetSpeed: (v) => ipcRenderer.send('mpv:speed', v),
   mpvStop: () => ipcRenderer.send('mpv:stop'),
   onMpvEvent: (cb: (e: MpvEvent) => void) => {

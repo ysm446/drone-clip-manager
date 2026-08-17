@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS keyframes (
   PRIMARY KEY (video_rel_path, pts_time)
 );
 
+-- キーフレームキャッシュの元ファイル実体（同名で中身の違うファイルに差し替えられたら
+-- キャッシュを無効化するための照合キー）。キーフレームはロスレス切り出しのスナップ位置の
+-- 根拠なので、古い値を返すと in 点が非キーフレームになり切り出しが壊れる。
+CREATE TABLE IF NOT EXISTS keyframe_src (
+  video_rel_path TEXT PRIMARY KEY,
+  size           INTEGER NOT NULL,
+  mtime          INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS segments (
   id            INTEGER PRIMARY KEY,
   video_rel_path TEXT NOT NULL,
@@ -126,7 +135,7 @@ CREATE TABLE IF NOT EXISTS sequence_markers (
 CREATE INDEX IF NOT EXISTS idx_seqmarkers_seq ON sequence_markers(sequence_id);
 `
 
-export function getDb(): Database.Database {
+function getDb(): Database.Database {
   const target = join(metaDir(), 'library.db')
   if (db && dbPath === target) return db
   if (db) db.close()
@@ -278,10 +287,25 @@ function rowToSegment(r: SegmentRow): Segment {
 }
 
 export function listSegments(videoRelPath: string): Segment[] {
-  const rows = getDb()
+  const d = getDb()
+  const rows = d
     .prepare('SELECT * FROM segments WHERE video_rel_path = ? ORDER BY in_time ASC')
     .all(videoRelPath) as SegmentRow[]
-  return rows.map((r) => ({ ...rowToSegment(r), tags: getSegmentTags(r.id) }))
+  // タグは区間ごとに引かず（N+1 回避）、この動画の分を 1 クエリで集約する
+  const tagRows = d
+    .prepare(
+      `SELECT t.segment_id, t.tag FROM segment_tags t
+       JOIN segments s ON s.id = t.segment_id
+       WHERE s.video_rel_path = ? ORDER BY t.tag ASC`
+    )
+    .all(videoRelPath) as { segment_id: number; tag: string }[]
+  const tagsBySeg = new Map<number, string[]>()
+  for (const t of tagRows) {
+    const list = tagsBySeg.get(t.segment_id) ?? []
+    list.push(t.tag)
+    tagsBySeg.set(t.segment_id, list)
+  }
+  return rows.map((r) => ({ ...rowToSegment(r), tags: tagsBySeg.get(r.id) ?? [] }))
 }
 
 export function addSegment(input: SegmentInput): Segment {
@@ -313,7 +337,7 @@ export function addSegment(input: SegmentInput): Segment {
   return getSegment(tx())
 }
 
-export function getSegment(id: number): Segment {
+function getSegment(id: number): Segment {
   const row = getDb().prepare('SELECT * FROM segments WHERE id = ?').get(id) as SegmentRow | undefined
   if (!row) throw new Error(`区間が見つかりません: ${id}`)
   return { ...rowToSegment(row), tags: getSegmentTags(id) }
@@ -380,7 +404,7 @@ export function restoreSegment(seg: Segment): void {
 
 // --- 区間タグ（自由記述 / Phase 2.8） ---
 
-export function getSegmentTags(segmentId: number): string[] {
+function getSegmentTags(segmentId: number): string[] {
   const rows = getDb()
     .prepare('SELECT tag FROM segment_tags WHERE segment_id = ? ORDER BY tag ASC')
     .all(segmentId) as { tag: string }[]
@@ -501,16 +525,28 @@ interface ClipRow extends SegmentRow {
 }
 
 /** 全動画の区間を横断取得（動画メタ + タグを結合 / Phase 2.5 / 2.8） */
+const CLIP_SELECT = `SELECT s.*, v.filename AS v_filename, v.duration_sec AS v_duration_sec, v.codec AS v_codec,
+       v.width AS v_width, v.height AS v_height, v.fps AS v_fps
+  FROM segments s
+  LEFT JOIN videos v ON v.rel_path = s.video_rel_path`
+
+function rowToClip(r: ClipRow, tags: string[]): ClipItem {
+  return {
+    ...rowToSegment(r),
+    videoFilename: r.v_filename ?? r.video_rel_path.split('/').pop() ?? r.video_rel_path,
+    videoDurationSec: r.v_duration_sec,
+    videoCodec: r.v_codec,
+    videoWidth: r.v_width,
+    videoHeight: r.v_height,
+    videoFps: r.v_fps,
+    tags
+  }
+}
+
 export function listAllClips(): ClipItem[] {
   const d = getDb()
   const rows = d
-    .prepare(
-      `SELECT s.*, v.filename AS v_filename, v.duration_sec AS v_duration_sec, v.codec AS v_codec,
-              v.width AS v_width, v.height AS v_height, v.fps AS v_fps
-       FROM segments s
-       LEFT JOIN videos v ON v.rel_path = s.video_rel_path
-       ORDER BY s.video_rel_path ASC, s.in_time ASC`
-    )
+    .prepare(`${CLIP_SELECT} ORDER BY s.video_rel_path ASC, s.in_time ASC`)
     .all() as ClipRow[]
   // タグは 1 クエリでまとめて取り、区間ごとに集約する
   const tagRows = d
@@ -522,33 +558,53 @@ export function listAllClips(): ClipItem[] {
     list.push(t.tag)
     tagsBySeg.set(t.segment_id, list)
   }
-  return rows.map((r) => ({
-    ...rowToSegment(r),
-    videoFilename: r.v_filename ?? r.video_rel_path.split('/').pop() ?? r.video_rel_path,
-    videoDurationSec: r.v_duration_sec,
-    videoCodec: r.v_codec,
-    videoWidth: r.v_width,
-    videoHeight: r.v_height,
-    videoFps: r.v_fps,
-    tags: tagsBySeg.get(r.id) ?? []
-  }))
+  return rows.map((r) => rowToClip(r, tagsBySeg.get(r.id) ?? []))
 }
 
-/** キーフレームキャッシュの取得 */
-export function getCachedKeyframes(videoRelPath: string): number[] {
-  const rows = getDb()
+/** 単一の segment を ClipItem に解決する（無ければ undefined）。 */
+function getClip(segmentId: number): ClipItem | undefined {
+  const r = getDb().prepare(`${CLIP_SELECT} WHERE s.id = ?`).get(segmentId) as ClipRow | undefined
+  return r ? rowToClip(r, getSegmentTags(r.id)) : undefined
+}
+
+/**
+ * キーフレームキャッシュの取得。
+ * size / mtime を渡すと元ファイルの実体と照合し、不一致（差し替え・上書き）なら
+ * キャッシュを無視して空を返す（呼び出し側が再抽出する）。
+ */
+export function getCachedKeyframes(videoRelPath: string, size?: number, mtime?: number): number[] {
+  const d = getDb()
+  if (size != null && mtime != null) {
+    const src = d
+      .prepare('SELECT size, mtime FROM keyframe_src WHERE video_rel_path = ?')
+      .get(videoRelPath) as { size: number; mtime: number } | undefined
+    // 照合行が無い（旧 DB のキャッシュ）場合も作り直す（実体不明の値を信用しない）
+    if (!src || src.size !== size || src.mtime !== mtime) return []
+  }
+  const rows = d
     .prepare('SELECT pts_time FROM keyframes WHERE video_rel_path = ? ORDER BY pts_time ASC')
     .all(videoRelPath) as { pts_time: number }[]
   return rows.map((r) => r.pts_time)
 }
 
-/** キーフレームをまとめて保存（既存は置き換え） */
-export function saveKeyframes(videoRelPath: string, times: number[]): void {
+/** キーフレームをまとめて保存（既存は置き換え）。size / mtime は元ファイルの照合キー。 */
+export function saveKeyframes(
+  videoRelPath: string,
+  times: number[],
+  size?: number,
+  mtime?: number
+): void {
   const d = getDb()
   const tx = d.transaction((list: number[]) => {
     d.prepare('DELETE FROM keyframes WHERE video_rel_path = ?').run(videoRelPath)
     const ins = d.prepare('INSERT OR IGNORE INTO keyframes (video_rel_path, pts_time) VALUES (?, ?)')
     for (const t of list) ins.run(videoRelPath, t)
+    if (size != null && mtime != null) {
+      d.prepare(
+        `INSERT INTO keyframe_src (video_rel_path, size, mtime) VALUES (?, ?, ?)
+         ON CONFLICT(video_rel_path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime`
+      ).run(videoRelPath, size, mtime)
+    }
   })
   tx(times)
 }
@@ -576,6 +632,7 @@ export function renamePathsInDb(oldRel: string, newRel: string, isDir: boolean):
     for (const [table, col] of [
       ['segments', 'video_rel_path'],
       ['keyframes', 'video_rel_path'],
+      ['keyframe_src', 'video_rel_path'],
       ['video_tags', 'video_rel_path']
     ] as const) {
       const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
@@ -613,6 +670,7 @@ export function deletePathsInDb(rel: string, isDir: boolean): void {
     for (const [table, col] of [
       ['videos', 'rel_path'],
       ['keyframes', 'video_rel_path'],
+      ['keyframe_src', 'video_rel_path'],
       ['video_tags', 'video_rel_path']
     ] as const) {
       const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
@@ -765,7 +823,7 @@ export function restoreSequenceMarker(m: SequenceMarker): void {
     .run(m.id, m.sequenceId, m.sec)
 }
 
-/** シーケンスをノード / エッジごと複製する。新しいシーケンスを返す。 */
+/** シーケンスをノード / エッジ / 音楽配置 / BGM / マーカーごと複製する。新しいシーケンスを返す。 */
 export function duplicateSequence(id: number, name: string): Sequence {
   const d = getDb()
   const tx = d.transaction((srcId: number, newName: string): SequenceRow => {
@@ -780,12 +838,31 @@ export function duplicateSequence(id: number, name: string): Sequence {
     // 旧ノード id → 新ノード id の対応（エッジの張り替えに使う）
     const idMap = new Map<number, number>()
     const insN = d.prepare(
-      'INSERT INTO sequence_nodes (sequence_id, segment_id, x, y) VALUES (?, ?, ?, ?)'
+      `INSERT INTO sequence_nodes (sequence_id, segment_id, x, y, start_sec, dur_sec, src_offset, lane)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const n of nodeRows) {
-      const r = insN.run(newSeqId, n.segment_id, n.x, n.y)
+      const r = insN.run(
+        newSeqId,
+        n.segment_id,
+        n.x,
+        n.y,
+        n.start_sec,
+        n.dur_sec,
+        n.src_offset,
+        n.lane
+      )
       idMap.set(n.id, Number(r.lastInsertRowid))
     }
+    // 音楽タイムラインの BGM とマーカーも配置と一体の編集状態なので一緒に写す
+    d.prepare(
+      `INSERT INTO sequence_bgm (sequence_id, rel_path, start_offset_sec, beats_per_bar)
+       SELECT ?, rel_path, start_offset_sec, beats_per_bar FROM sequence_bgm WHERE sequence_id = ?`
+    ).run(newSeqId, srcId)
+    d.prepare(
+      `INSERT INTO sequence_markers (sequence_id, sec)
+       SELECT ?, sec FROM sequence_markers WHERE sequence_id = ?`
+    ).run(newSeqId, srcId)
     const insE = d.prepare(
       'INSERT INTO sequence_edges (sequence_id, src_node_id, dst_node_id) VALUES (?, ?, ?)'
     )
@@ -944,7 +1021,11 @@ export function addSequenceNode(
   const row = getDb()
     .prepare('SELECT * FROM sequence_nodes WHERE id = ?')
     .get(Number(info.lastInsertRowid)) as SequenceNodeRow
-  return buildNode(row, clipMap())
+  // ノード 1 個の解決に全クリップの結合（clipMap）を組み立てない
+  const clip = getClip(segmentId)
+  const map = new Map<number, ClipItem>()
+  if (clip) map.set(clip.id, clip)
+  return buildNode(row, map)
 }
 
 export function updateSequenceNodePos(nodeId: number, x: number, y: number): void {

@@ -43,11 +43,16 @@
 
 ## HEVC / 10bit のプレビュー再生
 
-DJI 等の HEVC 10bit 素材は Chromium の `<video>` では再生できないため、**mpv を動画領域に埋め込んで再生** します。
-原本をハードウェアデコードで無劣化・キャッシュ不要・即シークで再生します（書き出しは元素材で無劣化）。
+DJI 等の HEVC 10bit 素材も、Chromium の `<video>` で **原本を直接再生** します（Electron 43 以降で
+HEVC のハードウェアデコードが利用可能になったため。Phase 2.6e で mpv 埋め込みから切り替え）。
+無劣化・キャッシュ不要・即シークで、書き出しも元素材から無劣化です。
 
-- 開発時は **mpv が必要** です（`winget install shinchiro.mpv` など）。`C:\Program Files\MPV Player\mpv.exe` を自動検出、`DCM_MPV_PATH` でも指定可。配布時はアプリに同梱予定。
-- mpv が見つからない/起動できない場合は、従来の `<video>` 再生に自動フォールバックし、必要なら一時的に H.264 プロキシへ変換して再生します（`.dcm/` には保存せず OS 一時フォルダに置き終了時に削除）。
+- `<video>` で再生できない素材は、オーバーレイのボタンから **一時 H.264 プロキシ** を生成して再生できます
+  （`.dcm/` には保存せず OS 一時フォルダに置き終了時に削除）。
+- HEVC がどうしても再生できない環境向けの退避先として、設定ファイル（userData の
+  `drone-clip-manager-config.json`）の `playbackEngine` を `mpv` にすると従来の
+  **mpv ネイティブ埋め込み再生** に戻せます（`C:\Program Files\MPV Player\mpv.exe` を自動検出、
+  `DCM_MPV_PATH` でも指定可）。既定構成では mpv は不要です。
 
 ## キーフレームとロスレス切り出し（重要な前提）
 
@@ -63,7 +68,9 @@ stream copy は **GOP 境界（キーフレーム / I フレーム）でしか�
 - **Phase 2 — 区間 & 書き出し（MVP ゴール）**: キーフレーム可視化 / 区間 CRUD / スナップ / ロスレス書き出し / Export Queue
 - **Phase 3 — ドローン強化 & 拡張**: flight_group グルーピング、（任意）smart-cut、（任意）カメラモーション解析
 
-現状は **Phase 0（設計・ドキュメント整備）** で、アプリ本体は未着手です。
+現状は **Phase 2（MVP）到達済み、Phase 2.6（クリップのシーケンス）実装中** です。
+クリップ一覧ビュー、ノードグラフ / 音楽タイムラインでのシーケンス編集、BGM 付きの無劣化連結書き出しまで動きます。
+詳細は [docs/plan/progress.md](docs/plan/progress.md) を参照してください。
 
 ## ドキュメント
 
@@ -77,7 +84,7 @@ stream copy は **GOP 境界（キーフレーム / I フレーム）でしか�
 ## 前提ツール
 
 - [ffmpeg / ffprobe](https://ffmpeg.org/)（システム PATH に通っていること。将来的に同梱も検討）
-- [mpv](https://mpv.io/)（HEVC/10bit プレビュー再生用。`winget install shinchiro.mpv`。将来的に同梱も検討）
+- [mpv](https://mpv.io/)（任意。`playbackEngine: 'mpv'` の退避経路を使う場合のみ。`winget install shinchiro.mpv`）
 - Node.js（開発時）
 
 ## 開発セットアップ

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { BeatAnalysis, BgmInfo, BgmTrack } from '../../../shared/types'
 import { ContextMenu } from './ContextMenu'
+import { RenameInput } from './RenameInput'
 import {
   IconFolder,
   IconLoop,
@@ -45,48 +46,6 @@ function beatIndexAt(beats: number[], t: number): number {
     }
   }
   return ans
-}
-
-/** 名前変更のインライン入力。Enter で確定 / Esc でキャンセル / フォーカス喪失で確定。 */
-function RenameInput({
-  track,
-  onRename,
-  onEnd
-}: {
-  track: BgmTrack
-  onRename: (relPath: string, newName: string) => Promise<void>
-  onEnd: () => void
-}) {
-  const doneRef = useRef(false) // Enter 確定後の blur で二重コミットしない
-  const commit = async (value: string) => {
-    if (doneRef.current) return
-    doneRef.current = true
-    if (value.trim() && value !== track.name) await onRename(track.relPath, value)
-    onEnd()
-  }
-  return (
-    <input
-      className="bgm-rename-input"
-      autoFocus
-      defaultValue={track.name}
-      onFocus={(e) => {
-        // 拡張子を除いた部分だけを選択状態にする
-        const dot = e.currentTarget.value.lastIndexOf('.')
-        e.currentTarget.setSelectionRange(0, dot > 0 ? dot : e.currentTarget.value.length)
-      }}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation() // Space（再生トグル等）のグローバルショートカットに食われない
-        if (e.key === 'Escape') {
-          doneRef.current = true
-          onEnd()
-        } else if (e.key === 'Enter') {
-          void commit(e.currentTarget.value)
-        }
-      }}
-      onBlur={(e) => void commit(e.currentTarget.value)}
-    />
-  )
 }
 
 // 再生ヘッドの時刻更新で App が再レンダリングされても描き直さないよう memo 化
@@ -136,6 +95,8 @@ export const BgmPlayer = memo(function BgmPlayer({
 
   const pickDir = async () => {
     const next = await api.pickBgmDir()
+    // src を null にしても <audio> は読み直さず鳴り続けるため、明示的に止める
+    audioRef.current?.pause()
     setInfo(next)
     setIndex(null)
     setPlaying(false)
@@ -155,7 +116,11 @@ export const BgmPlayer = memo(function BgmPlayer({
     const i = keepRel ? next.tracks.findIndex((t) => t.relPath === keepRel) : -1
     setInfo(next)
     setIndex(i >= 0 ? i : null)
-    if (i < 0) setPlaying(false)
+    if (i < 0) {
+      // src を null にしても <audio> は読み直さず鳴り続けるため、明示的に止める
+      audioRef.current?.pause()
+      setPlaying(false)
+    }
   }
 
   /** BGM ファイルの名前を変更する（実ファイルの rename は main 側）。 */
@@ -189,6 +154,8 @@ export const BgmPlayer = memo(function BgmPlayer({
   }
 
   const playAt = (i: number) => {
+    // 同じトラックなら src が変わらず自動リロードされないため、位置を明示的に戻す
+    if (i === index && audioRef.current) audioRef.current.currentTime = 0
     setIndex(i)
     setPlaying(true)
     setCurTime(0)
@@ -426,7 +393,12 @@ export const BgmPlayer = memo(function BgmPlayer({
                 >
                   <span className="bgm-track-icon">{index === i && playing ? '♪' : '·'}</span>
                   {editing ? (
-                    <RenameInput track={t} onRename={renameTrack} onEnd={() => setEditRel(null)} />
+                    <RenameInput
+                      className="bgm-rename-input"
+                      name={t.name}
+                      onRename={(newName) => renameTrack(t.relPath, newName)}
+                      onEnd={() => setEditRel(null)}
+                    />
                   ) : (
                     <span className="bgm-track-name">{t.name}</span>
                   )}

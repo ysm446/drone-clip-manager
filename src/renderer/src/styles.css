@@ -2004,17 +2004,6 @@ body.resizing {
   color: var(--text);
   font-size: var(--fs-ui);
 }
-/* 数値入力（行に複数並ぶ小さな値） */
-.modal-num {
-  width: 72px;
-}
-/* 行の途中に置く 2 つ目のラベル（「ぼかし」「余白」など） */
-.modal-sublabel {
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  margin-left: 8px;
-  white-space: nowrap;
-}
 .modal-summary {
   color: var(--muted);
   font-size: var(--fs-sm);

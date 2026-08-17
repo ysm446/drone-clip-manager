@@ -185,8 +185,16 @@ export function App() {
       const t = document.activeElement as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       e.preventDefault()
-      const label = isUndo ? await performUndo() : await performRedo()
-      if (label) showStatus(`${isUndo ? '元に戻しました' : 'やり直しました'}: ${label}`)
+      try {
+        const label = isUndo ? await performUndo() : await performRedo()
+        if (label) showStatus(`${isUndo ? '元に戻しました' : 'やり直しました'}: ${label}`)
+      } catch (err) {
+        // 失敗してもエントリは積み直されている（undo.ts）。もう一度押せば再試行できる
+        showStatus(
+          `${isUndo ? '元に戻せませんでした' : 'やり直せませんでした'}: ${err instanceof Error ? err.message : String(err)}`,
+          'err'
+        )
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -734,6 +742,13 @@ export function App() {
     null
   )
 
+  /** いまエンジンが再生中か。mpv 経路では videoRef が無いので分岐する（判定はここ 1 か所に集約） */
+  const isEnginePlaying = useCallback(
+    () =>
+      mpvModeRef.current ? !mpvPausedRef.current : !!videoRef.current && !videoRef.current.paused,
+    []
+  )
+
   const togglePlay = useCallback(() => {
     const bgm = seqBgmRef.current
     const audio = seqAudioRef.current
@@ -748,7 +763,7 @@ export function App() {
       return
     }
 
-    const willPlay = mpvModeRef.current ? mpvPausedRef.current : !!videoRef.current?.paused
+    const willPlay = !isEnginePlaying()
 
     // これから再生する場面で音楽ビューにいるなら、最新のキューを引き直して再生を始める。
     // 尺を変えた直後でもその場で反映され、同じ並びなら playSequence 側が現在位置から再開する。
@@ -786,7 +801,7 @@ export function App() {
       const v = videoRef.current
       if (v) (v.paused ? v.play() : v.pause())
     }
-  }, [])
+  }, [isEnginePlaying])
 
   // --- 動画の全画面表示（映像ダブルクリックで切り替え / Esc で解除） ---
   const [fullscreen, setFullscreen] = useState(false)
@@ -893,6 +908,10 @@ export function App() {
     seqArmedRef.current = false
     setPlayingNodeId(null)
     setSeqQueue(null)
+    // 再生中フラグも必ず下ろす。残すと selectMusicClip がクリップを開かない・
+    // ツールバーが「停止」表示のまま、といった取り残しが起きる
+    setSeqPlaying(false)
+    seqPlayingRef.current = false
     // 別の動画を開いたときに BGM だけ鳴り続けないよう止める
     seqAudioRef.current?.pause()
     seqBgmRef.current = null
@@ -1180,9 +1199,7 @@ export function App() {
       cancelGapHold()
       const idx = items.findIndex((it) => it.nodeId === nodeId)
       if (idx < 0) return // 順路に入っていないノード（未接続）は何もしない
-      const wasPlaying = mpvModeRef.current
-        ? !mpvPausedRef.current
-        : !!videoRef.current && !videoRef.current.paused
+      const wasPlaying = isEnginePlaying()
       seqQueueRef.current = items
       seqActiveRef.current = true
       // プレビュー再生のループ範囲が残っていたら解除
@@ -1191,7 +1208,7 @@ export function App() {
       setSeqQueue(items)
       loadSeqIndex(idx, undefined, wasPlaying)
     },
-    [loadSeqIndex]
+    [loadSeqIndex, isEnginePlaying]
   )
 
   /**
@@ -1228,10 +1245,11 @@ export function App() {
       seqActiveRef.current = true
       // 音楽モードなら BGM も同じ位置へ合わせる。
       // 位置を動かすだけで鳴り出さないよう、再生 / 停止の状態は変えない。
+      // 判定は mpv 対応の isEnginePlaying に統一（videoRef だけ見ると mpv 再生中が常に false になる）。
+      const playingNow = isEnginePlaying()
       const bgm = seqBgmRef.current
       const audio = seqAudioRef.current
       if (bgm && audio) {
-        const playingNow = !!videoRef.current && !videoRef.current.paused
         // **曲の位置は `songPosAt` から求める**（`seekMusic` と同じ理由）。
         // シーケンス時間をそのまま曲の位置に使うと、自由配置では合わず、
         // そのまま再生すると次のクリップの境目で曲が飛ぶ。
@@ -1246,10 +1264,11 @@ export function App() {
         setPlayingNodeId(seqQueueRef.current[loc.idx]?.nodeId ?? null)
         seek(loc.sec)
       } else {
-        loadSeqIndex(loc.idx, loc.sec)
+        // 停止中のシークで勝手に再生が始まらないよう、再生状態を引き継ぐ（jumpToNode と同じ）
+        loadSeqIndex(loc.idx, loc.sec, playingNow)
       }
     },
-    [seqLocate, seek, loadSeqIndex]
+    [seqLocate, seek, loadSeqIndex, isEnginePlaying]
   )
 
   /**
@@ -1263,9 +1282,7 @@ export function App() {
       if (items.length === 0) return
       // 頭出しは位置を変えるだけで、再生 / 停止の状態は変えない
       // （停止中に触ったときに鳴り出さないようにする）。jumpToNode と同じ判定。
-      const wasPlaying = mpvModeRef.current
-        ? !mpvPausedRef.current
-        : !!videoRef.current && !videoRef.current.paused
+      const wasPlaying = isEnginePlaying()
       seqQueueRef.current = items
       seqActiveRef.current = true
       clipPlayRef.current = null
@@ -1298,7 +1315,7 @@ export function App() {
         loadSeqIndex(loc.idx, loc.sec, wasPlaying)
       }
     },
-    [seqLocate, seek, loadSeqIndex]
+    [seqLocate, seek, loadSeqIndex, isEnginePlaying]
   )
 
   // シーケンスバーのホバーサムネイル: シーケンス時間 → 該当クリップの動画・時刻で生成
@@ -1513,11 +1530,19 @@ export function App() {
       // シーケンス再生キューにも反映（自動送りの out 判定・バーの長さを追従させる）。
       // 同じクリップが複数ノードに置かれている場合もまとめて更新する。
       if (seqQueueRef.current.some((it) => it.clip.id === selectedSeg)) {
-        const patched = seqQueueRef.current.map((it) =>
-          it.clip.id === selectedSeg
-            ? { ...it, clip: { ...it.clip, inTime: inT, outTime: outT, ...snapped } }
-            : it
-        )
+        // 音楽モードの項目は inSec / outSec の上書きが実効値（itemIn / itemOut が優先する）
+        // なので、clip の差し替えだけでは効かない。in スナップの移動量だけ一緒にずらす。
+        const dIn = (snapped.inSnapped ?? inT) - (s.inSnapped ?? s.inTime)
+        const patched = seqQueueRef.current.map((it) => {
+          if (it.clip.id !== selectedSeg) return it
+          const next = { ...it, clip: { ...it.clip, inTime: inT, outTime: outT, ...snapped } }
+          if (it.inSec != null) next.inSec = it.inSec + dIn
+          if (it.outSec != null) {
+            // 素材の終端（新しい out スナップ）を超えては再生できないので頭打ちにする
+            next.outSec = Math.min(it.outSec + dIn, snapped.outSnapped ?? outT)
+          }
+          return next
+        })
         seqQueueRef.current = patched
         setSeqQueue((cur) => (cur ? patched : cur))
       }
@@ -1660,17 +1685,14 @@ export function App() {
         setClipPlayRange(range)
       } else {
         // 別動画: 現在の再生状態を見て、再生中ならロード後に自動再生を続ける
-        const wasPlaying = mpvModeRef.current
-          ? !mpvPausedRef.current
-          : !!videoRef.current && !videoRef.current.paused
-        autoPlayNextRef.current = wasPlaying
+        autoPlayNextRef.current = isEnginePlaying()
         pendingSeekRef.current = t
         selectVideo(clip.videoRelPath).then(() => setSelectedSeg(clip.id))
         // selectVideo が同期的に clipPlay を解除するので、その後に設定する
         setClipPlayRange(range)
       }
     },
-    [seek, selectVideo, setClipPlayRange, exitSequence]
+    [seek, selectVideo, setClipPlayRange, exitSequence, isEnginePlaying]
   )
 
   /**
@@ -1993,9 +2015,12 @@ export function App() {
     setExportItems(targets)
   }, [])
 
-  // I / O キーで現在位置を in/out に使った区間作成の補助
+  // I / O キーで現在位置を in/out に使った区間作成の補助。
+  // in 点の控えは ref に持つ（effect のローカル変数だと、依存の変化＝再生中の時刻更新の
+  // たびに effect が張り直されて in 点が消え、再生しながらの I → O が効かない）。
+  // 時刻も currentTimeRef から読み、依存から currentTime を外してリスナーの再登録を止める。
+  const pendingInRef = useRef<number | null>(null)
   useEffect(() => {
-    const pending: { in: number | null } = { in: null }
     const onKey = (e: KeyboardEvent) => {
       if (!selected || duration <= 0) return
       const tag = (e.target as HTMLElement)?.tagName
@@ -2008,11 +2033,12 @@ export function App() {
       }
       if (view !== 'library') return
       if (e.key === 'i' || e.key === 'I') {
-        pending.in = currentTime
+        pendingInRef.current = currentTimeRef.current
       } else if (e.key === 'o' || e.key === 'O') {
-        if (pending.in != null && currentTime > pending.in) {
-          createSegment(pending.in, currentTime)
-          pending.in = null
+        const inAt = pendingInRef.current
+        if (inAt != null && currentTimeRef.current > inAt) {
+          createSegment(inAt, currentTimeRef.current)
+          pendingInRef.current = null
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedSeg != null) {
@@ -2023,7 +2049,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [view, selected, duration, currentTime, createSegment, togglePlay, selectedSeg, deleteSeg])
+  }, [view, selected, duration, createSegment, togglePlay, selectedSeg, deleteSeg])
 
   // F12: アプリ全体 / F9: 動画フレーム のスクリーンショット
   // （ビュー/入力フォーカスに関わらず有効。既定メニューは無効化済み）
@@ -2087,15 +2113,16 @@ export function App() {
   }, [seqQueue, seqIdx])
   const seqMode = seqPlayback != null
 
-  // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置
+  // シーケンス先頭からの経過時間 = それまでのクリップ合計 + 現クリップ内の位置。
+  // クリップ内の位置は itemIn 基準で数える（音楽モードの項目は srcOffset / トリムで
+  // in が上書きされるため、生のクリップ値を見るとトリム分だけ先へずれる）
   let seqTime = 0
   if (seqPlayback && seqQueue) {
-    const c = seqQueue[seqPlayback.idx].clip
     seqTime =
       seqPlayback.offsets[seqPlayback.idx] +
       Math.min(
         seqPlayback.durs[seqPlayback.idx],
-        Math.max(0, currentTime - (c.inSnapped ?? c.inTime))
+        Math.max(0, currentTime - itemIn(seqQueue[seqPlayback.idx]))
       )
   }
 
@@ -2277,6 +2304,7 @@ export function App() {
                   onError={onVideoError}
                   onPlay={onVideoPlay}
                   onPause={onVideoPause}
+                  onTogglePlay={togglePlay}
                   onToggleFullscreen={toggleFullscreen}
                 />
                 {/* 隙間で黒のまま待つ間の覆い（<video> は直前のコマが残るため） */}

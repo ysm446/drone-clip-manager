@@ -89,7 +89,8 @@ export interface SequenceNode {
   /**
    * 音楽タイムラインでの開始位置（秒 / Phase 2.6c）。曲の先頭からの絶対位置。
    * null は「未配置」で、音楽ビューを開いたときに前詰めの位置を書き込んで確定させる。
-   * **負なら予備（棚）に取り置き中**（`SHELF_START_SEC` / `isShelfNode`）。
+   * （旧仕様の「負 = 予備の棚」は廃止済み。予備は `lane` で表す。移行は
+   * db.ts の migrateShelfSentinel を参照。）
    */
   startSec: number | null
   /**
@@ -597,7 +598,6 @@ export interface DcmApi {
   mpvPlay: () => void
   mpvPause: () => void
   mpvSeek: (sec: number) => void
-  mpvVolume: (v0to1: number) => void
   /** 再生速度（1 = 等速） */
   mpvSetSpeed: (v: number) => void
   mpvStop: () => void

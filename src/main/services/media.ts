@@ -157,10 +157,16 @@ export async function probeVideo(relPath: string): Promise<VideoMeta> {
  * 無ければ ffprobe のパケットフラグ（K）から抽出してキャッシュする（spec §6.1）。
  */
 export async function getKeyframes(relPath: string): Promise<number[]> {
-  const cached = getCachedKeyframes(relPath)
+  const abs = resolveInRoot(relPath)
+  // 同名で中身の違うファイルへの差し替え（撮り直し・上書き）を検知するため、
+  // キャッシュは元ファイルの size / mtime と照合して使う。ずれたキーフレームは
+  // ロスレス切り出しの in 点を非キーフレームにして結果を壊す。
+  const st = statSync(abs)
+  const size = st.size
+  const mtime = Math.round(st.mtimeMs)
+  const cached = getCachedKeyframes(relPath, size, mtime)
   if (cached.length > 0) return cached
 
-  const abs = resolveInRoot(relPath)
   const { stdout } = await execFileP(
     FFPROBE,
     [
@@ -185,7 +191,7 @@ export async function getKeyframes(relPath: string): Promise<number[]> {
     if (flags.includes('K') && !Number.isNaN(pts)) times.push(pts)
   }
   times.sort((a, b) => a - b)
-  saveKeyframes(relPath, times)
+  saveKeyframes(relPath, times, size, mtime)
   return times
 }
 

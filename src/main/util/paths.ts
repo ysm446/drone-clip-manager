@@ -1,6 +1,6 @@
 import { app } from 'electron'
-import { join, resolve, relative, sep } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve, relative, sep, isAbsolute } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 
 // ルートフォルダ・BGM フォルダはハードコードせず、ユーザー指定値を app のユーザーデータ領域に永続化する。
 // ライブラリのメタデータ自体は各ルート直下の .dcm/ に閉じる（spec §3 参照）。
@@ -61,7 +61,11 @@ export function getPlaybackEngine(): 'video' | 'mpv' {
 function writeConfig(patch: Partial<AppConfig>): void {
   const next = { ...readConfig(), ...patch }
   cached = next
-  writeFileSync(CONFIG_FILE(), JSON.stringify(next, null, 2), 'utf-8')
+  // 書き込み途中のクラッシュで JSON が壊れると履歴ごと初期化されるため、temp + rename で原子的に書く
+  const file = CONFIG_FILE()
+  const tmp = `${file}.tmp`
+  writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf-8')
+  renameSync(tmp, file)
 }
 
 export function getRoot(): string | null {
@@ -101,9 +105,13 @@ export function metaDir(): string {
 
 /** base 配下の相対パス（POSIX 区切り）→ 絶対パスに解決。base 外への参照は拒否する。 */
 function resolveInBase(base: string, relPath: string): string {
+  // 別ドライブ・UNC の絶対パスは relative() が '..' を返さず素通りするため、先に弾く
+  if (isAbsolute(relPath) || /^[A-Za-z]:/.test(relPath)) {
+    throw new Error(`許可されたフォルダ外のパスは扱えません: ${relPath}`)
+  }
   const abs = resolve(base, relPath)
   const rel = relative(base, abs)
-  if (rel.startsWith('..') || resolve(base, rel) !== abs) {
+  if (rel.startsWith('..') || isAbsolute(rel) || resolve(base, rel) !== abs) {
     throw new Error(`許可されたフォルダ外のパスは扱えません: ${relPath}`)
   }
   return abs

@@ -264,6 +264,8 @@ export const ClipsView = memo(function ClipsView({
         redo: () => api.deleteSegment(id)
       })
     }
+    // タグ付きクリップを消したときに絞り込みバーの件数 / チップが古いまま残らないように
+    refreshTags()
   }
 
   if (loading) {
@@ -316,9 +318,14 @@ export const ClipsView = memo(function ClipsView({
         <span className="clips-spacer" />
         <button
           className="btn"
-          onClick={shownSelected.length === shown.length ? clearSelection : selectAllShown}
+          disabled={shown.length === 0}
+          onClick={
+            shown.length > 0 && shownSelected.length === shown.length
+              ? clearSelection
+              : selectAllShown
+          }
         >
-          {shownSelected.length === shown.length ? '選択解除' : '全選択'}
+          {shown.length > 0 && shownSelected.length === shown.length ? '選択解除' : '全選択'}
         </button>
         <button
           className="btn primary"

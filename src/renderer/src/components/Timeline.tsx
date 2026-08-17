@@ -120,19 +120,24 @@ export function Timeline({
   /**
    * ズーム倍率を変更する。anchor（時刻とビューポート内 x）を渡すとその点を固定、
    * 省略時は再生ヘッド（画面外ならビュー中央）を固定してスクロール位置を合わせる。
+   * 再生ヘッドの時刻は ref から読む（依存に currentTime を入れると、再生中の
+   * 時刻更新のたびに zoomTo が作り直され、wheel リスナが再登録され続ける）。
    */
+  const currentTimeRef = useRef(currentTime)
+  currentTimeRef.current = currentTime
   const zoomTo = useCallback(
     (zRaw: number, anchor?: { t: number; vx: number }) => {
       const z2 = clamp(zRaw, 1, MAX_ZOOM)
       const sc = scrollRef.current
       if (sc && duration > 0 && z2 !== zoom) {
         const viewW = sc.clientWidth
+        const head = currentTimeRef.current
         let a = anchor
         if (!a) {
-          const headVx = (currentTime / duration) * viewW * zoom - sc.scrollLeft
+          const headVx = (head / duration) * viewW * zoom - sc.scrollLeft
           a =
             headVx >= 0 && headVx <= viewW
-              ? { t: currentTime, vx: headVx }
+              ? { t: head, vx: headVx }
               : { t: ((sc.scrollLeft + viewW / 2) / (viewW * zoom)) * duration, vx: viewW / 2 }
         }
         const x2 = (a.t / duration) * viewW * z2
@@ -140,7 +145,7 @@ export function Timeline({
       }
       setZoom(z2)
     },
-    [zoom, duration, currentTime]
+    [zoom, duration]
   )
 
   // ズーム反映後（内容幅が変わった後）にスクロール位置を適用する
@@ -255,9 +260,13 @@ export function Timeline({
       ed.hi = hi
       setPreview({ id: seg.id, lo, hi })
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = () => {
+      cleanup()
       if (ed.moved) {
         if (ed.hi - ed.lo > 0.02) onUpdateSegment(seg.id, ed.lo, ed.hi)
       } else {
@@ -265,8 +274,15 @@ export function Timeline({
       }
       setPreview(null)
     }
+    // OS 側でドラッグが打ち切られたとき（ウィンドウ外で離した等）はプレビューを破棄する。
+    // 見張らないと pointerup を取りこぼしてプレビューが貼り付いたままになる
+    const onCancel = () => {
+      cleanup()
+      setPreview(null)
+    }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   // --- 上部ルーラー: 常に「動画だけのシーク」（区間バーとは重ならない専用エリア） ---

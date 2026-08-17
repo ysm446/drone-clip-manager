@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { basename, extname, join } from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolveInBgm, resolveInRoot } from '../util/paths'
@@ -167,7 +167,7 @@ interface FillerSpec {
 /** 黒を作るために、元動画の映像仕様を引く。 */
 async function probeFillerSpec(absInput: string): Promise<FillerSpec> {
   const out = await new Promise<string>((resolve, reject) => {
-    const ff = spawn('ffprobe', [
+    const ff = spawn(FFPROBE, [
       '-v', 'error',
       '-select_streams', 'v:0',
       '-show_entries',
@@ -234,9 +234,14 @@ async function makeBlackPart(spec: FillerSpec, durSec: number, outPath: string):
  * パートを MPEG-TS へ変換する（stream copy）。
  * TS はパラメータセットをストリーム内に持てるので、別エンコードの黒を混ぜても壊れない。
  */
-async function toTs(part: string, out: string, codec: string): Promise<void> {
+async function toTs(
+  part: string,
+  out: string,
+  codec: string,
+  onOutTime: (sec: number) => void = () => void 0
+): Promise<void> {
   const bsf = codec === 'hevc' ? 'hevc_mp4toannexb' : 'h264_mp4toannexb'
-  await runFfmpeg(['-i', part, '-c', 'copy', '-bsf:v', bsf, '-f', 'mpegts', out], () => void 0)
+  await runFfmpeg(['-i', part, '-c', 'copy', '-bsf:v', bsf, '-f', 'mpegts', out], onOutTime)
 }
 
 /** 1区間をロスレス書き出しする（引数は cutArgs を参照）。 */
@@ -285,13 +290,25 @@ export function exportOne(
     ff.stderr.on('data', (buf: Buffer) => {
       stderrTail = (stderrTail + buf.toString()).slice(-4000)
     })
-    ff.on('error', (err) => reject(err))
+    // 失敗時は書きかけの出力を残さない（uniquePath により、壊れた方が正規名で残り続けるため）
+    const cleanupOut = (): void => {
+      try {
+        rmSync(outPath, { force: true })
+      } catch {
+        /* noop */
+      }
+    }
+    ff.on('error', (err) => {
+      cleanupOut()
+      reject(err)
+    })
     ff.on('close', (code) => {
       if (code === 0) {
         onProgress(1)
         resolve(outPath)
       } else {
         const tail = stderrTail.trim().split('\n').slice(-3).join(' / ')
+        cleanupOut()
         reject(new Error(`ffmpeg 失敗 (code ${code}): ${tail}`))
       }
     })
@@ -361,8 +378,14 @@ export async function exportConcat(
     }
 
     // 1. 各クリップを一時ファイルへ切り出し（隙間があれば手前に黒を挟む）
-    const parts: string[] = []
-    const blackCache = new Map<string, string>() // 同じ尺の黒は使い回す
+    interface Part {
+      path: string
+      dur: number
+      /** true = このパート専用の切り出し（TS 化後に消してピーク容量を抑えられる） */
+      ephemeral: boolean
+    }
+    const parts: Part[] = []
+    const blackCache = new Map<string, string>() // 同じ尺の黒は使い回す（複数の隙間で共有）
     let doneDur = 0
     for (let i = 0; i < items.length; i++) {
       const it = items[i]
@@ -374,13 +397,13 @@ export async function exportConcat(
           await makeBlackPart(spec, gaps[i], black)
           blackCache.set(key, black)
         }
-        parts.push(black)
+        parts.push({ path: black, dur: gaps[i], ephemeral: false })
         doneDur += gaps[i]
         onProgress('cut', i + 1, doneDur / (totalDur * stages))
       }
       const absInput = resolveInRoot(it.videoRelPath)
       const part = join(tmp, `part${String(i).padStart(4, '0')}${extname(absInput) || '.mp4'}`)
-      parts.push(part)
+      parts.push({ path: part, dur: durs[i], ephemeral: true })
       const base = doneDur
       const onSec = (sec: number): void =>
         onProgress('cut', i + 1, (base + Math.min(sec, durs[i])) / (totalDur * stages))
@@ -390,20 +413,35 @@ export async function exportConcat(
     }
 
     // 別エンコードのパート（黒）が混ざるときは TS を経由する
-    // （パラメータセットをパートごとに持たせるため。理由は上の「隙間を埋める黒」の解説）
-    const joinParts = spec
-      ? await Promise.all(
-          parts.map(async (p, i) => {
-            const ts = join(tmp, `ts${String(i).padStart(4, '0')}.ts`)
-            await toTs(p, ts, spec.codec)
-            return ts
-          })
+    // （パラメータセットをパートごとに持たせるため。理由は上の「隙間を埋める黒」の解説）。
+    // 逐次で変換し（export:run と同じ「ディスク I/O を詰まらせない」方針）、変換済みの
+    // 切り出しはその場で消してピーク容量を抑える。進捗は連結段の前半 1/2 に割り当てる。
+    const tsShare = spec ? 0.5 : 0
+    let joinPaths: string[]
+    if (spec) {
+      joinPaths = []
+      let tsDone = 0
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i]
+        const ts = join(tmp, `ts${String(i).padStart(4, '0')}.ts`)
+        await toTs(p.path, ts, spec.codec, (sec) =>
+          onProgress(
+            'concat',
+            items.length,
+            (totalDur + tsShare * (tsDone + Math.min(sec, p.dur))) / (totalDur * stages)
+          )
         )
-      : parts
+        if (p.ephemeral) await rm(p.path, { force: true }).catch(() => void 0)
+        tsDone += p.dur
+        joinPaths.push(ts)
+      }
+    } else {
+      joinPaths = parts.map((p) => p.path)
+    }
 
     // 2. concat demuxer で連結（パスは ' を '\'' にエスケープして quote する）
     const listPath = join(tmp, 'list.txt')
-    const listBody = joinParts
+    const listBody = joinPaths
       .map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
       .join('\n')
     await writeFile(listPath, listBody, 'utf8')
@@ -417,13 +455,18 @@ export async function exportConcat(
         '-c', 'copy',
         '-map', '0',
         // TS 経由のときは、ストリーム内パラメータセットを許すタグで MP4 へ戻す。
-        // `hvc1` のままだと先頭のものだけが hvcC に残り、黒のフレームが崩れる。
-        ...(spec?.codec === 'hevc' ? ['-tag:v', 'hev1'] : []),
+        // 既定タグ（hvc1 / avc1）のままだと先頭のものだけがヘッダに残り、黒のフレームが崩れる。
+        // ※ avc3（H.264 側）は実素材未検証（手持ちが HEVC のみ）。
+        ...(spec ? ['-tag:v', spec.codec === 'hevc' ? 'hev1' : 'avc3'] : []),
         '-avoid_negative_ts', 'make_zero',
         concatOut
       ],
       (sec) =>
-        onProgress('concat', items.length, (totalDur + Math.min(sec, totalDur)) / (totalDur * stages))
+        onProgress(
+          'concat',
+          items.length,
+          (totalDur * (1 + tsShare) + (1 - tsShare) * Math.min(sec, totalDur)) / (totalDur * stages)
+        )
     )
     onProgress('concat', items.length, 2 / stages)
 
@@ -443,6 +486,10 @@ export async function exportConcat(
     }
     onProgress(bgm ? 'bgm' : 'concat', items.length, 1)
     return outPath
+  } catch (err) {
+    // 失敗時は書きかけの最終出力を残さない（中間物は下の finally で消える）
+    await rm(outPath, { force: true }).catch(() => void 0)
+    throw err
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => void 0)
   }

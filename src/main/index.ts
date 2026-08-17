@@ -22,7 +22,6 @@ import {
   mpvSetSpeed,
   mpvStart,
   mpvStop,
-  mpvVolume,
   mpvScreenshot
 } from './services/mpv'
 import { saveAppScreenshot } from './services/screenshot'
@@ -121,8 +120,17 @@ function serveFile(abs: string, request: GlobalRequest): Response {
   const range = request.headers.get('range')
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range)
-    let start = m && m[1] ? parseInt(m[1], 10) : 0
-    let end = m && m[2] ? parseInt(m[2], 10) : size - 1
+    let start: number
+    let end: number
+    if (m && !m[1] && m[2]) {
+      // サフィックス形式（bytes=-N）= 末尾 N バイト
+      const n = parseInt(m[2], 10)
+      start = Math.max(0, size - n)
+      end = size - 1
+    } else {
+      start = m && m[1] ? parseInt(m[1], 10) : 0
+      end = m && m[2] ? parseInt(m[2], 10) : size - 1
+    }
     if (Number.isNaN(start)) start = 0
     if (Number.isNaN(end) || end >= size) end = size - 1
     if (start > end || start >= size) {
@@ -276,7 +284,8 @@ function createWindow(): void {
   })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    // 外部ブラウザで開くのは http(s) のみ（file: 等を OS に渡さない Electron の定石）
+    if (/^https?:/i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -303,15 +312,9 @@ function registerMpvIpc(): void {
     mpvVisible = v
     positionMpv()
   })
-  // 動画の全画面表示（レンダラ側でプレイヤーを全面に広げ、ウィンドウも全画面にする）
-  ipcMain.on('win:setFullScreen', (_e, v: boolean) => {
-    mainWindow?.setFullScreen(!!v)
-    positionMpv() // 全画面化でウィンドウ座標が変わるので mpv を追従させる
-  })
   ipcMain.on('mpv:play', () => mpvPlay())
   ipcMain.on('mpv:pause', () => mpvPause())
   ipcMain.on('mpv:seek', (_e, t: number) => mpvSeek(t))
-  ipcMain.on('mpv:volume', (_e, v: number) => mpvVolume(v))
   ipcMain.on('mpv:speed', (_e, v: number) => mpvSetSpeed(v))
   ipcMain.on('mpv:stop', () => mpvStop())
 
@@ -328,6 +331,16 @@ function registerMpvIpc(): void {
         /* noop */
       }
     }
+  })
+
+}
+
+/** mpv とは無関係の、ウィンドウ / スクリーンショット系 IPC（mpv を捨てても残る側）。 */
+function registerWindowIpc(): void {
+  // 動画の全画面表示（レンダラ側でプレイヤーを全面に広げ、ウィンドウも全画面にする）
+  ipcMain.on('win:setFullScreen', (_e, v: boolean) => {
+    mainWindow?.setFullScreen(!!v)
+    positionMpv() // 全画面化でウィンドウ座標が変わるので mpv を追従させる
   })
 
   // アプリ画面（Chromium 描画層）を data URL でキャプチャ。mpv 映像は含まれない（別ネイティブ層のため）。
@@ -355,6 +368,7 @@ if (isPrimaryInstance) {
     registerMediaProtocol()
     registerIpc()
     registerMpvIpc()
+    registerWindowIpc()
     createWindow()
 
     app.on('activate', () => {

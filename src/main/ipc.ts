@@ -93,6 +93,15 @@ import type {
 // 生成中のプロキシ（relPath 単位で重複起動を防ぐ）
 const proxyInFlight = new Set<string>()
 
+/**
+ * 長時間処理（プロキシ生成 / 書き出し）の進捗通知用。
+ * 完了前にウィンドウが閉じられていると `sender.send` が "Object has been destroyed" を
+ * 投げて未処理例外になるため、破棄済みなら黙って捨てる。
+ */
+function safeSend(sender: Electron.WebContents, channel: string, payload: unknown): void {
+  if (!sender.isDestroyed()) sender.send(channel, payload)
+}
+
 function currentRootInfo(): RootInfo {
   const root = getRoot()
   return { root, tree: root ? scanTree() : null, recent: getRecentRoots() }
@@ -215,13 +224,13 @@ export function registerIpc(): void {
     if (!proxyInFlight.has(relPath)) {
       proxyInFlight.add(relPath)
       buildProxy(relPath, durationSec, (percent) =>
-        e.sender.send('proxy:update', { relPath, status: 'progress', percent })
+        safeSend(e.sender, 'proxy:update', { relPath, status: 'progress', percent })
       )
         .then((proxyRelPath) =>
-          e.sender.send('proxy:update', { relPath, status: 'done', proxyRelPath })
+          safeSend(e.sender, 'proxy:update', { relPath, status: 'done', proxyRelPath })
         )
         .catch((err) =>
-          e.sender.send('proxy:update', {
+          safeSend(e.sender, 'proxy:update', {
             relPath,
             status: 'error',
             error: err instanceof Error ? err.message : String(err)
@@ -451,17 +460,17 @@ export function registerIpc(): void {
       // 逐次実行（ディスク I/O を詰まらせない）。進捗はイベントで逐次通知。
       for (const job of jobs) {
         const base = { jobId: job.jobId, segmentId: job.segmentId, index: job.index, total: jobs.length }
-        e.sender.send('export:progress', { ...base, status: 'running', percent: 0 })
+        safeSend(e.sender, 'export:progress', { ...base, status: 'running', percent: 0 })
         try {
           const outPath = await exportOne(job, options, (pct) =>
-            e.sender.send('export:progress', { ...base, status: 'running', percent: pct })
+            safeSend(e.sender, 'export:progress', { ...base, status: 'running', percent: pct })
           )
           results.push({ segmentId: job.segmentId, ok: true, outPath })
-          e.sender.send('export:progress', { ...base, status: 'done', percent: 1, outPath })
+          safeSend(e.sender, 'export:progress', { ...base, status: 'done', percent: 1, outPath })
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err)
           results.push({ segmentId: job.segmentId, ok: false, error })
-          e.sender.send('export:progress', { ...base, status: 'error', percent: 0, error })
+          safeSend(e.sender, 'export:progress', { ...base, status: 'error', percent: 0, error })
         }
       }
       return results
@@ -484,7 +493,7 @@ export function registerIpc(): void {
           outDir,
           name,
           (phase, index, percent) =>
-            e.sender.send('seq:exportProgress', { phase, index, total: items.length, percent }),
+            safeSend(e.sender, 'seq:exportProgress', { phase, index, total: items.length, percent }),
           bgm
         )
         return { ok: true, outPath }

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { TreeNode } from '../../../shared/types'
 import { IconFilm, IconFolder } from './icons'
+import { RenameInput } from './RenameInput'
 
 /** 動画クリック時の修飾キー（ctrl: 複数選択トグル / shift: 範囲選択） */
 export interface VideoClickMods {
@@ -55,48 +56,6 @@ interface MenuState {
   y: number
   relPath: string
   type: 'dir' | 'video'
-}
-
-/** 名前変更のインライン入力。Enter で確定 / Esc でキャンセル / フォーカス喪失で確定。 */
-function RenameInput({
-  node,
-  onRename,
-  onEnd
-}: {
-  node: TreeNode
-  onRename: (relPath: string, newName: string) => Promise<boolean>
-  onEnd: () => void
-}) {
-  const doneRef = useRef(false) // Enter 確定後の blur で二重コミットしない
-  const commit = async (value: string) => {
-    if (doneRef.current) return
-    doneRef.current = true
-    if (value.trim() && value !== node.name) await onRename(node.relPath, value)
-    onEnd()
-  }
-  return (
-    <input
-      className="tree-rename-input"
-      autoFocus
-      defaultValue={node.name}
-      onFocus={(e) => {
-        // 動画は拡張子を除いた部分だけを選択状態にする
-        const dot = node.type === 'video' ? e.currentTarget.value.lastIndexOf('.') : -1
-        e.currentTarget.setSelectionRange(0, dot > 0 ? dot : e.currentTarget.value.length)
-      }}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        e.stopPropagation() // Space（再生トグル等）のグローバルショートカットに食われない
-        if (e.key === 'Escape') {
-          doneRef.current = true
-          onEnd()
-        } else if (e.key === 'Enter') {
-          void commit(e.currentTarget.value)
-        }
-      }}
-      onBlur={(e) => void commit(e.currentTarget.value)}
-    />
-  )
 }
 
 function NodeRow({
@@ -167,7 +126,12 @@ function NodeRow({
           <IconFilm />
         </span>
         {editing ? (
-          <RenameInput node={node} onRename={onRename} onEnd={onEndEdit} />
+          <RenameInput
+            className="tree-rename-input"
+            name={node.name}
+            onRename={(newName) => onRename(node.relPath, newName)}
+            onEnd={onEndEdit}
+          />
         ) : (
           <span className="tree-label">{node.name}</span>
         )}
@@ -195,7 +159,13 @@ function NodeRow({
           <IconFolder />
         </span>
         {editing ? (
-          <RenameInput node={node} onRename={onRename} onEnd={onEndEdit} />
+          <RenameInput
+            className="tree-rename-input"
+            name={node.name}
+            selectStem={false}
+            onRename={(newName) => onRename(node.relPath, newName)}
+            onEnd={onEndEdit}
+          />
         ) : (
           <span className="tree-label">{node.name}</span>
         )}
@@ -265,6 +235,8 @@ export const FolderTree = memo(function FolderTree({
     if (!selected) return
     const parts = selected.split('/')
     if (parts.length > 1) {
+      // localStorage への書き込みは updater の外で行う（updater は純粋関数であるべき。
+      // StrictMode では 2 回呼ばれる）
       setOverrides((prev) => {
         const next = { ...prev }
         let changed = false
@@ -277,7 +249,7 @@ export const FolderTree = memo(function FolderTree({
           }
         }
         if (!changed) return prev
-        localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next))
+        queueMicrotask(() => localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next)))
         return next
       })
     }
@@ -318,7 +290,7 @@ export const FolderTree = memo(function FolderTree({
   const toggleDir = (relPath: string, open: boolean) => {
     setOverrides((prev) => {
       const next = { ...prev, [relPath]: open }
-      localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next))
+      queueMicrotask(() => localStorage.setItem(openStorageKey(rootKey), JSON.stringify(next)))
       return next
     })
   }
