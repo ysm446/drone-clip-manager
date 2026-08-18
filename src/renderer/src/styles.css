@@ -766,25 +766,9 @@ body.resizing {
 .bgm-beat-meter {
   color: var(--faint);
 }
-/* 小節.拍。TAP ボタンを右端へ寄せる */
+/* 小節.拍 */
 .bgm-beat-pos {
-  margin-right: auto;
   color: var(--faint);
-}
-.bgm-beat-btn {
-  flex: none;
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  border-radius: var(--radius-s);
-  padding: 1px 6px;
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.bgm-beat-btn:hover {
-  background: var(--hover);
-  color: var(--text);
 }
 .bgm-beat-warn {
   padding: 0 14px 6px;

@@ -16,8 +16,6 @@ const api = window.dcm
 
 /** 拍が光って見える時間（秒）。これを超えたら消灯する。 */
 const BEAT_FLASH_SEC = 0.12
-/** タップテンポで「打ち直し」とみなす無入力時間（秒） */
-const TAP_RESET_SEC = 2.5
 /** メトロノームの先読み時間（秒）。この先までのクリックを Web Audio に予約する。 */
 const CLICK_LOOKAHEAD_SEC = 0.2
 /** メトロノームのスケジューラ間隔（ms）。先読みより十分短くする。 */
@@ -74,9 +72,6 @@ export const BgmPlayer = memo(function BgmPlayer({
   const [analyzing, setAnalyzing] = useState(false)
   /** 再生中の小節 / 拍と点灯状態 */
   const [beatPos, setBeatPos] = useState<{ bar: number; beat: number; lit: boolean } | null>(null)
-  /** タップテンポで求めた BPM。null なら自動検出値を使う。 */
-  const [tapBpm, setTapBpm] = useState<number | null>(null)
-  const tapsRef = useRef<number[]>([])
   /** メトロノーム（拍にクリック音を重ねる）。目視では拍のズレが判断できないため。 */
   const [metronome, setMetronome] = useState(false)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -209,8 +204,6 @@ export const BgmPlayer = memo(function BgmPlayer({
   useEffect(() => {
     setBeat(null)
     setBeatPos(null)
-    setTapBpm(null)
-    tapsRef.current = []
     if (!currentRelPath) return
     let alive = true
     setAnalyzing(true)
@@ -332,20 +325,6 @@ export const BgmPlayer = memo(function BgmPlayer({
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
     clickIdxRef.current = -1
     setMetronome((v) => !v)
-  }
-
-  /** タップテンポ。直近の打点の間隔の中央値から BPM を出す（間が空いたら打ち直し）。 */
-  const tap = (): void => {
-    const now = performance.now() / 1000
-    const taps = tapsRef.current
-    if (taps.length && now - taps[taps.length - 1] > TAP_RESET_SEC) taps.length = 0
-    taps.push(now)
-    if (taps.length > 8) taps.shift()
-    if (taps.length < 2) return
-    const ivals: number[] = []
-    for (let i = 1; i < taps.length; i++) ivals.push(taps[i] - taps[i - 1])
-    ivals.sort((a, b) => a - b)
-    setTapBpm(60 / ivals[ivals.length >> 1])
   }
 
   const seek = (t: number) => {
@@ -483,27 +462,12 @@ export const BgmPlayer = memo(function BgmPlayer({
                           beat.uniform ? '等間隔グリッド' : '拍ごとに追従'
                         }`}
                       >
-                        {(tapBpm ?? beat.bpm).toFixed(1)} BPM
+                        {beat.bpm.toFixed(1)} BPM
                       </span>
                       <span className="bgm-beat-meter">{beat.beatsPerBar}/4</span>
                       <span className="bgm-beat-pos">
                         {beatPos ? `${beatPos.bar}.${beatPos.beat}` : '–.–'}
                       </span>
-                      <button className="bgm-beat-btn" onClick={tap} title="拍に合わせて叩く">
-                        TAP
-                      </button>
-                      {tapBpm != null && (
-                        <button
-                          className="bgm-beat-btn"
-                          onClick={() => {
-                            setTapBpm(null)
-                            tapsRef.current = []
-                          }}
-                          title="自動検出の BPM に戻す"
-                        >
-                          自動
-                        </button>
-                      )}
                     </>
                   )
                 )}
