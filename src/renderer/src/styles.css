@@ -1459,6 +1459,25 @@ body.resizing {
   border-radius: var(--radius-s);
   flex: none;
 }
+/* スター（お気に入り）トグル: アイコンのみのボタン、ON でアクセント色（5.3 のトグル ON と同じ扱い） */
+.seg-star {
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.seg-star:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.seg-star.on {
+  color: var(--accent);
+}
 .seg-label-input {
   background: transparent;
   border: 1px solid transparent;
@@ -1719,6 +1738,24 @@ body.resizing {
 .clip-act.danger:hover {
   background: var(--danger-bg);
   color: var(--danger);
+}
+.clip-act.star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.clip-act.star.on {
+  color: var(--accent);
+}
+/* 「スター付きのみ」絞り込みトグル（ON = 5.3 のトグル ON: --selected の面 + --accent の文字） */
+.clips-star-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.clips-star-filter.on {
+  background: var(--selected);
+  color: var(--accent);
 }
 
 /* ============================================================
@@ -2389,6 +2426,13 @@ body.resizing {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* スター付きクリップの印（パレット / ノード）。表示だけでボタンではない。操作は右クリック / S キー */
+.seq-star-mark {
+  color: var(--accent);
+  vertical-align: -2px;
+  margin-right: 3px;
+  flex: none;
+}
 .seq-node-meta {
   padding: 0 8px 6px;
   font-size: var(--fs-xs);
@@ -2735,6 +2779,12 @@ body.resizing {
   font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 札のスター印（表示だけ。素材色の面の上なので文字と同じ色にして紫は使わない） */
+.mtl-clip-star {
+  vertical-align: -1px;
+  margin-right: 2px;
+  flex: none;
 }
 .mtl-clip-unit {
   font-size: 10px;

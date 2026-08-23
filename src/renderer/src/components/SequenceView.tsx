@@ -10,13 +10,14 @@ import type {
   Sequence,
   SequenceEdge,
   SequenceNode,
+  StarPatch,
   TagCount
 } from '../../../shared/types'
 import { pushUndo, registerUndoRefresh } from '../undo'
 import { fmtSec, fmtTime, isShelfNode, nodeOrderFromEdges } from '../util'
 import { ContextMenu } from './ContextMenu'
 import type { ExportTarget } from './ExportModal'
-import { IconFilm, IconPause, IconPlay } from './icons'
+import { IconFilm, IconPause, IconPlay, IconStar } from './icons'
 import { MusicTimeline } from './MusicTimeline'
 
 const api = window.dcm
@@ -128,6 +129,10 @@ interface Props {
     inSnapped: number | null
     outSnapped: number | null
   } | null
+  /** スターの付け外し（永続化・undo・他ビューへの反映は App が行う） */
+  onSetStarred: (ids: number[], starred: boolean) => void
+  /** App からのスター変更をパレット / ノードへ反映するためのパッチ */
+  starPatch?: StarPatch | null
 }
 
 // ノードカードの寸法（CSS と一致させること。エッジ描画のポート座標計算に使う）。
@@ -208,7 +213,9 @@ export const SequenceView = memo(function SequenceView({
   onStatus,
   playingNodeId,
   sequencePlaying,
-  segmentPatch
+  segmentPatch,
+  onSetStarred,
+  starPatch
 }: Props) {
   const [sequences, setSequences] = useState<Sequence[]>([])
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -228,6 +235,8 @@ export const SequenceView = memo(function SequenceView({
   const [clipMenu, setClipMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
   /** シーケンス一覧の「…」メニュー（複製 / 削除） */
   const [seqMenu, setSeqMenu] = useState<{ x: number; y: number; seq: Sequence } | null>(null)
+  /** 右ボタンを押した画面座標（ノードの右クリックを矩形選択のドラッグと区別するため） */
+  const rightDownRef = useRef<{ x: number; y: number } | null>(null)
 
   // モーダル / パネルの表示中は mpv（ネイティブ最前面）に覆われないよう App へ通知して隠してもらう
   useEffect(() => {
@@ -298,6 +307,34 @@ export const SequenceView = memo(function SequenceView({
       prev.map((n) => (n.clip?.id === p.id ? { ...n, clip: { ...n.clip, ...p } } : n))
     )
   }, [segmentPatch])
+  // スターの付け外し（どの画面で押しても App 経由でここへ来る）をパレットとノードへ反映
+  useEffect(() => {
+    if (!starPatch) return
+    const set = new Set(starPatch.ids)
+    const starred = starPatch.starred
+    setClips((prev) => prev.map((c) => (set.has(c.id) ? { ...c, starred } : c)))
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.clip && set.has(n.clip.id) ? { ...n, clip: { ...n.clip, starred } } : n
+      )
+    )
+  }, [starPatch])
+
+  /**
+   * 選択ノードのクリップのスターをまとめて切り替える（S キー）。
+   * 全部スター付きなら外し、それ以外は全部に付ける。
+   */
+  const toggleStarSelectedNodes = useCallback(
+    (ids: Set<number>) => {
+      const clips = nodesRef.current
+        .filter((n) => ids.has(n.id) && n.clip)
+        .map((n) => n.clip as ClipItem)
+      const segIds = [...new Set(clips.map((c) => c.id))]
+      if (segIds.length === 0) return
+      onSetStarred(segIds, !clips.every((c) => c.starred))
+    },
+    [onSetStarred]
+  )
 
   /** 指定ノード群が収まるようにパン / ズームを合わせる（拡大は 100% まで） */
   const fitToNodes = useCallback((targets: SequenceNode[]) => {
@@ -600,7 +637,7 @@ export const SequenceView = memo(function SequenceView({
   }, [graphSnapshot, pushGraphUndo, reload])
 
   // キーボード操作（入力欄フォーカス中は無効）:
-  //   Delete = 選択ノードを一括削除 / A = 全体表示 / F = 選択ノードへフォーカス
+  //   Delete = 選択ノードを一括削除 / A = 全体表示 / F = 選択ノードへフォーカス / S = 選択ノードのスター
   //   Ctrl+C / Ctrl+V = 選択ノードのコピー / 貼り付け（シーケンスを跨げる）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -629,11 +666,21 @@ export const SequenceView = memo(function SequenceView({
         fitToNodes(nodesRef.current)
       } else if (k === 'f') {
         fitToNodes(nodesRef.current.filter((n) => selectedIds.has(n.id)))
+      } else if (k === 's' && selectedIds.size > 0) {
+        toggleStarSelectedNodes(selectedIds)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedIds, removeNodes, fitToNodes, mode, copySelectedNodes, pasteNodes])
+  }, [
+    selectedIds,
+    removeNodes,
+    fitToNodes,
+    mode,
+    copySelectedNodes,
+    pasteNodes,
+    toggleStarSelectedNodes
+  ])
 
   const removeEdge = async (edgeId: number) => {
     const before = graphSnapshot()
@@ -711,6 +758,19 @@ export const SequenceView = memo(function SequenceView({
       }
     }
   }, [onDragMove, onJumpToNode, onOpenClip, pushGraphUndo])
+
+  /**
+   * ノードの右クリック。右ドラッグは矩形選択なので、押した位置から動かさずに離したときだけ
+   * メニューを出す（contextmenu は mouseup の後に来るので、押した位置を控えて距離で判定）。
+   */
+  const onNodeContextMenu = (e: React.MouseEvent, node: SequenceNode) => {
+    e.preventDefault()
+    const down = rightDownRef.current
+    rightDownRef.current = null
+    if (!node.clip) return
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return
+    setClipMenu({ x: e.clientX, y: e.clientY, clip: node.clip })
+  }
 
   const onNodeMouseDown = (e: React.MouseEvent, node: SequenceNode) => {
     // 中 / 右ボタンはキャンバス側（パン / 矩形選択）に任せる
@@ -802,6 +862,7 @@ export const SequenceView = memo(function SequenceView({
     // （コンテキストメニューは onContextMenu で抑止）
     if (e.button === 2 || (e.button === 0 && onBackground)) {
       e.preventDefault()
+      if (e.button === 2) rightDownRef.current = { x: e.clientX, y: e.clientY }
       if (e.button === 0) setSelectedIds(new Set()) // 背景クリックは選択解除から始める
       const p = toContent(e.clientX, e.clientY)
       marqueeStartRef.current = { x1: p.x, y1: p.y, button: e.button }
@@ -1361,7 +1422,10 @@ export const SequenceView = memo(function SequenceView({
               title={`${c.videoFilename}\nクリック: 上部プレイヤーで再生 / ドラッグ: キャンバスへ配置`}
             >
               <NodeThumb clip={c} />
-              <span className="seq-palette-label">{c.label ?? `区間 #${c.id}`}</span>
+              <span className="seq-palette-label">
+                {c.starred && <IconStar size={12} filled className="seq-star-mark" />}
+                {c.label ?? `区間 #${c.id}`}
+              </span>
             </div>
           ))}
         </div>
@@ -1445,6 +1509,7 @@ export const SequenceView = memo(function SequenceView({
             onDeleteClips={removeMusicClips}
             playing={isPlaying}
             onSelectClip={onSelectClip}
+            onSetStarred={onSetStarred}
             onExport={runMusicExport}
             exporting={exporting != null}
             onStatus={onStatus}
@@ -1513,6 +1578,7 @@ export const SequenceView = memo(function SequenceView({
                     className={cls}
                     style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                     onMouseDown={(e) => onNodeMouseDown(e, n)}
+                    onContextMenu={(e) => onNodeContextMenu(e, n)}
                   >
                     <span
                       className="seq-port in"
@@ -1538,6 +1604,9 @@ export const SequenceView = memo(function SequenceView({
                         <NodeThumb clip={n.clip} />
                         {playingNodeId === n.id && <NodeProgress nodeId={n.id} />}
                         <div className="seq-node-label">
+                          {n.clip.starred && (
+                            <IconStar size={12} filled className="seq-star-mark" />
+                          )}
                           {n.clip.label ?? `区間 #${n.clip.id}`}
                         </div>
                         <div className="seq-node-meta">
@@ -1587,6 +1656,10 @@ export const SequenceView = memo(function SequenceView({
           y={clipMenu.y}
           onClose={() => setClipMenu(null)}
           items={[
+            {
+              label: clipMenu.clip.starred ? 'スターを外す' : 'スターを付ける',
+              onClick: () => onSetStarred([clipMenu.clip.id], !clipMenu.clip.starred)
+            },
             { label: 'クリップ画面で編集', onClick: () => onEditClip(clipMenu.clip) },
             {
               label: 'ライブラリで元動画を編集',

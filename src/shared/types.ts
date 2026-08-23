@@ -36,6 +36,8 @@ export interface Segment {
   label: string | null
   note: string | null
   color: string | null
+  /** スター（お気に入り）。クリップ一覧の絞り込みに使う。 */
+  starred: boolean
   createdAt: string
   /** ユーザー定義タグ（自由記述 / Phase 2.8）。listSegments / getSegment で付与される。 */
   tags?: string[]
@@ -51,6 +53,17 @@ export interface SegmentInput {
   label?: string | null
   note?: string | null
   color?: string | null
+  starred?: boolean
+}
+
+/**
+ * スターの付け外しを各ビューのローカル state へ流すパッチ（App → ClipsView / SequenceView）。
+ * seq は同じ内容を連続で流したときにも effect が走るようにするための通し番号。
+ */
+export interface StarPatch {
+  ids: number[]
+  starred: boolean
+  seq: number
 }
 
 /** クリップ一覧の1件（区間 + 元動画メタの結合 / Phase 2.5） */

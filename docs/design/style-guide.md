@@ -1,7 +1,7 @@
 # UI スタイルガイド
 
 作成日時: 2026-08-11 18:34
-更新日時: 2026-08-16 04:30
+更新日時: 2026-08-24 00:00
 
 drone-clip-manager の UI を一貫したアートスタイルに保つためのルール。
 **UI（見た目・レイアウト・配色・部品）を変更するときは、必ずこのドキュメントに従う。**
@@ -91,7 +91,12 @@ DaVinci Resolve（タイムラインの再生ヘッドと区間バー）。
     `.clip-card.open`、`.mtl-clip.selected`）
   - シークバーの再生済み塗り、進捗バーの塗り
   - ノードグラフのエッジ・ポート
-  - トグル ON のアイコン色（`.tl-mode.on`、`.bgm-controls button.on`、`.mpv-loop.on`）
+  - トグル ON のアイコン色（`.tl-mode.on`、`.bgm-controls button.on`、`.mpv-loop.on`、
+    スター ON の `.clip-act.star.on` / `.seg-star.on`、絞り込みトグル `.clips-star-filter.on`）。
+    スターは「お気に入り」というユーザーの印であり状態色ではないので、黄色などは使わずアクセントで示す。
+    ドラッグ操作が主で面積の小さい場所（パレット / ノード / 音楽シーケンスの札）には**押せる星を置かず**、
+    表示だけの印（`.seq-star-mark` はアクセント、素材色の面に載る `.mtl-clip-star` は文字色のまま）にして、
+    操作は右クリックメニュー / `S` キーに寄せる。
   - topbar のビュー切替タブのアクティブ面（`.view-tab.active`）
 - **コンテンツの選択にアクセント色の面を使わない。** 選択は `--selected` + `font-weight: 600`。
   複数選択など「別軸の選択」は `box-shadow: inset 2px 0 0 var(--accent)` の左バーで足す。

@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS segments (
   label         TEXT,
   note          TEXT,
   color         TEXT,
+  starred       INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT DEFAULT (datetime('now'))
 );
 
@@ -147,6 +148,7 @@ function getDb(): Database.Database {
   migrateShelfSentinel(db)
   migrateDropBeatGrid(db)
   migrateSequenceBgmMeter(db)
+  migrateSegmentStarred(db)
   dbPath = target
   return db
 }
@@ -236,6 +238,16 @@ function migrateSequenceBgmMeter(d: Database.Database): void {
   }
 }
 
+// クリップのスター（お気に入り）列（2026-08-24）。既存 DB に足す。
+function migrateSegmentStarred(d: Database.Database): void {
+  const cols = (d.prepare('PRAGMA table_info(segments)').all() as { name: string }[]).map(
+    (r) => r.name
+  )
+  if (!cols.includes('starred')) {
+    d.exec('ALTER TABLE segments ADD COLUMN starred INTEGER NOT NULL DEFAULT 0')
+  }
+}
+
 // 区間バーの配色を青〜紫パレットへ変更（2026-07-10）した際の、旧パレットで保存済みの色の置き換え。
 // 新パレット（renderer/util.ts の SEGMENT_COLORS）と位置対応。置換済みなら no-op。
 const SEGMENT_COLOR_REMAP: [string, string][] = [
@@ -268,6 +280,7 @@ interface SegmentRow {
   label: string | null
   note: string | null
   color: string | null
+  starred: number
   created_at: string
 }
 
@@ -282,6 +295,7 @@ function rowToSegment(r: SegmentRow): Segment {
     label: r.label,
     note: r.note,
     color: r.color,
+    starred: r.starred === 1,
     createdAt: r.created_at
   }
 }
@@ -313,8 +327,8 @@ export function addSegment(input: SegmentInput): Segment {
   const tx = d.transaction(() => {
     const info = d
       .prepare(
-        `INSERT INTO segments (video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color)
-         VALUES (@videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color)`
+        `INSERT INTO segments (video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color, starred)
+         VALUES (@videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color, @starred)`
       )
       .run({
         videoRelPath: input.videoRelPath,
@@ -324,7 +338,8 @@ export function addSegment(input: SegmentInput): Segment {
         outSnapped: input.outSnapped,
         label: input.label ?? null,
         note: input.note ?? null,
-        color: input.color ?? null
+        color: input.color ?? null,
+        starred: input.starred ? 1 : 0
       })
     const id = Number(info.lastInsertRowid)
     // 親動画のタグを引き継ぐ（地名など。作成時点のスナップショットをコピー）
@@ -352,12 +367,13 @@ export function updateSegment(id: number, patch: Partial<SegmentInput>): Segment
     outSnapped: patch.outSnapped !== undefined ? patch.outSnapped : cur.outSnapped,
     label: patch.label !== undefined ? patch.label : cur.label,
     note: patch.note !== undefined ? patch.note : cur.note,
-    color: patch.color !== undefined ? patch.color : cur.color
+    color: patch.color !== undefined ? patch.color : cur.color,
+    starred: (patch.starred !== undefined ? patch.starred : cur.starred) ? 1 : 0
   }
   getDb()
     .prepare(
       `UPDATE segments SET in_time=@inTime, out_time=@outTime, in_snapped=@inSnapped,
-       out_snapped=@outSnapped, label=@label, note=@note, color=@color WHERE id=@id`
+       out_snapped=@outSnapped, label=@label, note=@note, color=@color, starred=@starred WHERE id=@id`
     )
     .run({ id, ...next })
   return getSegment(id)
@@ -381,8 +397,8 @@ export function restoreSegment(seg: Segment): void {
   const tx = d.transaction(() => {
     d.prepare(
       `INSERT OR REPLACE INTO segments
-         (id, video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color, created_at)
-       VALUES (@id, @videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color, @createdAt)`
+         (id, video_rel_path, in_time, out_time, in_snapped, out_snapped, label, note, color, starred, created_at)
+       VALUES (@id, @videoRelPath, @inTime, @outTime, @inSnapped, @outSnapped, @label, @note, @color, @starred, @createdAt)`
     ).run({
       id: seg.id,
       videoRelPath: seg.videoRelPath,
@@ -393,6 +409,7 @@ export function restoreSegment(seg: Segment): void {
       label: seg.label ?? null,
       note: seg.note ?? null,
       color: seg.color ?? null,
+      starred: seg.starred ? 1 : 0,
       createdAt: seg.createdAt
     })
     d.prepare('DELETE FROM segment_tags WHERE segment_id = ?').run(seg.id)

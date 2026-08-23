@@ -43,6 +43,15 @@ export function IconFilm({ size = 14, className }: IconProps) {
   )
 }
 
+/** スター（お気に入り）。filled で塗り付きにする（ON 状態用）。 */
+export function IconStar({ size = 14, className, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg {...stroke(size, className)} fill={filled ? 'currentColor' : 'none'}>
+      <path d="M8 2.4 L9.7 6 L13.6 6.5 L10.8 9.2 L11.5 13.1 L8 11.2 L4.5 13.1 L5.2 9.2 L2.4 6.5 L6.3 6 Z" />
+    </svg>
+  )
+}
+
 export function IconFolder({ size = 14, className }: IconProps) {
   return (
     <svg {...stroke(size, className)}>

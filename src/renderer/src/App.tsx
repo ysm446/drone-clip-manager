@@ -4,6 +4,7 @@ import type {
   ClipItem,
   RootInfo,
   Segment,
+  StarPatch,
   TagCount,
   TreeNode,
   VideoMeta
@@ -1476,6 +1477,8 @@ export function App() {
     inSnapped: number | null
     outSnapped: number | null
   } | null>(null)
+  /** スターの付け外しを各ビューのローカル state（クリップ一覧 / パレット / ノード）へ流すためのパッチ */
+  const [starPatch, setStarPatch] = useState<StarPatch | null>(null)
 
   /**
    * 選択中の区間の in / out を 1 キーフレームずらす（シークバー横のボタン）。
@@ -1594,6 +1597,32 @@ export function App() {
       })
     }
   }, [])
+
+  /**
+   * クリップのスターの付け外し。どの画面（区間リスト / クリップ一覧 / パレット / ノード / 札）から
+   * 押してもここに集約し、永続化・undo・他ビューへの反映（starPatch）を 1 か所で行う。
+   */
+  const setSegmentsStarred = useCallback((ids: number[], starred: boolean) => {
+    if (ids.length === 0) return
+    const apply = (v: boolean) =>
+      Promise.all(ids.map((id) => api.updateSegment(id, { starred: v }))).then(() => void 0)
+    const set = new Set(ids)
+    setSegments((prev) => prev.map((s) => (set.has(s.id) ? { ...s, starred } : s)))
+    setStarPatch((p) => ({ ids, starred, seq: (p?.seq ?? 0) + 1 }))
+    apply(starred).catch(() => void 0)
+    pushUndo({
+      label: starred ? 'スターを付ける' : 'スターを外す',
+      undo: () => apply(!starred),
+      redo: () => apply(starred)
+    })
+  }, [])
+  const toggleSegStar = useCallback(
+    (id: number) => {
+      const cur = segmentsRef.current.find((s) => s.id === id)
+      if (cur) setSegmentsStarred([id], !cur.starred)
+    },
+    [setSegmentsStarred]
+  )
 
   // 区間リストからのタグ変更を segments state に反映（永続化は SegmentList 側で実施済み）
   const onSegmentTagsChanged = useCallback((id: number, tags: string[]) => {
@@ -2514,6 +2543,8 @@ export function App() {
               selectedVideoRel={selected}
               openSegmentId={selectedSeg}
               segmentPatch={segPatch}
+              starPatch={starPatch}
+              onSetStarred={setSegmentsStarred}
             />
           ) : view === 'sequence' ? (
             <SequenceView
@@ -2533,6 +2564,8 @@ export function App() {
               playingNodeId={playingNodeId}
               sequencePlaying={seqPlaying}
               segmentPatch={segPatch}
+              starPatch={starPatch}
+              onSetStarred={setSegmentsStarred}
             />
           ) : (
             <section className="editor-pane">
@@ -2587,6 +2620,7 @@ export function App() {
                     onJump={seek}
                     onDelete={deleteSeg}
                     onRename={renameSeg}
+                    onToggleStar={toggleSegStar}
                     onTagsChanged={onSegmentTagsChanged}
                     onEditAsClip={editAsClip}
                   />

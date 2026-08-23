@@ -14,6 +14,7 @@ import type {
 import type { MusicQueueGetter, SeqPlayBgm, SeqPlayItem } from './SequenceView'
 import { colorForIndex, fmtSec } from '../util'
 import { ContextMenu } from './ContextMenu'
+import { IconStar } from './icons'
 import { pushUndo, registerUndoRefresh } from '../undo'
 
 const api = window.dcm
@@ -319,6 +320,8 @@ interface Props {
    * 再生中のクリップではなく**選んだクリップ**にするために使う。
    */
   onSelectClip?: (clip: ClipItem) => void
+  /** 札の右クリックメニュー「スターを付ける / 外す」（永続化・undo・表示の反映は App 側） */
+  onSetStarred?: (ids: number[], starred: boolean) => void
   /** 指定した尺の in/out と BGM で連結書き出しする（既存の書き出しとは別経路） */
   onExport?: (items: ConcatItem[], bgm: ConcatBgm) => Promise<void>
   /** 書き出し実行中（ボタンを無効にする） */
@@ -341,6 +344,7 @@ export const MusicTimeline = memo(function MusicTimeline({
   onDeleteClips,
   playing,
   onSelectClip,
+  onSetStarred,
   onExport,
   exporting,
   onStatus
@@ -1919,6 +1923,10 @@ export const MusicTimeline = memo(function MusicTimeline({
 
   /** 右クリックメニューの削除対象。選択の中を右クリックしたなら選択ぜんぶを消す。 */
   const menuTargets = menu ? (selected.has(menu.nodeId) ? [...selected] : [menu.nodeId]) : []
+  /** メニュー対象ノードのクリップ（スターの付け外し用。同じクリップが複数あれば重複あり） */
+  const menuClips = menuTargets
+    .map((id) => nodeById.get(id)?.clip)
+    .filter((c): c is ClipItem => !!c)
 
   /**
    * 札 1 枚。**本番の行と予備の行で同じ見た目・同じ操作**にする（違うのは行だけ）。
@@ -2009,7 +2017,10 @@ export const MusicTimeline = memo(function MusicTimeline({
           />
         )}
         <span className="mtl-clip-text">
-          <span className="mtl-clip-label">{b.clip.label ?? `#${b.clip.id}`}</span>
+          <span className="mtl-clip-label">
+            {b.clip.starred && <IconStar size={10} filled className="mtl-clip-star" />}
+            {b.clip.label ?? `#${b.clip.id}`}
+          </span>
           <span className="mtl-clip-unit">
             {w >= DUR_MIN_W ? fmtSec(arranged) : ''}
             {/* 元の長さも併記（縮めている / 伸ばしている量が分かる） */}
@@ -2486,6 +2497,20 @@ export const MusicTimeline = memo(function MusicTimeline({
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            ...(onSetStarred && menuClips.length > 0
+              ? [
+                  {
+                    label:
+                      (menuClips.every((c) => c.starred) ? 'スターを外す' : 'スターを付ける') +
+                      (menuTargets.length > 1 ? `（${menuTargets.length} 件）` : ''),
+                    onClick: () =>
+                      onSetStarred(
+                        [...new Set(menuClips.map((c) => c.id))],
+                        !menuClips.every((c) => c.starred)
+                      )
+                  }
+                ]
+              : []),
             { label: '尺を自動に戻す', onClick: () => resetDur(menu.nodeId) },
             {
               label:

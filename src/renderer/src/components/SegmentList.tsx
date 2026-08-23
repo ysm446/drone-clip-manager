@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import type { Segment, TagCount } from '../../../shared/types'
 import { colorForIndex, fmtSec, fmtTime } from '../util'
 import { ContextMenu } from './ContextMenu'
+import { IconStar } from './icons'
 import { TagEditor } from './TagEditor'
 
 const api = window.dcm
@@ -13,6 +14,8 @@ interface Props {
   onJump: (t: number) => void
   onDelete: (id: number) => void
   onRename: (id: number, label: string) => void
+  /** スターの付け外し（永続化と undo は App 側） */
+  onToggleStar: (id: number) => void
   /** タグ変更を親（App の segments state）へ反映する */
   onTagsChanged: (id: number, tags: string[]) => void
   /** 右クリックメニュー「クリップ画面で編集」: クリップ画面へ切り替えてこの区間を開く */
@@ -27,6 +30,7 @@ export const SegmentList = memo(function SegmentList({
   onJump,
   onDelete,
   onRename,
+  onToggleStar,
   onTagsChanged,
   onEditAsClip
 }: Props) {
@@ -82,6 +86,17 @@ export const SegmentList = memo(function SegmentList({
           >
             <div className="seg-item-main">
               <span className="seg-swatch" style={{ background: s.color ?? colorForIndex(i) }} />
+              <button
+                className={`seg-star${s.starred ? ' on' : ''}`}
+                title={s.starred ? 'スターを外す' : 'スターを付ける'}
+                aria-pressed={s.starred}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleStar(s.id)
+                }}
+              >
+                <IconStar filled={s.starred} />
+              </button>
               <input
                 className="seg-label-input"
                 value={s.label ?? ''}
@@ -121,6 +136,10 @@ export const SegmentList = memo(function SegmentList({
           onClose={() => setMenu(null)}
           items={[
             { label: 'クリップ画面で編集', onClick: () => onEditAsClip(menu.seg) },
+            {
+              label: menu.seg.starred ? 'スターを外す' : 'スターを付ける',
+              onClick: () => onToggleStar(menu.seg.id)
+            },
             { label: '削除', danger: true, onClick: () => onDelete(menu.seg.id) }
           ]}
         />

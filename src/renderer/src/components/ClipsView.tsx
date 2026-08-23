@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, TagCount } from '../../../shared/types'
+import type { ClipItem, StarPatch, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { pushUndo, registerUndoRefresh } from '../undo'
 import { fmtSec, fmtTime } from '../util'
 import { ContextMenu } from './ContextMenu'
-import { IconFilm } from './icons'
+import { IconFilm, IconStar } from './icons'
 import { TagEditor } from './TagEditor'
 
 const api = window.dcm
@@ -28,6 +28,10 @@ interface Props {
     inSnapped: number | null
     outSnapped: number | null
   } | null
+  /** スターの付け外し（永続化・undo・他ビューへの反映は App が行う） */
+  onSetStarred: (ids: number[], starred: boolean) => void
+  /** App からのスター変更をカードへ反映するためのパッチ */
+  starPatch?: StarPatch | null
 }
 
 type SortKey = 'video' | 'newest' | 'duration' | 'label'
@@ -86,7 +90,9 @@ export const ClipsView = memo(function ClipsView({
   onEditInLibrary,
   selectedVideoRel,
   openSegmentId,
-  segmentPatch
+  segmentPatch,
+  onSetStarred,
+  starPatch
 }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
   /** 右クリックメニュー（対象クリップと表示位置） */
@@ -100,6 +106,8 @@ export const ClipsView = memo(function ClipsView({
   const [allTags, setAllTags] = useState<TagCount[]>([])
   /** 絞り込みに選んだタグ（全て含むクリップだけ表示 = AND） */
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set())
+  /** スター付きのクリップだけ表示する */
+  const [starredOnly, setStarredOnly] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -122,6 +130,13 @@ export const ClipsView = memo(function ClipsView({
     if (!segmentPatch) return
     setClips((prev) => prev.map((c) => (c.id === segmentPatch.id ? { ...c, ...segmentPatch } : c)))
   }, [segmentPatch])
+  useEffect(() => {
+    if (!starPatch) return
+    const set = new Set(starPatch.ids)
+    setClips((prev) =>
+      prev.map((c) => (set.has(c.id) ? { ...c, starred: starPatch.starred } : c))
+    )
+  }, [starPatch])
 
   const refreshTags = () => api.getAllTags().then(setAllTags)
 
@@ -177,6 +192,7 @@ export const ClipsView = memo(function ClipsView({
   const shown = useMemo(() => {
     let list = clips
     if (videoFilter) list = list.filter((c) => c.videoRelPath === videoFilter)
+    if (starredOnly) list = list.filter((c) => c.starred)
     if (tagFilter.size > 0) {
       list = list.filter((c) => {
         const set = new Set(c.tags)
@@ -214,7 +230,7 @@ export const ClipsView = memo(function ClipsView({
         )
     }
     return sorted
-  }, [clips, videoFilter, sortKey, query, tagFilter])
+  }, [clips, videoFilter, sortKey, query, tagFilter, starredOnly])
 
   const shownSelected = useMemo(
     () => shown.filter((c) => selected.has(c.id)),
@@ -245,6 +261,12 @@ export const ClipsView = memo(function ClipsView({
         redo: () => api.updateSegment(id, { label }).then(() => void 0)
       })
     }
+  }
+
+  // 表示の更新は App から流れてくる starPatch で行う（他ビューと同じ経路）
+  const toggleStar = (id: number) => {
+    const cur = clips.find((c) => c.id === id)
+    if (cur) onSetStarred([id], !cur.starred)
   }
 
   const remove = async (id: number) => {
@@ -315,6 +337,15 @@ export const ClipsView = memo(function ClipsView({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <button
+          className={`btn clips-star-filter${starredOnly ? ' on' : ''}`}
+          onClick={() => setStarredOnly((v) => !v)}
+          title="スター付きのクリップだけ表示"
+          aria-pressed={starredOnly}
+        >
+          <IconStar filled={starredOnly} />
+          スター付きのみ
+        </button>
         <span className="clips-spacer" />
         <button
           className="btn"
@@ -371,7 +402,7 @@ export const ClipsView = memo(function ClipsView({
               data-clip-id={c.id}
               className={`clip-card${isSel ? ' selected' : ''}${isOpen ? ' open' : ''}${
                 sameVideo ? ' same-video' : ''
-              }`}
+              }${c.starred ? ' starred' : ''}`}
               onClick={(e) => {
                 // Ctrl/Shift+クリックは選択トグル、通常クリックは元動画を上部プレイヤーで再生
                 if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(c.id)
@@ -424,6 +455,17 @@ export const ClipsView = memo(function ClipsView({
               </div>
               <div className="clip-actions">
                 <button
+                  className={`clip-act star${c.starred ? ' on' : ''}`}
+                  title={c.starred ? 'スターを外す' : 'スターを付ける'}
+                  aria-pressed={c.starred}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleStar(c.id)
+                  }}
+                >
+                  <IconStar filled={c.starred} />
+                </button>
+                <button
                   className="clip-act"
                   title="このクリップを書き出し"
                   onClick={(e) => {
@@ -456,6 +498,10 @@ export const ClipsView = memo(function ClipsView({
           onClose={() => setMenu(null)}
           items={[
             { label: 'ライブラリで元動画を編集', onClick: () => onEditInLibrary(menu.clip) },
+            {
+              label: menu.clip.starred ? 'スターを外す' : 'スターを付ける',
+              onClick: () => toggleStar(menu.clip.id)
+            },
             { label: '書き出し…', onClick: () => onExport([toTarget(menu.clip)]) },
             { label: '削除', danger: true, onClick: () => void remove(menu.clip.id) }
           ]}
