@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { PositionSample } from '../../../shared/types'
-import { positionAt } from '../util'
+import { fmtTime, positionAt } from '../util'
 
 // プレイヤー横のライブ地図（Phase 2.9）。
 // 開いている動画の航跡と、再生位置の補間座標のマーカーをリアルタイムに描く。
@@ -13,6 +13,8 @@ interface Props {
   currentTime: number
   /** 地図クリック: その座標を「現在の再生時刻の位置サンプル」として追加（永続化・undo は App） */
   onAddSample: (timeSec: number, pos: { lat: number; lon: number }) => void
+  /** サンプル点のドラッグ確定: その座標へ移動（時刻は変えない。永続化・undo は App） */
+  onMoveSample: (id: number, pos: { lat: number; lon: number }) => void
 }
 
 /** 位置サンプルも保存済みビューも無いときの初期表示: 日本広域 */
@@ -37,7 +39,8 @@ function loadSavedView(): { center: L.LatLngTuple; zoom: number } | null {
 export const LiveMapPanel = memo(function LiveMapPanel({
   positions,
   currentTime,
-  onAddSample
+  onAddSample,
+  onMoveSample
 }: Props) {
   const mapDivRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -48,6 +51,8 @@ export const LiveMapPanel = memo(function LiveMapPanel({
   currentTimeRef.current = currentTime
   const onAddSampleRef = useRef(onAddSample)
   onAddSampleRef.current = onAddSample
+  const onMoveSampleRef = useRef(onMoveSample)
+  onMoveSampleRef.current = onMoveSample
 
   // 地図の生成（マウント時に 1 回）
   useEffect(() => {
@@ -116,14 +121,18 @@ export const LiveMapPanel = memo(function LiveMapPanel({
     if (pts.length > 1) {
       L.polyline(pts, { color: '#7f6df2', weight: 3, opacity: 0.85 }).addTo(route)
     }
+    // サンプル点はドラッグで座標を修正できるマーカー（divIcon）。時刻は変えない
     for (const p of positions) {
-      L.circleMarker([p.lat, p.lon], {
-        radius: 3,
-        color: '#7f6df2',
-        weight: 1,
-        fillColor: '#7f6df2',
-        fillOpacity: 0.8
-      }).addTo(route)
+      const m = L.marker([p.lat, p.lon], {
+        draggable: true,
+        icon: L.divIcon({ className: 'live-map-sample', iconSize: [11, 11], iconAnchor: [5.5, 5.5] })
+      })
+        .bindTooltip(`${fmtTime(p.timeSec)}\nドラッグ: 位置を修正`)
+        .on('dragend', () => {
+          const ll = m.getLatLng()
+          onMoveSampleRef.current(p.id, { lat: ll.lat, lon: ll.lng })
+        })
+      m.addTo(route)
     }
     boundsRef.current = L.latLngBounds(pts)
     const key = positions[0].videoRelPath

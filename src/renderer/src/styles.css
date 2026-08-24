@@ -1870,6 +1870,14 @@ body.resizing {
   position: absolute;
   inset: 0;
 }
+/* ライブ地図のサンプル点（Leaflet divIcon）。ドラッグで座標を修正できる */
+.live-map-sample {
+  background: var(--accent);
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+}
 .live-map-empty {
   position: absolute;
   inset: auto 8px 8px 8px;

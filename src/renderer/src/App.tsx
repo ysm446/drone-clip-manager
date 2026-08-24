@@ -1726,6 +1726,22 @@ export function App() {
     [reloadPositions]
   )
 
+  /** ライブ地図のサンプル点のドラッグ: 座標だけ移動（時刻は変えない） */
+  const movePositionGeo = useCallback(
+    async (id: number, pos: LatLon) => {
+      const old = positionsRef.current.find((p) => p.id === id)
+      if (!old) return
+      await api.updatePosition(id, { lat: pos.lat, lon: pos.lon })
+      pushUndo({
+        label: '位置の移動',
+        undo: () => api.updatePosition(id, { lat: old.lat, lon: old.lon }).then(() => void 0),
+        redo: () => api.updatePosition(id, { lat: pos.lat, lon: pos.lon }).then(() => void 0)
+      })
+      await reloadPositions()
+    },
+    [reloadPositions]
+  )
+
   /** ライブ地図のクリック: その座標を現在の再生時刻の位置サンプルとして追加 */
   const addSampleFromMap = useCallback(
     (timeSec: number, pos: LatLon) => {
@@ -2496,6 +2512,7 @@ export function App() {
                 positions={positions}
                 currentTime={currentTime}
                 onAddSample={addSampleFromMap}
+                onMoveSample={(id, pos) => void movePositionGeo(id, pos)}
               />
             )}
             </div>
