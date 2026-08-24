@@ -1831,9 +1831,14 @@ body.resizing {
   background: var(--danger-bg);
   color: var(--danger);
 }
-/* 地図モーダル */
+/* 地図モーダル。タイトルバーのドラッグでウインドウを移動できる */
 .modal.map-modal {
   width: min(1100px, 92vw);
+}
+.modal-head.draggable {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
 }
 .map-canvas {
   height: 68vh;
@@ -1846,6 +1851,36 @@ body.resizing {
   padding: 28px 16px 32px;
   color: var(--muted);
   font-size: var(--fs-sm);
+}
+/* プレイヤー右側のライブ地図（再生位置に追従）。動画領域との分割コンテナ */
+.video-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.live-map {
+  position: relative;
+  width: 38%;
+  min-width: 240px;
+  flex: none;
+  border-left: 1px solid var(--bar-border);
+  background: var(--bg);
+}
+.live-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+.live-map-empty {
+  position: absolute;
+  inset: auto 8px 8px 8px;
+  z-index: 500; /* Leaflet のタイル層より上 */
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  box-shadow: var(--shadow-1);
 }
 
 /* ============================================================

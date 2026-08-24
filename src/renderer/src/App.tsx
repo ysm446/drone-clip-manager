@@ -16,6 +16,7 @@ import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
 import { MapModal } from './components/MapModal'
+import { LiveMapPanel } from './components/LiveMap'
 import { PositionModal } from './components/PositionModal'
 import { fmtLatLon, positionAt, type LatLon } from './util'
 import { IconMap, IconPin } from './components/icons'
@@ -458,6 +459,14 @@ export function App() {
   const [mapData, setMapData] = useState<{ positions: PositionSample[]; clips: ClipItem[] } | null>(
     null
   )
+  /** プレイヤー右側のライブ地図（再生位置に追従）。トグルは再起動後も保つ */
+  const [playerMap, setPlayerMap] = useState(() => localStorage.getItem('dcm.playerMap') === '1')
+  const togglePlayerMap = useCallback(() => {
+    setPlayerMap((v) => {
+      localStorage.setItem('dcm.playerMap', v ? '0' : '1')
+      return !v
+    })
+  }, [])
 
   /**
    * 隙間で黒のまま待っている状態（音楽ビューでクリップの間を空けたとき）。
@@ -1717,6 +1726,16 @@ export function App() {
     [reloadPositions]
   )
 
+  /** ライブ地図のクリック: その座標を現在の再生時刻の位置サンプルとして追加 */
+  const addSampleFromMap = useCallback(
+    (timeSec: number, pos: LatLon) => {
+      void savePosition({ timeSec }, pos).then(() =>
+        showStatus(`位置を追加しました（${fmtTime(timeSec)}）`)
+      )
+    },
+    [savePosition, showStatus]
+  )
+
   /** 地図モーダルを開く（全動画の位置サンプル + クリップを読み込んでから表示） */
   const openMap = useCallback(() => {
     Promise.all([api.listAllPositions(), api.listAllClips()]).then(([poss, clips]) =>
@@ -2406,6 +2425,8 @@ export function App() {
             className={`player-pane${fullscreen ? ' fullscreen' : ''}`}
             style={fullscreen ? undefined : { height: playerH }}
           >
+            {/* 動画領域 + ライブ地図の分割。mpv の矩形は mpv-host の ResizeObserver が追従送信する */}
+            <div className="video-split">
             {mpvMode ? (
               <>
                 <div
@@ -2470,6 +2491,14 @@ export function App() {
                 )}
               </div>
             )}
+            {playerMap && !fullscreen && (
+              <LiveMapPanel
+                positions={positions}
+                currentTime={currentTime}
+                onAddSample={addSampleFromMap}
+              />
+            )}
+            </div>
             {/*
               コントロールバーは両エンジン共通（Phase 2.6e）。ハンドラは mpvModeRef で
               分岐するので、<video> でもそのまま効く。クラス名は歴史的経緯で mpv- のまま。
@@ -2493,6 +2522,14 @@ export function App() {
                       <IconLoop size={15} />
                     </button>
                   )}
+                  <button
+                    className={`mpv-loop${playerMap ? ' on' : ''}`}
+                    onClick={togglePlayerMap}
+                    title="プレイヤーの右に地図を表示（再生位置に追従）"
+                    aria-pressed={playerMap}
+                  >
+                    <IconMap size={15} />
+                  </button>
                   {selectedSeg != null && (
                     <span
                       className="nudge-group"

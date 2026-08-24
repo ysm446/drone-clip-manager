@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { ClipItem, PositionSample } from '../../../shared/types'
@@ -19,6 +19,24 @@ interface Props {
 
 export function MapModal({ positions, clips, focusVideoRel, onOpenClip, onClose }: Props) {
   const mapDivRef = useRef<HTMLDivElement>(null)
+  /** タイトルバーのドラッグでウインドウを移動（中央からのオフセット） */
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+
+  const onHeadPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    if ((e.target as HTMLElement).closest('.modal-close')) return
+    e.preventDefault()
+    const start = { x: e.clientX - offset.x, y: e.clientY - offset.y }
+    const onMove = (ev: PointerEvent) => {
+      setOffset({ x: ev.clientX - start.x, y: ev.clientY - start.y })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
 
   const byVideo = useMemo(() => {
     const m = new Map<string, PositionSample[]>()
@@ -111,8 +129,12 @@ export function MapModal({ positions, clips, focusVideoRel, onOpenClip, onClose 
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal map-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
+      <div
+        className="modal map-modal"
+        style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head draggable" onPointerDown={onHeadPointerDown}>
           <span>地図</span>
           <button className="modal-close" onClick={onClose}>
             ✕
