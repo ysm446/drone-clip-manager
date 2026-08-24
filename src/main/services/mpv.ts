@@ -219,6 +219,11 @@ export function mpvSetSpeed(v: number): void {
   void command(['set_property', 'speed', Math.max(0.1, Math.min(8, v))])
 }
 
+/** 動画オリジナル音声のミュート（mute はプロセスに保持され loadfile を跨いで効く） */
+export function mpvSetMute(muted: boolean): void {
+  void command(['set_property', 'mute', muted])
+}
+
 export function mpvStop(): void {
   void command(['stop'])
 }

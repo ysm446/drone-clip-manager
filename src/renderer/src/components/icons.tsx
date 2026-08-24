@@ -76,6 +76,26 @@ export function IconMap({ size = 14, className }: IconProps) {
   )
 }
 
+/** スピーカー（音声オン） */
+export function IconVolume({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <path d="M3 6.2 H5.4 L8.3 3.9 V12.1 L5.4 9.8 H3 Z" />
+      <path d="M10.4 5.9 a3 3 0 0 1 0 4.2" />
+    </svg>
+  )
+}
+
+/** スピーカー + ×（ミュート中） */
+export function IconVolumeMute({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <path d="M3 6.2 H5.4 L8.3 3.9 V12.1 L5.4 9.8 H3 Z" />
+      <path d="M10.3 6.4 L13.2 9.6 M13.2 6.4 L10.3 9.6" />
+    </svg>
+  )
+}
+
 export function IconFolder({ size = 14, className }: IconProps) {
   return (
     <svg {...stroke(size, className)}>

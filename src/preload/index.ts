@@ -122,6 +122,7 @@ const api: DcmApi = {
   mpvPause: () => ipcRenderer.send('mpv:pause'),
   mpvSeek: (sec) => ipcRenderer.send('mpv:seek', sec),
   mpvSetSpeed: (v) => ipcRenderer.send('mpv:speed', v),
+  mpvSetMute: (muted) => ipcRenderer.send('mpv:mute', muted),
   mpvStop: () => ipcRenderer.send('mpv:stop'),
   onMpvEvent: (cb: (e: MpvEvent) => void) => {
     const handler = (_e: unknown, ev: MpvEvent) => cb(ev)

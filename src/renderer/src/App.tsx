@@ -19,7 +19,7 @@ import { MapModal } from './components/MapModal'
 import { LiveMapPanel } from './components/LiveMap'
 import { PositionModal } from './components/PositionModal'
 import { fmtLatLon, positionAt, type LatLon } from './util'
-import { IconMap, IconPin } from './components/icons'
+import { IconMap, IconPin, IconVolume, IconVolumeMute } from './components/icons'
 import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
@@ -459,6 +459,24 @@ export function App() {
   const [mapData, setMapData] = useState<{ positions: PositionSample[]; clips: ClipItem[] } | null>(
     null
   )
+  /**
+   * 動画オリジナル音声のミュート（BGM プレイヤーとは無関係）。
+   * 車載動画の風切り音対策。設定は再起動後も保つ。
+   */
+  const [videoMuted, setVideoMuted] = useState(() => localStorage.getItem('dcm.videoMuted') === '1')
+  const toggleVideoMuted = useCallback(() => {
+    setVideoMuted((v) => {
+      localStorage.setItem('dcm.videoMuted', v ? '0' : '1')
+      return !v
+    })
+  }, [])
+  // mpv / <video> の両エンジンへ反映。mpv の mute はプロセスに保持されるが、
+  // 起動し直しや動画切り替えの取りこぼしが無いよう対象が変わるたびに送り直す
+  useEffect(() => {
+    api.mpvSetMute(videoMuted)
+    if (videoRef.current) videoRef.current.muted = videoMuted
+  }, [videoMuted, mpvMode, videoSrc, selected])
+
   /** プレイヤー右側のライブ地図（再生位置に追従）。トグルは再起動後も保つ */
   const [playerMap, setPlayerMap] = useState(() => localStorage.getItem('dcm.playerMap') === '1')
   const togglePlayerMap = useCallback(() => {
@@ -2540,6 +2558,18 @@ export function App() {
                       <IconLoop size={15} />
                     </button>
                   )}
+                  <button
+                    className={`mpv-loop${videoMuted ? ' on' : ''}`}
+                    onClick={toggleVideoMuted}
+                    title={
+                      videoMuted
+                        ? '動画の音声: ミュート中（クリックで戻す）'
+                        : '動画の音声をミュート（BGM には影響しない）'
+                    }
+                    aria-pressed={videoMuted}
+                  >
+                    {videoMuted ? <IconVolumeMute size={15} /> : <IconVolume size={15} />}
+                  </button>
                   <button
                     className={`mpv-loop${playerMap ? ' on' : ''}`}
                     onClick={togglePlayerMap}

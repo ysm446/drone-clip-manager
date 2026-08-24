@@ -651,6 +651,8 @@ export interface DcmApi {
   mpvSeek: (sec: number) => void
   /** 再生速度（1 = 等速） */
   mpvSetSpeed: (v: number) => void
+  /** 動画オリジナル音声のミュート（BGM プレイヤーとは無関係） */
+  mpvSetMute: (muted: boolean) => void
   mpvStop: () => void
   onMpvEvent: (cb: (e: MpvEvent) => void) => () => void
   // --- ウィンドウ操作 ---
