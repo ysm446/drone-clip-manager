@@ -11,6 +11,8 @@ const LS_KEY = 'dcm.mapLayer'
  * overlays を渡すと同じコントロールにチェックボックスとして並ぶ（表示状態の記憶は呼び出し側）。
  */
 export function addBaseLayers(map: L.Map, overlays?: Record<string, L.Layer>): void {
+  // 「Leaflet」の接頭辞は非表示（BSD ライセンスで表示義務なし）。タイルの出典表記は残す
+  map.attributionControl?.setPrefix(false)
   const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
