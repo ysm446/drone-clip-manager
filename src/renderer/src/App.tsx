@@ -2511,6 +2511,7 @@ export function App() {
               <LiveMapPanel
                 positions={positions}
                 currentTime={currentTime}
+                videoRelPath={selected}
                 onAddSample={addSampleFromMap}
                 onMoveSample={(id, pos) => void movePositionGeo(id, pos)}
               />

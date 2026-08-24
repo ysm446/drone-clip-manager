@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { PositionSample } from '../../../shared/types'
@@ -9,9 +9,13 @@ import { addBaseLayers } from '../mapBase'
 // 開いている動画の航跡と、再生位置の補間座標のマーカーをリアルタイムに描く。
 // マーカーが表示範囲から出たときだけ追従パンする（ユーザーのパン操作を邪魔しない）。
 
+const api = window.dcm
+
 interface Props {
   positions: PositionSample[]
   currentTime: number
+  /** 開いている動画の相対パス（他の動画の航跡の重ね描きから除外する） */
+  videoRelPath: string | null
   /** 地図クリック: その座標を「現在の再生時刻の位置サンプル」として追加（永続化・undo は App） */
   onAddSample: (timeSec: number, pos: { lat: number; lon: number }) => void
   /** サンプル点のドラッグ確定: その座標へ移動（時刻は変えない。永続化・undo は App） */
@@ -23,6 +27,14 @@ const FALLBACK_CENTER: L.LatLngTuple = [36, 138]
 const FALLBACK_ZOOM = 4
 /** 前回のビュー（中心 + ズーム）の保存先。次回開いたとき同じ場所・スケールで始める */
 const LS_VIEW = 'dcm.liveMapView'
+/** 「他の動画の航跡」オーバーレイの表示状態の保存先（'0' で非表示） */
+const LS_OTHERS = 'dcm.liveMapOthers'
+const OTHERS_LABEL = '他の動画の航跡'
+/**
+ * 重ね描きのカリング: 現在の航跡の範囲を緯度経度 ±0.05°（約 5km）広げた矩形に
+ * 1 点もかからない航跡は描かない。数が増えても近所の航跡だけに絞られる。
+ */
+const CULL_PAD_DEG = 0.05
 
 function loadSavedView(): { center: L.LatLngTuple; zoom: number } | null {
   try {
@@ -40,6 +52,7 @@ function loadSavedView(): { center: L.LatLngTuple; zoom: number } | null {
 export const LiveMapPanel = memo(function LiveMapPanel({
   positions,
   currentTime,
+  videoRelPath,
   onAddSample,
   onMoveSample
 }: Props) {
@@ -47,6 +60,10 @@ export const LiveMapPanel = memo(function LiveMapPanel({
   const mapRef = useRef<L.Map | null>(null)
   const routeRef = useRef<L.LayerGroup | null>(null)
   const markerRef = useRef<L.CircleMarker | null>(null)
+  /** 他の動画の航跡のオーバーレイ（レイヤーコントロールでオン / オフ） */
+  const othersRef = useRef<L.LayerGroup | null>(null)
+  /** 全動画の位置サンプル（マウント時に 1 回取得。重ね描きの元データ） */
+  const [allPositions, setAllPositions] = useState<PositionSample[]>([])
   // クリックハンドラは生成時に一度だけ束ねるので、最新値は ref で読む
   const currentTimeRef = useRef(currentTime)
   currentTimeRef.current = currentTime
@@ -74,7 +91,28 @@ export const LiveMapPanel = memo(function LiveMapPanel({
         // localStorage が使えない環境では保存だけ諦める
       }
     })
-    addBaseLayers(map)
+    // 他の動画の航跡: レイヤーコントロールのチェックで表示切替（状態は記憶）
+    const others = L.layerGroup()
+    othersRef.current = others
+    let othersOn = true
+    try {
+      othersOn = localStorage.getItem(LS_OTHERS) !== '0'
+    } catch {
+      // 既定は表示
+    }
+    if (othersOn) others.addTo(map)
+    const saveOthers = (on: boolean) => (e: L.LayersControlEvent) => {
+      if (e.name !== OTHERS_LABEL) return
+      try {
+        localStorage.setItem(LS_OTHERS, on ? '1' : '0')
+      } catch {
+        // 保存だけ諦める
+      }
+    }
+    map.on('overlayadd', saveOthers(true))
+    map.on('overlayremove', saveOthers(false))
+    addBaseLayers(map, { [OTHERS_LABEL]: others })
+    api.listAllPositions().then(setAllPositions).catch(() => void 0)
     // クリック = 現在の再生時刻の位置としてピンを追加（ドラッグ / パンでは発火しない）
     map.on('click', (e: L.LeafletMouseEvent) => {
       onAddSampleRef.current(currentTimeRef.current, { lat: e.latlng.lat, lon: e.latlng.lng })
@@ -95,9 +133,52 @@ export const LiveMapPanel = memo(function LiveMapPanel({
       map.remove()
       mapRef.current = null
       routeRef.current = null
+      othersRef.current = null
       markerRef.current = null
     }
   }, [])
+
+  // 他の動画の航跡の重ね描き（ニュートラル色）。現在の航跡の約 5km 圏に入らないものはカリング
+  useEffect(() => {
+    const others = othersRef.current
+    if (!others) return
+    others.clearLayers()
+    const byVideo = new Map<string, PositionSample[]>()
+    for (const p of allPositions) {
+      if (p.videoRelPath === videoRelPath) continue
+      const list = byVideo.get(p.videoRelPath) ?? []
+      list.push(p)
+      byVideo.set(p.videoRelPath, list)
+    }
+    const cur = positions.map((p) => [p.lat, p.lon] as L.LatLngTuple)
+    const cullBounds =
+      cur.length > 0
+        ? L.latLngBounds(cur).extend([
+            [cur[0][0] - CULL_PAD_DEG, cur[0][1] - CULL_PAD_DEG],
+            [cur[0][0] + CULL_PAD_DEG, cur[0][1] + CULL_PAD_DEG]
+          ])
+        : null
+    for (const [rel, samples] of byVideo) {
+      const pts: L.LatLngTuple[] = samples.map((s) => [s.lat, s.lon])
+      if (cullBounds && !pts.some((ll) => cullBounds.contains(ll))) continue
+      const name = rel.split('/').pop() ?? rel
+      if (pts.length > 1) {
+        L.polyline(pts, { color: '#8a9099', weight: 2, opacity: 0.55 })
+          .bindTooltip(name)
+          .addTo(others)
+      } else {
+        L.circleMarker(pts[0], {
+          radius: 3,
+          color: '#8a9099',
+          weight: 1,
+          fillColor: '#8a9099',
+          fillOpacity: 0.7
+        })
+          .bindTooltip(name)
+          .addTo(others)
+      }
+    }
+  }, [allPositions, positions, videoRelPath])
 
   // 航跡の描き直し（動画の切り替え・サンプルの編集時）。
   // 全体フィットは動画が変わったときだけ行う（ピン打ちのたびに視界が飛ばないように）。
