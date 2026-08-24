@@ -15,7 +15,9 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3"
+    "@types/leaflet": "^1.9.22",
+    "better-sqlite3": "^13.0.3",
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

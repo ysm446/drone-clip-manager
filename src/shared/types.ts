@@ -57,6 +57,31 @@ export interface SegmentInput {
 }
 
 /**
+ * 位置サンプル（Phase 2.9）。動画の時刻に紐づく緯度経度の点で、間は線形補間する。
+ * GPS メタの無い素材への手動入力が主。将来 SRT / フライトログの自動取り込みを
+ * 後付けできるよう source を持つ。
+ */
+export interface PositionSample {
+  id: number
+  videoRelPath: string
+  timeSec: number
+  lat: number
+  lon: number
+  /** manual = 手動入力 / import = 将来の自動取り込み */
+  source: string
+  createdAt: string
+}
+
+/** 新規位置サンプルの入力（id / createdAt はメインが採番） */
+export interface PositionSampleInput {
+  videoRelPath: string
+  timeSec: number
+  lat: number
+  lon: number
+  source?: string
+}
+
+/**
  * スターの付け外しを各ビューのローカル state へ流すパッチ（App → ClipsView / SequenceView）。
  * seq は同じ内容を連続で流したときにも effect が走るようにするための通し番号。
  */
@@ -473,6 +498,19 @@ export interface DcmApi {
   deleteSegment: (id: number) => Promise<void>
   /** Undo 用: 削除した区間を同じ id で復元（タグ含む） */
   restoreSegment: (seg: Segment) => Promise<void>
+  // --- 位置サンプル（Phase 2.9） ---
+  /** 動画の位置サンプル一覧（time_sec 昇順） */
+  listPositions: (videoRelPath: string) => Promise<PositionSample[]>
+  /** 全動画の位置サンプル（クリップ一覧・地図用） */
+  listAllPositions: () => Promise<PositionSample[]>
+  addPosition: (input: PositionSampleInput) => Promise<PositionSample>
+  updatePosition: (
+    id: number,
+    patch: Partial<Omit<PositionSampleInput, 'videoRelPath'>>
+  ) => Promise<PositionSample>
+  deletePosition: (id: number) => Promise<void>
+  /** Undo 用: 削除した位置サンプルを同じ id で復元 */
+  restorePosition: (sample: PositionSample) => Promise<void>
   // --- クリップ一覧（Phase 2.5） ---
   /** 全動画の区間を横断取得（動画メタ + タグを結合） */
   listAllClips: () => Promise<ClipItem[]>

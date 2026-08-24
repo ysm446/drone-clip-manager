@@ -109,6 +109,58 @@ export function nodeOrderFromEdges(
   return best
 }
 
+// --- 位置サンプル（Phase 2.9） ---
+
+export interface LatLon {
+  lat: number
+  lon: number
+}
+
+/**
+ * 「47.550231, 9.682123」形式（Google マップ / OSM でコピーした座標）を解釈する。
+ * 括弧・全角カンマ・前後の空白は許容。範囲外（|lat|>90, |lon|>180）は null。
+ */
+export function parseLatLon(text: string): LatLon | null {
+  const m = text
+    .trim()
+    .match(/^\(?\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*\)?$/)
+  if (!m) return null
+  const lat = Number(m[1])
+  const lon = Number(m[2])
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
+  return { lat, lon }
+}
+
+/** 緯度経度の表示（5 桁 ≒ 1m 精度。コピーして地図検索に貼れる形） */
+export function fmtLatLon(lat: number, lon: number): string {
+  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`
+}
+
+/**
+ * 時刻 t の補間位置。サンプル（timeSec 昇順）の間は線形補間、範囲外は端の値で頭打ち。
+ * サンプルが無ければ null。
+ */
+export function positionAt(
+  samples: { timeSec: number; lat: number; lon: number }[],
+  t: number
+): LatLon | null {
+  if (samples.length === 0) return null
+  if (t <= samples[0].timeSec) return { lat: samples[0].lat, lon: samples[0].lon }
+  const last = samples[samples.length - 1]
+  if (t >= last.timeSec) return { lat: last.lat, lon: last.lon }
+  for (let i = 1; i < samples.length; i++) {
+    const b = samples[i]
+    if (t <= b.timeSec) {
+      const a = samples[i - 1]
+      const span = b.timeSec - a.timeSec
+      const r = span > 0 ? (t - a.timeSec) / span : 0
+      return { lat: a.lat + (b.lat - a.lat) * r, lon: a.lon + (b.lon - a.lon) * r }
+    }
+  }
+  return { lat: last.lat, lon: last.lon }
+}
+
 // 区間バーの配色: 青〜紫の色相に限定（カラフルにしない）。
 // ラベルが濃色文字（#0d0f12）のため明るめを保ち、隣接区間は青系/紫系の交互 + 明度差で区別する。
 const SEGMENT_COLORS = ['#4f9dff', '#a98bfa', '#86b6ff', '#8f7ff5', '#c9b1ff', '#6d8df7']

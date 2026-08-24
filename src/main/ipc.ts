@@ -21,6 +21,14 @@ import {
   listSegments,
   addSegment,
   updateSegment,
+  listPositions,
+  // 位置サンプル（Phase 2.9）
+
+  listAllPositions,
+  addPosition,
+  updatePosition,
+  deletePosition,
+  restorePosition,
   deleteSegment,
   listAllClips,
   listVideoPathsMissingMeta,
@@ -67,6 +75,8 @@ import { buildProxy, proxyStatus } from './services/proxy'
 import type {
   BeatAnalysisResult,
   ConcatBgm,
+  PositionSample,
+  PositionSampleInput,
   SequenceBgm,
   SequenceMarker,
   WaveformResult,
@@ -243,6 +253,18 @@ export function registerIpc(): void {
 
   ipcMain.handle('segments:list', (_e, relPath: string) => listSegments(relPath))
   ipcMain.handle('segments:add', (_e, input: SegmentInput) => addSegment(input))
+  ipcMain.handle('positions:list', (_e, videoRelPath: string) => listPositions(videoRelPath))
+  ipcMain.handle('positions:listAll', () => listAllPositions())
+  ipcMain.handle('positions:add', (_e, input: PositionSampleInput) => addPosition(input))
+  ipcMain.handle(
+    'positions:update',
+    (_e, id: number, patch: Partial<Omit<PositionSampleInput, 'videoRelPath'>>) =>
+      updatePosition(id, patch)
+  )
+  ipcMain.handle('positions:delete', (_e, id: number): void => deletePosition(id))
+  ipcMain.handle('positions:restore', (_e, sample: PositionSample): void =>
+    restorePosition(sample)
+  )
   ipcMain.handle('segments:update', (_e, id: number, patch: Partial<SegmentInput>) =>
     updateSegment(id, patch)
   )

@@ -52,6 +52,30 @@ export function IconStar({ size = 14, className, filled = false }: IconProps & {
   )
 }
 
+/** 地図ピン（位置サンプル / 座標表示）。filled は小さいピン向けの塗りつぶし。 */
+export function IconPin({ size = 14, className, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg {...stroke(size, className)}>
+      <path
+        d="M8 14 C8 14 3.8 9.6 3.8 6.4 a4.2 4.2 0 0 1 8.4 0 C12.2 9.6 8 14 8 14 Z"
+        fill={filled ? 'currentColor' : 'none'}
+        stroke={filled ? 'none' : undefined}
+      />
+      {!filled && <circle cx="8" cy="6.4" r="1.6" />}
+    </svg>
+  )
+}
+
+/** 折りたたみ地図（地図表示ボタン） */
+export function IconMap({ size = 14, className }: IconProps) {
+  return (
+    <svg {...stroke(size, className)}>
+      <path d="M2.5 4.2 L6 2.9 L10 4.3 L13.5 3.1 V11.8 L10 13.1 L6 11.7 L2.5 12.9 Z" />
+      <path d="M6 2.9 V11.7 M10 4.3 V13.1" />
+    </svg>
+  )
+}
+
 export function IconFolder({ size = 14, className }: IconProps) {
   return (
     <svg {...stroke(size, className)}>

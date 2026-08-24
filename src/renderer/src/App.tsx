@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type {
   ClipItem,
+  PositionSample,
   RootInfo,
   Segment,
   StarPatch,
@@ -14,6 +15,10 @@ import { FolderTree, type VideoClickMods } from './components/FolderTree'
 import { VideoPlayer } from './components/VideoPlayer'
 import { Timeline } from './components/Timeline'
 import { SegmentList } from './components/SegmentList'
+import { MapModal } from './components/MapModal'
+import { PositionModal } from './components/PositionModal'
+import { fmtLatLon, positionAt, type LatLon } from './util'
+import { IconMap, IconPin } from './components/icons'
 import { BgmPlayer } from './components/BgmPlayer'
 import { ExportModal, type ExportTarget } from './components/ExportModal'
 import { ClipsView } from './components/ClipsView'
@@ -208,6 +213,9 @@ export function App() {
       if (!rel) return
       api.listSegments(rel).then((segs) => {
         if (currentRelRef.current === rel) setSegments(segs)
+      })
+      api.listPositions(rel).then((poss) => {
+        if (currentRelRef.current === rel) setPositions(poss)
       })
     })
   }, [])
@@ -439,6 +447,18 @@ export function App() {
   /** シーケンス画面のモーダル（連結書き出し等）表示中フラグ。mpv を隠すために受け取る */
   const [seqModalOpen, setSeqModalOpen] = useState(false)
 
+  // --- 位置サンプル（Phase 2.9） ---
+  /** 開いている動画の位置サンプル（timeSec 昇順） */
+  const [positions, setPositions] = useState<PositionSample[]>([])
+  const positionsRef = useRef<PositionSample[]>([])
+  positionsRef.current = positions
+  /** 位置の入力 / 編集モーダル（sample 無し = 新規追加） */
+  const [posEdit, setPosEdit] = useState<{ timeSec: number; sample?: PositionSample } | null>(null)
+  /** 地図モーダル。開くときに全動画の位置とクリップを読み込む */
+  const [mapData, setMapData] = useState<{ positions: PositionSample[]; clips: ClipItem[] } | null>(
+    null
+  )
+
   /**
    * 隙間で黒のまま待っている状態（音楽ビューでクリップの間を空けたとき）。
    * 映像だけ止め、曲は鳴らし続けて、次のクリップの曲位置に届いたら読み込む。
@@ -470,8 +490,8 @@ export function App() {
     if (!mpvMode) return
     // 隙間で待っている間は mpv を隠す。mpv はネイティブ最前面で DOM から覆えないため、
     // 隠して下の `.player-pane`（#000 固定）を見せることで黒にする。
-    api.mpvSetVisible(!!selected && !exportItems && !seqModalOpen && !gapHold)
-  }, [mpvMode, selected, exportItems, seqModalOpen, gapHold])
+    api.mpvSetVisible(!!selected && !exportItems && !seqModalOpen && !gapHold && !posEdit && !mapData)
+  }, [mpvMode, selected, exportItems, seqModalOpen, gapHold, posEdit, mapData])
 
   // クリップから開いた場合の遅延シーク: 動画のロード完了（duration 確定）後に in 点へ飛ぶ
   useEffect(() => {
@@ -621,15 +641,17 @@ export function App() {
     }
     setBusy(true)
     try {
-      const [m, segs, vtags] = await Promise.all([
+      const [m, segs, vtags, poss] = await Promise.all([
         api.probeVideo(relPath),
         api.listSegments(relPath),
-        api.getVideoTags(relPath)
+        api.getVideoTags(relPath),
+        api.listPositions(relPath)
       ])
       if (currentRelRef.current !== relPath) return // 途中で別の動画に切り替わった
       setMeta(m)
       setSegments(segs)
       setVideoTags(vtags)
+      setPositions(poss)
       // キーフレーム抽出はやや時間がかかるので後追いで反映
       api.getKeyframes(relPath).then((kf) => {
         if (currentRelRef.current === relPath) setKeyframes(kf)
@@ -1624,6 +1646,87 @@ export function App() {
     [setSegmentsStarred]
   )
 
+  // --- 位置サンプルの操作（Phase 2.9）。永続化 + undo + 一覧の取り直しをここに集約 ---
+  const reloadPositions = useCallback(() => {
+    const rel = currentRelRef.current
+    if (!rel) return Promise.resolve()
+    return api.listPositions(rel).then((poss) => {
+      if (currentRelRef.current === rel) setPositions(poss)
+    })
+  }, [])
+
+  /** モーダルの保存: sample 有り = 座標の変更 / 無し = 新規追加 */
+  const savePosition = useCallback(
+    async (pe: { timeSec: number; sample?: PositionSample }, pos: LatLon) => {
+      const rel = currentRelRef.current
+      if (!rel) return
+      if (pe.sample) {
+        const old = pe.sample
+        await api.updatePosition(old.id, { lat: pos.lat, lon: pos.lon })
+        pushUndo({
+          label: '位置の変更',
+          undo: () => api.updatePosition(old.id, { lat: old.lat, lon: old.lon }).then(() => void 0),
+          redo: () => api.updatePosition(old.id, { lat: pos.lat, lon: pos.lon }).then(() => void 0)
+        })
+      } else {
+        const created = await api.addPosition({
+          videoRelPath: rel,
+          timeSec: pe.timeSec,
+          lat: pos.lat,
+          lon: pos.lon
+        })
+        pushUndo({
+          label: '位置の追加',
+          undo: () => api.deletePosition(created.id),
+          redo: () => api.restorePosition(created)
+        })
+      }
+      await reloadPositions()
+    },
+    [reloadPositions]
+  )
+
+  /** レーン上のピンのドラッグ確定: 時刻の変更 */
+  const movePosition = useCallback(
+    async (id: number, timeSec: number) => {
+      const old = positionsRef.current.find((p) => p.id === id)
+      if (!old) return
+      await api.updatePosition(id, { timeSec })
+      pushUndo({
+        label: '位置の時刻変更',
+        undo: () => api.updatePosition(id, { timeSec: old.timeSec }).then(() => void 0),
+        redo: () => api.updatePosition(id, { timeSec }).then(() => void 0)
+      })
+      await reloadPositions()
+    },
+    [reloadPositions]
+  )
+
+  const deletePositionSample = useCallback(
+    async (id: number) => {
+      const old = positionsRef.current.find((p) => p.id === id)
+      if (!old) return
+      await api.deletePosition(id)
+      pushUndo({
+        label: '位置の削除',
+        undo: () => api.restorePosition(old),
+        redo: () => api.deletePosition(id)
+      })
+      await reloadPositions()
+    },
+    [reloadPositions]
+  )
+
+  /** 地図モーダルを開く（全動画の位置サンプル + クリップを読み込んでから表示） */
+  const openMap = useCallback(() => {
+    Promise.all([api.listAllPositions(), api.listAllClips()]).then(([poss, clips]) =>
+      setMapData({ positions: poss, clips })
+    )
+  }, [])
+
+  /** 現在の再生位置の補間座標（メタバー表示用） */
+  const curPos = useMemo(() => positionAt(positions, currentTime), [positions, currentTime])
+
   // 区間リストからのタグ変更を segments state に反映（永続化は SegmentList 側で実施済み）
   const onSegmentTagsChanged = useCallback((id: number, tags: string[]) => {
     setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, tags } : s)))
@@ -2490,6 +2593,22 @@ export function App() {
                       {fmtTime(currentTime)} / {fmtTime(duration || meta.durationSec || 0)}
                     </span>
                     <span className="badge muted">{keyframes.length} keyframes</span>
+                    {curPos && (
+                      <span
+                        className="badge pos"
+                        title="現在の再生位置の座標（補間値）。クリックでコピー"
+                        onClick={() =>
+                          void navigator.clipboard.writeText(fmtLatLon(curPos.lat, curPos.lon))
+                        }
+                      >
+                        <IconPin size={11} filled />
+                        {fmtLatLon(curPos.lat, curPos.lon)}
+                      </span>
+                    )}
+                    <button className="btn small meta-map-btn" title="地図を表示" onClick={openMap}>
+                      <IconMap size={12} />
+                      地図
+                    </button>
                     <select
                       className="speed-select"
                       value={speed}
@@ -2545,6 +2664,7 @@ export function App() {
               segmentPatch={segPatch}
               starPatch={starPatch}
               onSetStarred={setSegmentsStarred}
+              onShowMap={openMap}
             />
           ) : view === 'sequence' ? (
             <SequenceView
@@ -2612,6 +2732,11 @@ export function App() {
                     onSelectSegment={setSelectedSeg}
                     onUpdateSegment={updateSegmentTimes}
                     onLiveRange={onTimelineLiveRange}
+                    positions={positions}
+                    onAddPositionAt={(t) => setPosEdit({ timeSec: t })}
+                    onEditPosition={(p) => setPosEdit({ timeSec: p.timeSec, sample: p })}
+                    onMovePosition={(id, t) => void movePosition(id, t)}
+                    onDeletePosition={(id) => void deletePositionSample(id)}
                   />
                   <SegmentList
                     segments={segments}
@@ -2689,6 +2814,42 @@ export function App() {
           items={exportItems}
           seqName={exportSeqName ?? undefined}
           onClose={() => setExportItems(null)}
+        />
+      )}
+
+      {posEdit && selected && (
+        <PositionModal
+          timeSec={posEdit.timeSec}
+          value={posEdit.sample ? { lat: posEdit.sample.lat, lon: posEdit.sample.lon } : null}
+          center={
+            positionAt(positions, posEdit.timeSec) ??
+            (positions.length > 0
+              ? { lat: positions[positions.length - 1].lat, lon: positions[positions.length - 1].lon }
+              : null)
+          }
+          onSave={(pos) => {
+            void savePosition(posEdit, pos)
+            setPosEdit(null)
+          }}
+          onDelete={
+            posEdit.sample
+              ? () => {
+                  void deletePositionSample(posEdit.sample!.id)
+                  setPosEdit(null)
+                }
+              : undefined
+          }
+          onClose={() => setPosEdit(null)}
+        />
+      )}
+
+      {mapData && (
+        <MapModal
+          positions={mapData.positions}
+          clips={mapData.clips}
+          focusVideoRel={selected}
+          onOpenClip={openClip}
+          onClose={() => setMapData(null)}
         />
       )}
     </div>

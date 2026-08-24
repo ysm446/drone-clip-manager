@@ -1367,6 +1367,30 @@ body.resizing {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
   border: 1px solid var(--accent);
 }
+/* 位置レーン（Phase 2.9）: トラック下の細い帯。クリックで位置サンプル追加、ピンはドラッグで時刻移動 */
+.tl-poslane {
+  position: relative;
+  height: 20px;
+  border-top: 1px dashed var(--border);
+  cursor: copy;
+}
+.tl-pos-pin {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  color: var(--accent);
+  cursor: grab;
+  line-height: 0;
+  padding: 1px 2px;
+  border-radius: var(--radius-s);
+}
+.tl-pos-pin:hover {
+  background: var(--hover);
+}
+.tl-pos-pin.dragging {
+  cursor: grabbing;
+  filter: brightness(1.15);
+}
 /* ルーラー上端からトラック下端までを貫く再生ヘッド */
 .tl-playhead {
   position: absolute;
@@ -1756,6 +1780,72 @@ body.resizing {
 .clips-star-filter.on {
   background: var(--selected);
   color: var(--accent);
+}
+
+/* ============================================================
+   位置サンプル / 地図（Phase 2.9）
+   ============================================================ */
+/* メタバーの現在座標バッジ（クリックでコピー） */
+.badge.pos {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+.meta-map-btn,
+.clips-map-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* クリップカードの in 点座標（補間値） */
+.clip-pos {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* 位置の入力 / 編集モーダル（.modal の既定幅より後勝ちしないようセレクタを 2 クラスにする） */
+.modal.pos-modal {
+  width: min(560px, 92vw);
+}
+.pos-hint {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  padding: 0 16px 8px;
+}
+.pos-map {
+  height: 320px;
+  margin: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+.modal-input.invalid {
+  border-color: var(--danger);
+}
+/* 削除は危険操作: 通常は無彩色、ホバーで初めて危険色（5.3） */
+.btn.pos-delete:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+/* 地図モーダル */
+.modal.map-modal {
+  width: min(1100px, 92vw);
+}
+.map-canvas {
+  height: 68vh;
+  margin: 0 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+.map-empty {
+  padding: 28px 16px 32px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
 
 /* ============================================================

@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipItem, StarPatch, TagCount } from '../../../shared/types'
+import type { ClipItem, PositionSample, StarPatch, TagCount } from '../../../shared/types'
 import type { ExportTarget } from './ExportModal'
 import { pushUndo, registerUndoRefresh } from '../undo'
-import { fmtSec, fmtTime } from '../util'
+import { fmtLatLon, fmtSec, fmtTime, positionAt } from '../util'
 import { ContextMenu } from './ContextMenu'
-import { IconFilm, IconStar } from './icons'
+import { IconFilm, IconMap, IconPin, IconStar } from './icons'
 import { TagEditor } from './TagEditor'
 
 const api = window.dcm
@@ -32,6 +32,8 @@ interface Props {
   onSetStarred: (ids: number[], starred: boolean) => void
   /** App からのスター変更をカードへ反映するためのパッチ */
   starPatch?: StarPatch | null
+  /** ツールバーの「地図」: 全動画の航跡とクリップ位置を地図で表示 */
+  onShowMap: () => void
 }
 
 type SortKey = 'video' | 'newest' | 'duration' | 'label'
@@ -92,9 +94,12 @@ export const ClipsView = memo(function ClipsView({
   openSegmentId,
   segmentPatch,
   onSetStarred,
-  starPatch
+  starPatch,
+  onShowMap
 }: Props) {
   const [clips, setClips] = useState<ClipItem[]>([])
+  /** 全動画の位置サンプル（カードの座標表示用。videoRelPath → timeSec 昇順） */
+  const [allPositions, setAllPositions] = useState<PositionSample[]>([])
   /** 右クリックメニュー（対象クリップと表示位置） */
   const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipItem } | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -120,10 +125,21 @@ export const ClipsView = memo(function ClipsView({
         if (alive) setLoading(false)
       })
     api.getAllTags().then((t) => alive && setAllTags(t))
+    api.listAllPositions().then((p) => alive && setAllPositions(p))
     return () => {
       alive = false
     }
   }, [])
+
+  const posByVideo = useMemo(() => {
+    const m = new Map<string, PositionSample[]>()
+    for (const p of allPositions) {
+      const list = m.get(p.videoRelPath) ?? []
+      list.push(p)
+      m.set(p.videoRelPath, list)
+    }
+    return m
+  }, [allPositions])
 
   // プレイヤー側の in/out 調整（±1 キーフレームボタン等）をカードへその場で反映
   useEffect(() => {
@@ -337,6 +353,10 @@ export const ClipsView = memo(function ClipsView({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <button className="btn clips-map-btn" title="地図を表示" onClick={onShowMap}>
+          <IconMap size={12} />
+          地図
+        </button>
         <button
           className={`btn clips-star-filter${starredOnly ? ' on' : ''}`}
           onClick={() => setStarredOnly((v) => !v)}
@@ -437,6 +457,15 @@ export const ClipsView = memo(function ClipsView({
                 <div className="clip-times">
                   {fmtTime(lo)} – {fmtTime(hi)}
                 </div>
+                {(() => {
+                  const pos = positionAt(posByVideo.get(c.videoRelPath) ?? [], lo)
+                  return pos ? (
+                    <div className="clip-pos" title="in 点の座標（補間値）">
+                      <IconPin size={11} filled />
+                      {fmtLatLon(pos.lat, pos.lon)}
+                    </div>
+                  ) : null
+                })()}
                 <div className="clip-badges">
                   {c.videoCodec && <span className="badge">{c.videoCodec}</span>}
                   {c.videoWidth && c.videoHeight && (

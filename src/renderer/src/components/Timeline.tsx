@@ -1,7 +1,8 @@
 import { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
-import type { Segment } from '../../../shared/types'
-import { colorForIndex, fmtSec, fmtTime } from '../util'
-import { IconZoomIn, IconZoomOut } from './icons'
+import type { PositionSample, Segment } from '../../../shared/types'
+import { colorForIndex, fmtLatLon, fmtSec, fmtTime } from '../util'
+import { ContextMenu } from './ContextMenu'
+import { IconPin, IconZoomIn, IconZoomOut } from './icons'
 
 /** ルーラー目盛り用の短い表記（mm:ss / 1時間超は h:mm:ss） */
 function fmtTick(sec: number): string {
@@ -38,6 +39,15 @@ interface Props {
   onUpdateSegment: (id: number, inTime: number, outTime: number) => void
   /** 作成・リサイズ・移動ドラッグ中の範囲をリアルタイム通知（終了で null。フィルムストリップの追従用） */
   onLiveRange?: (r: { lo: number; hi: number } | null) => void
+  // --- 位置レーン（Phase 2.9）。永続化と undo は App 側 ---
+  positions: PositionSample[]
+  /** レーンの空きをクリック: この時刻に位置サンプルを追加（App が入力モーダルを開く） */
+  onAddPositionAt: (timeSec: number) => void
+  /** ピンのクリック / メニュー「編集」: 座標の編集モーダルを開く */
+  onEditPosition: (p: PositionSample) => void
+  /** ピンのドラッグ確定: 時刻を変更 */
+  onMovePosition: (id: number, timeSec: number) => void
+  onDeletePosition: (id: number) => void
 }
 
 interface DragState {
@@ -130,7 +140,12 @@ export function Timeline({
   onCreateSegment,
   onSelectSegment,
   onUpdateSegment,
-  onLiveRange
+  onLiveRange,
+  positions,
+  onAddPositionAt,
+  onEditPosition,
+  onMovePosition,
+  onDeletePosition
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -154,6 +169,35 @@ export function Timeline({
   // 区間の編集（リサイズ / 移動）中のプレビュー
   const [preview, setPreview] = useState<{ id: number; lo: number; hi: number } | null>(null)
 
+  // --- 位置レーン（Phase 2.9） ---
+  /** ピンの右クリックメニュー */
+  const [posMenu, setPosMenu] = useState<{ x: number; y: number; p: PositionSample } | null>(null)
+  /** ピンの時刻ドラッグ中のプレビュー */
+  const [posPreview, setPosPreview] = useState<{ id: number; t: number } | null>(null)
+
+  /** ピンのドラッグ = 時刻の変更。動かさずに離したら編集モーダルを開く。 */
+  const onPosPinDown = (e: React.PointerEvent, p: PositionSample) => {
+    if (e.button !== 0 || duration <= 0) return
+    e.stopPropagation() // レーンの「クリックで追加」を抑止
+    e.preventDefault()
+    const startClientX = e.clientX
+    const st = { t: p.timeSec, moved: false }
+    const onMove = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - startClientX) > DRAG_THRESHOLD_PX) st.moved = true
+      if (!st.moved) return
+      st.t = timeAt(ev.clientX)
+      setPosPreview({ id: p.id, t: st.t })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setPosPreview(null)
+      if (st.moved) onMovePosition(p.id, st.t)
+      else onEditPosition(p)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
   /**
    * ズーム倍率を変更する。anchor（時刻とビューポート内 x）を渡すとその点を固定、
    * 省略時は再生ヘッド（画面外ならビュー中央）を固定してスクロール位置を合わせる。
@@ -482,6 +526,52 @@ export function Timeline({
             />
           )}
         </div>
+
+          {/* 位置レーン（Phase 2.9）: クリックでその時刻に位置サンプルを追加、ピンはドラッグで時刻移動 */}
+          <div
+            className="tl-poslane"
+            title="クリック: この時刻に位置を追加（Google マップでコピーした座標を貼り付け）"
+            onPointerDown={(e) => {
+              if (e.button !== 0 || duration <= 0) return
+              onAddPositionAt(timeAt(e.clientX))
+            }}
+          >
+            {positions.map((p) => {
+              const t = posPreview?.id === p.id ? posPreview.t : p.timeSec
+              return (
+                <span
+                  key={p.id}
+                  className={`tl-pos-pin${posPreview?.id === p.id ? ' dragging' : ''}`}
+                  style={{ left: `${pct(t)}%` }}
+                  title={`${fmtLatLon(p.lat, p.lon)}\n${fmtTime(t)}\nクリック: 編集 / ドラッグ: 時刻を移動 / 右クリック: メニュー`}
+                  onPointerDown={(e) => onPosPinDown(e, p)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setPosMenu({ x: e.clientX, y: e.clientY, p })
+                  }}
+                >
+                  <IconPin size={12} filled />
+                </span>
+              )
+            })}
+          </div>
+          {posMenu && (
+            <ContextMenu
+              x={posMenu.x}
+              y={posMenu.y}
+              onClose={() => setPosMenu(null)}
+              items={[
+                { label: '座標を編集…', onClick: () => onEditPosition(posMenu.p) },
+                {
+                  label: '座標をコピー',
+                  onClick: () =>
+                    void navigator.clipboard.writeText(fmtLatLon(posMenu.p.lat, posMenu.p.lon))
+                },
+                { label: '削除', danger: true, onClick: () => onDeletePosition(posMenu.p.id) }
+              ]}
+            />
+          )}
 
           {/* ルーラー + トラックを貫く再生ヘッド（頭部マーカー + 縦棒） */}
           <div className="tl-playhead" style={{ left: `${pct(currentTime)}%` }}>

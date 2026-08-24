@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { metaDir } from '../util/paths'
 import type {
   ClipItem,
+  PositionSample,
+  PositionSampleInput,
   Segment,
   SegmentInput,
   Sequence,
@@ -69,6 +71,19 @@ CREATE TABLE IF NOT EXISTS segments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_rel_path);
+
+-- 動画の時刻に紐づく位置サンプル（緯度経度。間は線形補間 / Phase 2.9）
+CREATE TABLE IF NOT EXISTS position_samples (
+  id            INTEGER PRIMARY KEY,
+  video_rel_path TEXT NOT NULL,
+  time_sec      REAL NOT NULL,
+  lat           REAL NOT NULL,
+  lon           REAL NOT NULL,
+  source        TEXT NOT NULL DEFAULT 'manual',
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_positions_video ON position_samples(video_rel_path, time_sec);
 
 -- 区間（クリップ）へのユーザー定義タグ（自由記述 / Phase 2.8）
 CREATE TABLE IF NOT EXISTS segment_tags (
@@ -520,6 +535,106 @@ export function upsertVideoMeta(meta: VideoMeta): void {
     })
 }
 
+// --- 位置サンプル（Phase 2.9） ---
+
+interface PositionRow {
+  id: number
+  video_rel_path: string
+  time_sec: number
+  lat: number
+  lon: number
+  source: string
+  created_at: string
+}
+
+function rowToPosition(r: PositionRow): PositionSample {
+  return {
+    id: r.id,
+    videoRelPath: r.video_rel_path,
+    timeSec: r.time_sec,
+    lat: r.lat,
+    lon: r.lon,
+    source: r.source,
+    createdAt: r.created_at
+  }
+}
+
+export function listPositions(videoRelPath: string): PositionSample[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM position_samples WHERE video_rel_path = ? ORDER BY time_sec ASC')
+    .all(videoRelPath) as PositionRow[]
+  return rows.map(rowToPosition)
+}
+
+export function listAllPositions(): PositionSample[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM position_samples ORDER BY video_rel_path ASC, time_sec ASC')
+    .all() as PositionRow[]
+  return rows.map(rowToPosition)
+}
+
+export function addPosition(input: PositionSampleInput): PositionSample {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO position_samples (video_rel_path, time_sec, lat, lon, source)
+       VALUES (@videoRelPath, @timeSec, @lat, @lon, @source)`
+    )
+    .run({
+      videoRelPath: input.videoRelPath,
+      timeSec: input.timeSec,
+      lat: input.lat,
+      lon: input.lon,
+      source: input.source ?? 'manual'
+    })
+  return getPosition(Number(info.lastInsertRowid))
+}
+
+function getPosition(id: number): PositionSample {
+  const row = getDb().prepare('SELECT * FROM position_samples WHERE id = ?').get(id) as
+    | PositionRow
+    | undefined
+  if (!row) throw new Error(`位置サンプルが見つかりません: ${id}`)
+  return rowToPosition(row)
+}
+
+export function updatePosition(
+  id: number,
+  patch: Partial<Omit<PositionSampleInput, 'videoRelPath'>>
+): PositionSample {
+  const cur = getPosition(id)
+  getDb()
+    .prepare('UPDATE position_samples SET time_sec=@timeSec, lat=@lat, lon=@lon WHERE id=@id')
+    .run({
+      id,
+      timeSec: patch.timeSec ?? cur.timeSec,
+      lat: patch.lat ?? cur.lat,
+      lon: patch.lon ?? cur.lon
+    })
+  return getPosition(id)
+}
+
+export function deletePosition(id: number): void {
+  getDb().prepare('DELETE FROM position_samples WHERE id = ?').run(id)
+}
+
+/** Undo 用: 削除した位置サンプルを同じ id で復元する */
+export function restorePosition(s: PositionSample): void {
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO position_samples (id, video_rel_path, time_sec, lat, lon, source, created_at)
+       VALUES (@id, @videoRelPath, @timeSec, @lat, @lon, @source, @createdAt)`
+    )
+    .run({
+      id: s.id,
+      videoRelPath: s.videoRelPath,
+      timeSec: s.timeSec,
+      lat: s.lat,
+      lon: s.lon,
+      source: s.source,
+      createdAt: s.createdAt
+    })
+}
+
 /** 区間を持つのに videos にメタが無い動画の相対パス一覧（listAll 前の補完対象） */
 export function listVideoPathsMissingMeta(): string[] {
   const rows = getDb()
@@ -650,7 +765,8 @@ export function renamePathsInDb(oldRel: string, newRel: string, isDir: boolean):
       ['segments', 'video_rel_path'],
       ['keyframes', 'video_rel_path'],
       ['keyframe_src', 'video_rel_path'],
-      ['video_tags', 'video_rel_path']
+      ['video_tags', 'video_rel_path'],
+      ['position_samples', 'video_rel_path']
     ] as const) {
       const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
       const upd = d.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`)
@@ -688,7 +804,8 @@ export function deletePathsInDb(rel: string, isDir: boolean): void {
       ['videos', 'rel_path'],
       ['keyframes', 'video_rel_path'],
       ['keyframe_src', 'video_rel_path'],
-      ['video_tags', 'video_rel_path']
+      ['video_tags', 'video_rel_path'],
+      ['position_samples', 'video_rel_path']
     ] as const) {
       const rows = d.prepare(`SELECT DISTINCT ${col} AS p FROM ${table}`).all() as { p: string }[]
       const del = d.prepare(`DELETE FROM ${table} WHERE ${col} = ?`)
