@@ -1254,6 +1254,7 @@ body.resizing {
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+/* 高さは段数に応じて Timeline.tsx がインラインで与える（1 段 = 56px、重なる区間があれば段が増える） */
 .tl-track {
   position: relative;
   height: 56px;
@@ -1276,10 +1277,9 @@ body.resizing {
   width: 1px;
   background: var(--border);
 }
+/* top / height は段（レーン）に応じて Timeline.tsx がインラインで与える */
 .tl-seg {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
   border-radius: var(--radius-s);
   opacity: 0.78;
   cursor: grab;

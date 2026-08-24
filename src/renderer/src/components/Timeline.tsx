@@ -62,6 +62,43 @@ const SCRUB_INTERVAL_MS = 80
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
+/** 区間バーの段（レーン）割り当てに使う寸法。1 段のときは従来どおり 56px のトラック */
+const LANE_PAD = 8
+const LANE_GAP = 4
+const LANE_H_SINGLE = 40
+const LANE_H_MULTI = 28
+/** 段数の上限。これを超える重なりは最終段で重ねて描く（実用上まず起きない） */
+const MAX_LANES = 4
+
+/**
+ * 時間が重なる区間を別の段に振り分ける（in 昇順に、先に空いた段へ詰める貪欲法）。
+ * 段は描画時にだけ計算して DB には持たない。編集中の区間も保存済みの in/out で判定するので、
+ * ドラッグ中に段が飛ばず、確定後に組み変わる。
+ */
+function assignLanes(segments: Segment[]): { lane: Map<number, number>; count: number } {
+  const sorted = segments
+    .map((s) => ({ id: s.id, lo: s.inSnapped ?? s.inTime, hi: s.outSnapped ?? s.outTime }))
+    .sort((a, b) => a.lo - b.lo || a.hi - b.hi)
+  const laneEnd: number[] = []
+  const lane = new Map<number, number>()
+  for (const s of sorted) {
+    let l = laneEnd.findIndex((end) => end <= s.lo + 1e-6)
+    if (l < 0) {
+      if (laneEnd.length < MAX_LANES) {
+        l = laneEnd.length
+        laneEnd.push(s.hi)
+      } else {
+        l = MAX_LANES - 1
+        laneEnd[l] = Math.max(laneEnd[l], s.hi)
+      }
+    } else {
+      laneEnd[l] = s.hi
+    }
+    lane.set(s.id, l)
+  }
+  return { lane, count: Math.max(1, laneEnd.length) }
+}
+
 /**
  * キーフレーム目盛り層。動画によっては数百〜数千個の DOM になるため、
  * 再生ヘッドの時刻更新（毎秒十数回）で再レンダリングしないよう memo で切り離す。
@@ -309,6 +346,10 @@ export function Timeline({
   }
 
   const ticks = useMemo(() => makeTicks(duration, zoom), [duration, zoom])
+  // 時間が重なる区間を別の段へ（見た目の重なり回避。段はここで計算するだけで保存しない）
+  const lanes = useMemo(() => assignLanes(segments), [segments])
+  const laneH = lanes.count > 1 ? LANE_H_MULTI : LANE_H_SINGLE
+  const trackH = LANE_PAD * 2 + lanes.count * laneH + (lanes.count - 1) * LANE_GAP
 
   const pending =
     mode === 'segment' && drag && drag.moved
@@ -394,6 +435,7 @@ export function Timeline({
         <div
           className={`tl-track mode-${mode}`}
           ref={trackRef}
+          style={{ height: trackH }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -404,6 +446,7 @@ export function Timeline({
             const editing = preview?.id === s.id
             const lo = editing ? preview!.lo : s.inSnapped ?? s.inTime
             const hi = editing ? preview!.hi : s.outSnapped ?? s.outTime
+            const lane = lanes.lane.get(s.id) ?? 0
             return (
               <div
                 key={s.id}
@@ -411,6 +454,8 @@ export function Timeline({
                 style={{
                   left: `${pct(lo)}%`,
                   width: `${pct(hi) - pct(lo)}%`,
+                  top: LANE_PAD + lane * (laneH + LANE_GAP),
+                  height: laneH,
                   background: s.color ?? colorForIndex(i)
                 }}
                 title={`${s.label ?? '区間'} ${fmtTime(lo)}–${fmtTime(hi)} 長さ ${fmtTime(hi - lo)}（端=長さ変更 / 本体=移動）`}
