@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 const api = window.dcm
 
 /** サンプリング枚数（固定。時刻が安定するのでサムネイルキャッシュが効く） */
 const COUNT = 16
+/** スクラブ中のシーク発行間隔（Timeline の SCRUB_INTERVAL_MS と同じ。mpv への seek 連打を抑える） */
+const SCRUB_INTERVAL_MS = 80
 
 /**
  * フィルムストリップ（プレイヤーとタイムラインの間）: 動画全体を等間隔サンプリングした
  * サムネイル帯。区間の選択中 / 作成・編集ドラッグ中は range 外を暗くして「区間に何が
- * 写っているか」を示す。クリックでシーク。
+ * 写っているか」を示す。クリックでシーク、ドラッグでスクラブ（タイムラインのシークモードと同じ）。
  * サムネイルは ensureThumb（ffmpeg 1 フレーム + .dcm/thumbnails/ キャッシュ）で遅延生成。
  * 将来のシーン検出（Phase 3 解析）は times の算出を差し替えれば載せられる。
  */
@@ -27,6 +29,8 @@ export function Filmstrip({
   onSeek: (t: number) => void
 }) {
   const [thumbs, setThumbs] = useState<(string | null)[]>([])
+  /** ドラッグスクラブ中か（pointer capture 中のみ true）と、直近のシーク発行時刻 */
+  const scrubRef = useRef<{ active: boolean; last: number }>({ active: false, last: 0 })
 
   // 各セルの代表時刻（セル中央）。0.1s に丸めてキャッシュのキーを安定させる
   const times = useMemo(
@@ -70,13 +74,36 @@ export function Filmstrip({
   const pct = (t: number) => Math.min(100, Math.max(0, (t / duration) * 100))
   const hasRange = range != null && range.out > range.in
 
+  const timeAt = (el: HTMLElement, clientX: number) => {
+    const r = el.getBoundingClientRect()
+    return Math.min(duration, Math.max(0, ((clientX - r.left) / r.width) * duration))
+  }
+
   return (
     <div
       className="filmstrip"
-      title="クリックでシーク"
+      title="クリック / ドラッグでシーク"
       onPointerDown={(e) => {
-        const r = e.currentTarget.getBoundingClientRect()
-        onSeek(Math.min(duration, Math.max(0, ((e.clientX - r.left) / r.width) * duration)))
+        if (e.button !== 0) return
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        scrubRef.current = { active: true, last: performance.now() }
+        onSeek(timeAt(e.currentTarget, e.clientX))
+      }}
+      onPointerMove={(e) => {
+        const s = scrubRef.current
+        if (!s.active) return
+        const now = performance.now()
+        if (now - s.last < SCRUB_INTERVAL_MS) return
+        s.last = now
+        onSeek(timeAt(e.currentTarget, e.clientX))
+      }}
+      onPointerUp={(e) => {
+        if (!scrubRef.current.active) return
+        scrubRef.current.active = false
+        onSeek(timeAt(e.currentTarget, e.clientX)) // 最終位置を確定
+      }}
+      onPointerCancel={() => {
+        scrubRef.current.active = false
       }}
     >
       {thumbs.map((url, i) => (
