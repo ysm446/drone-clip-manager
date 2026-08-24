@@ -3,6 +3,7 @@ import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { ClipItem, PositionSample } from '../../../shared/types'
 import { fmtLatLon, fmtTime, positionAt } from '../util'
+import { addBaseLayers } from '../mapBase'
 
 // 地図ビュー（Phase 2.9 / OSM + Leaflet）。
 // 各動画の位置サンプルを航跡（折れ線）として描き、クリップは in 点の補間位置にマーカーを置く。
@@ -52,10 +53,7 @@ export function MapModal({ positions, clips, focusVideoRel, onOpenClip, onClose 
     const el = mapDivRef.current
     if (!el || positions.length === 0) return
     const map = L.map(el, { zoomControl: true })
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map)
+    addBaseLayers(map)
 
     // 航跡: 開いている動画はアクセント、他はニュートラル
     for (const [rel, samples] of byVideo) {

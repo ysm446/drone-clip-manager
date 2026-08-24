@@ -3,6 +3,7 @@ import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { PositionSample } from '../../../shared/types'
 import { fmtTime, positionAt } from '../util'
+import { addBaseLayers } from '../mapBase'
 
 // プレイヤー横のライブ地図（Phase 2.9）。
 // 開いている動画の航跡と、再生位置の補間座標のマーカーをリアルタイムに描く。
@@ -73,10 +74,7 @@ export const LiveMapPanel = memo(function LiveMapPanel({
         // localStorage が使えない環境では保存だけ諦める
       }
     })
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map)
+    addBaseLayers(map)
     // クリック = 現在の再生時刻の位置としてピンを追加（ドラッグ / パンでは発火しない）
     map.on('click', (e: L.LeafletMouseEvent) => {
       onAddSampleRef.current(currentTimeRef.current, { lat: e.latlng.lat, lon: e.latlng.lng })

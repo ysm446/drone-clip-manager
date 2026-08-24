@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fmtLatLon, fmtTime, parseLatLon, type LatLon } from '../util'
+import { addBaseLayers } from '../mapBase'
 
 // 位置サンプルの入力 / 編集モーダル（Phase 2.9）。
 // 入力の主経路は「Google マップで場所を右クリック → 座標をコピー → 貼り付け」。
@@ -41,10 +42,7 @@ export function PositionModal({ timeSec, value, center, onSave, onDelete, onClos
     const map = L.map(el, { zoomControl: true })
     if (init) map.setView([init.lat, init.lon], NEAR_ZOOM)
     else map.setView(FALLBACK_CENTER, FALLBACK_ZOOM)
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map)
+    addBaseLayers(map)
     map.on('click', (e: L.LeafletMouseEvent) => {
       setText(fmtLatLon(e.latlng.lat, e.latlng.lng))
     })
