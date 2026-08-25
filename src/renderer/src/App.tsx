@@ -1463,12 +1463,35 @@ export function App() {
         durationSec?: number
         /** undo に積む変更前の値。開いている動画に無い区間はここから取る */
         prev?: { inTime: number; outTime: number; inSnapped: number | null; outSnapped: number | null }
+        /**
+         * 操作種別。move のときは外側への丸め（in=直前 / out=直後）ではなく**最寄り**の
+         * キーフレームへ吸着する。外側丸めだと移動を確定するたびに区間が両側へ伸びて
+         * いくため（微小な移動でも out が必ず次のキーフレームへ進む）。
+         * リサイズ（in / out / 新規作成）は従来どおり「区間が縮まない」外側丸め（spec §6.2）。
+         */
+        edit?: 'in' | 'out' | 'move'
       }
     ) => {
       const kf = opts?.keyframes ?? keyframes
       const dur = opts?.durationSec ?? duration
-      const inSnapped = kf.length ? keyframeBefore(kf, inT) : inT
-      const outSnapped = kf.length ? keyframeAfter(kf, outT, dur || outT) : outT
+      let inSnapped: number
+      let outSnapped: number
+      if (opts?.edit === 'move' && kf.length) {
+        const nearest = (t: number): number => {
+          const b = keyframeBefore(kf, t)
+          const a = keyframeAfter(kf, t, dur || t)
+          return t - b <= a - t ? b : a
+        }
+        inSnapped = nearest(inT)
+        outSnapped = nearest(outT)
+        // 両端が同じキーフレームに吸着したら out を 1 つ先へ逃がす（長さ 0 を防ぐ）
+        if (outSnapped <= inSnapped) {
+          outSnapped = keyframeAfter(kf, inSnapped + 1e-3, dur || outT)
+        }
+      } else {
+        inSnapped = kf.length ? keyframeBefore(kf, inT) : inT
+        outSnapped = kf.length ? keyframeAfter(kf, outT, dur || outT) : outT
+      }
       const prev = segmentsRef.current.find((s) => s.id === id) ?? opts?.prev
       setSegments((prev) =>
         prev
@@ -2815,7 +2838,7 @@ export function App() {
                     onSeek={seek}
                     onCreateSegment={createSegment}
                     onSelectSegment={setSelectedSeg}
-                    onUpdateSegment={updateSegmentTimes}
+                    onUpdateSegment={(id, lo, hi, edit) => updateSegmentTimes(id, lo, hi, { edit })}
                     onLiveRange={onTimelineLiveRange}
                     positions={positions}
                     onAddPositionAt={(t) => setPosEdit({ timeSec: t })}

@@ -35,8 +35,8 @@ interface Props {
   onSeek: (t: number) => void
   onCreateSegment: (inTime: number, outTime: number) => void
   onSelectSegment: (id: number) => void
-  /** 区間の in/out を変更（リサイズ・移動）して確定 */
-  onUpdateSegment: (id: number, inTime: number, outTime: number) => void
+  /** 区間の in/out を変更（リサイズ・移動）して確定。edit=move は最寄りスナップ（長さ維持） */
+  onUpdateSegment: (id: number, inTime: number, outTime: number, edit: 'in' | 'out' | 'move') => void
   /** 作成・リサイズ・移動ドラッグ中の範囲をリアルタイム通知（終了で null。フィルムストリップの追従用） */
   onLiveRange?: (r: { lo: number; hi: number } | null) => void
   // --- 位置レーン（Phase 2.9）。永続化と undo は App 側 ---
@@ -349,7 +349,7 @@ export function Timeline({
     const onUp = () => {
       cleanup()
       if (ed.moved) {
-        if (ed.hi - ed.lo > 0.02) onUpdateSegment(seg.id, ed.lo, ed.hi)
+        if (ed.hi - ed.lo > 0.02) onUpdateSegment(seg.id, ed.lo, ed.hi, mode)
       } else {
         onSeek(origLo) // 動かさなければクリック＝先頭へシーク
       }
