@@ -2342,6 +2342,16 @@ body.resizing {
   white-space: nowrap;
   font-size: var(--fs-ui);
 }
+/* シーケンス一覧のドラッグ並べ替え: 挿入位置をアクセントの線で示す */
+.seq-list-item.dragging {
+  opacity: 0.45;
+}
+.seq-list-item.drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+.seq-list-item.drop-after {
+  box-shadow: 0 2px 0 0 var(--accent);
+}
 .seq-name-input {
   flex: 1;
   background: var(--bg);

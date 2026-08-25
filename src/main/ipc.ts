@@ -42,6 +42,7 @@ import {
   listSequences,
   createSequence,
   renameSequence,
+  setSequenceListOrder,
   deleteSequence,
   duplicateSequence,
   getSequenceGraph,
@@ -288,6 +289,7 @@ export function registerIpc(): void {
   ipcMain.handle('seq:list', () => listSequences())
   ipcMain.handle('seq:create', (_e, name: string) => createSequence(name))
   ipcMain.handle('seq:rename', (_e, id: number, name: string) => renameSequence(id, name))
+  ipcMain.handle('seq:setListOrder', (_e, ids: number[]): void => setSequenceListOrder(ids))
   ipcMain.handle('seq:delete', (_e, id: number) => deleteSequence(id))
   ipcMain.handle('seq:duplicate', (_e, id: number, name: string) => duplicateSequence(id, name))
   ipcMain.handle('seq:get', (_e, id: number) => getSequenceGraph(id))

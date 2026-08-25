@@ -106,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_video_tags_tag ON video_tags(tag);
 CREATE TABLE IF NOT EXISTS sequences (
   id         INTEGER PRIMARY KEY,
   name       TEXT NOT NULL,
+  sort_order INTEGER,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -164,6 +165,7 @@ function getDb(): Database.Database {
   migrateDropBeatGrid(db)
   migrateSequenceBgmMeter(db)
   migrateSegmentStarred(db)
+  migrateSequenceSortOrder(db)
   dbPath = target
   return db
 }
@@ -251,6 +253,31 @@ function migrateSequenceBgmMeter(d: Database.Database): void {
   if (!cols.includes('beats_per_bar')) {
     d.exec('ALTER TABLE sequence_bgm ADD COLUMN beats_per_bar INTEGER')
   }
+}
+
+// シーケンス一覧の並び順列（2026-08-25）。既存 DB に足し、
+// 未設定の行には従来の表示順（作成が新しい順）で初期値を振る。
+function migrateSequenceSortOrder(d: Database.Database): void {
+  const cols = (d.prepare('PRAGMA table_info(sequences)').all() as { name: string }[]).map(
+    (r) => r.name
+  )
+  if (!cols.includes('sort_order')) {
+    d.exec('ALTER TABLE sequences ADD COLUMN sort_order INTEGER')
+  }
+  const rows = d
+    .prepare(
+      'SELECT id FROM sequences WHERE sort_order IS NULL ORDER BY created_at DESC, id DESC'
+    )
+    .all() as { id: number }[]
+  if (rows.length === 0) return
+  const base = (
+    d.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM sequences').get() as { m: number }
+  ).m
+  const upd = d.prepare('UPDATE sequences SET sort_order = ? WHERE id = ?')
+  const tx = d.transaction(() => {
+    rows.forEach((r, i) => upd.run(base + 1 + i, r.id))
+  })
+  tx()
 }
 
 // クリップのスター（お気に入り）列（2026-08-24）。既存 DB に足す。
@@ -829,13 +856,19 @@ function rowToSequence(r: SequenceRow): Sequence {
 
 export function listSequences(): Sequence[] {
   const rows = getDb()
-    .prepare('SELECT * FROM sequences ORDER BY created_at DESC, id DESC')
+    .prepare('SELECT * FROM sequences ORDER BY sort_order ASC, created_at DESC, id DESC')
     .all() as SequenceRow[]
   return rows.map(rowToSequence)
 }
 
 export function createSequence(name: string): Sequence {
-  const info = getDb().prepare('INSERT INTO sequences (name) VALUES (?)').run(name)
+  // 新規は一覧の先頭へ（従来の「作成が新しい順」の見え方を保つ）
+  const info = getDb()
+    .prepare(
+      `INSERT INTO sequences (name, sort_order)
+       VALUES (?, (SELECT COALESCE(MIN(sort_order), 1) - 1 FROM sequences))`
+    )
+    .run(name)
   const row = getDb()
     .prepare('SELECT * FROM sequences WHERE id = ?')
     .get(Number(info.lastInsertRowid)) as SequenceRow
@@ -844,6 +877,16 @@ export function createSequence(name: string): Sequence {
 
 export function renameSequence(id: number, name: string): void {
   getDb().prepare('UPDATE sequences SET name = ? WHERE id = ?').run(name, id)
+}
+
+/** シーケンス一覧の並び順を、渡された id の順で保存する（ドラッグ並べ替え） */
+export function setSequenceListOrder(ids: number[]): void {
+  const d = getDb()
+  const upd = d.prepare('UPDATE sequences SET sort_order = ? WHERE id = ?')
+  const tx = d.transaction(() => {
+    ids.forEach((id, i) => upd.run(i, id))
+  })
+  tx()
 }
 
 export function deleteSequence(id: number): void {
@@ -961,7 +1004,15 @@ export function restoreSequenceMarker(m: SequenceMarker): void {
 export function duplicateSequence(id: number, name: string): Sequence {
   const d = getDb()
   const tx = d.transaction((srcId: number, newName: string): SequenceRow => {
-    const info = d.prepare('INSERT INTO sequences (name) VALUES (?)').run(newName)
+    // 複製は元のシーケンスの直後に並べる
+    const src = d.prepare('SELECT sort_order FROM sequences WHERE id = ?').get(srcId) as
+      | { sort_order: number | null }
+      | undefined
+    const so = src?.sort_order ?? 0
+    d.prepare('UPDATE sequences SET sort_order = sort_order + 1 WHERE sort_order > ?').run(so)
+    const info = d
+      .prepare('INSERT INTO sequences (name, sort_order) VALUES (?, ?)')
+      .run(newName, so + 1)
     const newSeqId = Number(info.lastInsertRowid)
     const nodeRows = d
       .prepare('SELECT * FROM sequence_nodes WHERE sequence_id = ? ORDER BY id ASC')

@@ -534,6 +534,8 @@ export interface DcmApi {
   listSequences: () => Promise<Sequence[]>
   createSequence: (name: string) => Promise<Sequence>
   renameSequence: (id: number, name: string) => Promise<void>
+  /** シーケンス一覧の並び順を保存（ドラッグ並べ替え。渡した id の順になる） */
+  setSequenceListOrder: (ids: number[]) => Promise<void>
   deleteSequence: (id: number) => Promise<void>
   /** シーケンスをノード / エッジごと複製する */
   duplicateSequence: (id: number, name: string) => Promise<Sequence>

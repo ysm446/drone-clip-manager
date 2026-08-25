@@ -50,6 +50,7 @@ const api: DcmApi = {
   listSequences: () => ipcRenderer.invoke('seq:list'),
   createSequence: (name) => ipcRenderer.invoke('seq:create', name),
   renameSequence: (id, name) => ipcRenderer.invoke('seq:rename', id, name),
+  setSequenceListOrder: (ids) => ipcRenderer.invoke('seq:setListOrder', ids),
   deleteSequence: (id) => ipcRenderer.invoke('seq:delete', id),
   duplicateSequence: (id, name) => ipcRenderer.invoke('seq:duplicate', id, name),
   getSequenceGraph: (id) => ipcRenderer.invoke('seq:get', id),

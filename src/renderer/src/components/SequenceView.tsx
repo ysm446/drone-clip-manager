@@ -567,6 +567,40 @@ export const SequenceView = memo(function SequenceView({
     if (activeId === id) setActiveId(null)
   }
 
+  // --- シーケンス一覧のドラッグ並べ替え ---
+  /** ドラッグ中のシーケンス id（null = ドラッグしていない） */
+  const [seqDragId, setSeqDragId] = useState<number | null>(null)
+  /** 挿入位置（並び替え後にこのインデックスの位置へ入る） */
+  const [seqDropAt, setSeqDropAt] = useState<number | null>(null)
+
+  const dropSeqAt = (at: number) => {
+    const dragId = seqDragId
+    setSeqDragId(null)
+    setSeqDropAt(null)
+    if (dragId == null) return
+    const from = sequences.findIndex((s) => s.id === dragId)
+    if (from < 0) return
+    let to = at
+    if (from < to) to--
+    if (to === from) return
+    const next = [...sequences]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    const oldIds = sequences.map((s) => s.id)
+    const newIds = next.map((s) => s.id)
+    setSequences(next)
+    api.setSequenceListOrder(newIds).catch(() => void 0)
+    const refresh = () =>
+      api.listSequences().then((list) => {
+        setSequences(list)
+      })
+    pushUndo({
+      label: 'シーケンスの並べ替え',
+      undo: () => api.setSequenceListOrder(oldIds).then(refresh),
+      redo: () => api.setSequenceListOrder(newIds).then(refresh)
+    })
+  }
+
   const duplicateSeq = async (seq: Sequence) => {
     const dup = await api.duplicateSequence(seq.id, `${seq.name} のコピー`)
     setSequences((prev) => [dup, ...prev])
@@ -1328,11 +1362,39 @@ export const SequenceView = memo(function SequenceView({
         </div>
         <div className="seq-list">
           {sequences.length === 0 && <div className="seq-list-empty">シーケンスがありません</div>}
-          {sequences.map((s) => (
+          {sequences.map((s, i) => (
             <div
               key={s.id}
-              className={`seq-list-item${s.id === activeId ? ' active' : ''}`}
+              className={`seq-list-item${s.id === activeId ? ' active' : ''}${
+                seqDragId === s.id ? ' dragging' : ''
+              }${seqDragId != null && seqDropAt === i ? ' drop-before' : ''}${
+                seqDragId != null && i === sequences.length - 1 && seqDropAt === sequences.length
+                  ? ' drop-after'
+                  : ''
+              }`}
+              draggable={renaming !== s.id}
               onClick={() => selectSeq(s.id)}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/x-dcm-seqorder', String(s.id))
+                e.dataTransfer.effectAllowed = 'move'
+                setSeqDragId(s.id)
+              }}
+              onDragEnd={() => {
+                setSeqDragId(null)
+                setSeqDropAt(null)
+              }}
+              onDragOver={(e) => {
+                if (seqDragId == null) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const r = e.currentTarget.getBoundingClientRect()
+                setSeqDropAt(i + (e.clientY > r.top + r.height / 2 ? 1 : 0))
+              }}
+              onDrop={(e) => {
+                if (seqDragId == null) return
+                e.preventDefault()
+                dropSeqAt(seqDropAt ?? i)
+              }}
             >
               {renaming === s.id ? (
                 <input
