@@ -908,6 +908,7 @@ export const SequenceView = memo(function SequenceView({
       Math.round(p.y - NODE_H / 2)
     )
     setNodes((prev) => [...prev, node])
+    skipPaletteSyncRef.current = true // パレットの選択・スクロールを動かさない
     setSelectedIds(new Set([node.id]))
     await pushGraphUndo('ノードの追加', before)
   }
@@ -1274,11 +1275,19 @@ export const SequenceView = memo(function SequenceView({
 
   // ノードを選択したら（複数なら先頭）、対応するクリップを強調対象にする
   useEffect(() => {
+    // ドロップ直後の自動選択では動かさない（ドラッグ元がパレットなので強調もスクロールも不要。
+    // 動かすとパレットの選択・スクロール位置がドロップのたびにリセットされてしまう）
+    if (skipPaletteSyncRef.current) {
+      skipPaletteSyncRef.current = false
+      return
+    }
     const first = selectedIds.values().next().value as number | undefined
     if (first == null) return // 選択解除では強調を保つ（カードクリック由来の選択を消さない）
     const clipId = nodes.find((n) => n.id === first)?.clip?.id
     if (clipId != null) setActiveClipId(clipId)
   }, [selectedIds, nodes])
+  /** ドロップ直後の選択でパレット連動を 1 回だけ抑止するフラグ */
+  const skipPaletteSyncRef = useRef(false)
 
   // 対応するカードが一覧の表示範囲外ならスクロールして見せる（絞り込みで非表示なら何もしない）
   useEffect(() => {
