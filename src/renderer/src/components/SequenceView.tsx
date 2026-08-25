@@ -1312,6 +1312,13 @@ export const SequenceView = memo(function SequenceView({
 
   // ノードを選択したら（複数なら先頭）、対応するクリップを強調対象にする
   useEffect(() => {
+    // **選択が変わったときだけ**動かす。nodes はクリップ id の解決に使うだけで、
+    // グラフの再読込（音楽タイムラインへのドロップ等）で再発火させない。
+    // 再発火を許すと、見えていないグラフ側の残り選択からパレットの強調が
+    // 別のクリップへ飛んでしまう。
+    const selChanged = prevPaletteSyncSelRef.current !== selectedIds
+    prevPaletteSyncSelRef.current = selectedIds
+    if (!selChanged) return
     // ドロップ直後の自動選択では動かさない（ドラッグ元がパレットなので強調もスクロールも不要。
     // 動かすとパレットの選択・スクロール位置がドロップのたびにリセットされてしまう）
     if (skipPaletteSyncRef.current) {
@@ -1323,6 +1330,8 @@ export const SequenceView = memo(function SequenceView({
     const clipId = nodes.find((n) => n.id === first)?.clip?.id
     if (clipId != null) setActiveClipId(clipId)
   }, [selectedIds, nodes])
+  /** パレット連動を「選択が変わったときだけ」にするための前回値 */
+  const prevPaletteSyncSelRef = useRef<Set<number> | null>(null)
   /** ドロップ直後の選択でパレット連動を 1 回だけ抑止するフラグ */
   const skipPaletteSyncRef = useRef(false)
 
