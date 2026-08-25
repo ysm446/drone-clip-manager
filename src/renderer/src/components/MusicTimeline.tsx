@@ -357,6 +357,12 @@ export const MusicTimeline = memo(function MusicTimeline({
   /** BGM のフェード秒数（既定はイン 1s / アウト 2s） */
   const [fadeIn, setFadeIn] = useState(1)
   const [fadeOut, setFadeOut] = useState(2)
+  /** フェード秒数の変更: 画面へ即反映しつつ、シーケンスの保存値としても永続化する */
+  const changeFade = (inSec: number, outSec: number): void => {
+    setFadeIn(inSec)
+    setFadeOut(outSec)
+    if (sequenceId != null) void api.setSequenceBgmFade(sequenceId, inSec, outSec)
+  }
   /** 吸着単位（秒）。尺と頭出しをこの倍数に丸める。0 は「なし」。既定は 0.5 秒。 */
   const [snapSec, setSnapSec] = useState<number>(() => {
     // 未保存のときは Number(null) = 0 になり「なし」と区別が付かないので、生の値で判定する
@@ -504,7 +510,11 @@ export const MusicTimeline = memo(function MusicTimeline({
     if (sequenceId == null) return
     let alive = true
     api.getSequenceBgm(sequenceId).then((b) => {
-      if (alive) setSeqBgm(b)
+      if (!alive) return
+      setSeqBgm(b)
+      // フェード秒数はシーケンスごとの保存値を復元（未設定シーケンスは既定 1 / 2 秒）
+      setFadeIn(b?.fadeInSec ?? 1)
+      setFadeOut(b?.fadeOutSec ?? 2)
     })
     return () => {
       alive = false
@@ -1424,13 +1434,18 @@ export const MusicTimeline = memo(function MusicTimeline({
       // クリップが 0 枚でも曲があれば再生できる（items は空で返し、曲だけ鳴らしてもらう）
       return {
         items: buildPlayItems(),
-        bgm: { relPath: seqBgm.relPath, startOffsetSec: seqBgm.startOffsetSec }
+        bgm: {
+          relPath: seqBgm.relPath,
+          startOffsetSec: seqBgm.startOffsetSec,
+          fadeInSec: fadeIn,
+          fadeOutSec: fadeOut
+        }
       }
     }
     return () => {
       queueRef.current = null
     }
-  }, [queueRef, seqBgm, layout, buildPlayItems])
+  }, [queueRef, seqBgm, layout, buildPlayItems, fadeIn, fadeOut])
 
   /**
    * 曲の時刻 → シーケンス先頭からの経過秒。
@@ -1510,7 +1525,9 @@ export const MusicTimeline = memo(function MusicTimeline({
       moveHead(songSec)
       onSeek(buildPlayItems(), ts, {
         relPath: seqBgm.relPath,
-        startOffsetSec: seqBgm.startOffsetSec
+        startOffsetSec: seqBgm.startOffsetSec,
+        fadeInSec: fadeIn,
+        fadeOutSec: fadeOut
       })
     }
     window.addEventListener('mousemove', onMove)
@@ -2254,7 +2271,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                   max={30}
                   step={0.5}
                   value={fadeIn}
-                  onChange={(e) => setFadeIn(Math.max(0, Number(e.target.value)))}
+                  onChange={(e) => changeFade(Math.max(0, Number(e.target.value)), fadeOut)}
                 />
                 /
                 <input
@@ -2263,7 +2280,7 @@ export const MusicTimeline = memo(function MusicTimeline({
                   max={30}
                   step={0.5}
                   value={fadeOut}
-                  onChange={(e) => setFadeOut(Math.max(0, Number(e.target.value)))}
+                  onChange={(e) => changeFade(fadeIn, Math.max(0, Number(e.target.value)))}
                 />
                 秒
               </label>

@@ -329,6 +329,10 @@ export interface SequenceBgm {
    * 拍グリッドは表示と吸着のレイヤーで、クリップの保存値（秒）には影響しない。
    */
   beatsPerBar: number | null
+  /** フェードイン秒数（0 で無効）。書き出しとプレビューの両方に効く。 */
+  fadeInSec: number
+  /** フェードアウト秒数（0 で無効）。シーケンス終端（動画の終わり）に合わせてかかる。 */
+  fadeOutSec: number
 }
 
 /**
@@ -596,6 +600,12 @@ export interface DcmApi {
     sequenceId: number,
     relPath: string | null,
     startOffsetSec?: number
+  ) => Promise<SequenceBgm | null>
+  /** BGM のフェードイン / アウト秒数を保存する */
+  setSequenceBgmFade: (
+    sequenceId: number,
+    fadeInSec: number,
+    fadeOutSec: number
   ) => Promise<SequenceBgm | null>
   /** 拍グリッドの拍子の手動上書きを保存する（null で自動判定へ戻す） */
   setSequenceBgmMeter: (

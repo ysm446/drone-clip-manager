@@ -2334,6 +2334,23 @@ export function App() {
       )
   }
 
+  // 音楽プレビューの BGM フェード（書き出しと同じく、シーケンス終端 = 動画の終わりに合わせて絞る）。
+  // 再生位置ごとの音量なので、シークで途中へ飛んでも正しい音量になる。
+  useEffect(() => {
+    const audio = seqAudioRef.current
+    const bgm = seqBgmRef.current
+    if (!audio || !bgm || !seqPlayback) return
+    let v = 0.7 // BGM の基準音量（playSequence の初期値と同じ）
+    if (bgm.fadeInSec > 0 && seqTime < bgm.fadeInSec) {
+      v *= Math.max(0, seqTime / bgm.fadeInSec)
+    }
+    const remain = seqPlayback.total - seqTime
+    if (bgm.fadeOutSec > 0 && remain < bgm.fadeOutSec) {
+      v *= Math.max(0, remain / bgm.fadeOutSec)
+    }
+    audio.volume = Math.min(0.7, Math.max(0, v))
+  }, [seqTime, seqPlayback])
+
   return (
     <div className="app">
       <header className="topbar">

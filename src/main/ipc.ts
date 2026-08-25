@@ -55,6 +55,7 @@ import {
   restoreSequenceGraph,
   getSequenceBgm,
   setSequenceBgm,
+  setSequenceBgmFade,
   setSequenceBgmMeter,
   getSequenceMarkers,
   addSequenceMarker,
@@ -413,6 +414,11 @@ export function registerIpc(): void {
   // シーケンスに紐づく BGM の取得 / 設定（Phase 2.6c）
   ipcMain.handle('seq:getBgm', (_e, sequenceId: number): SequenceBgm | null =>
     getSequenceBgm(sequenceId)
+  )
+  ipcMain.handle(
+    'seq:setBgmFade',
+    (_e, sequenceId: number, fadeInSec: number, fadeOutSec: number): SequenceBgm | null =>
+      setSequenceBgmFade(sequenceId, fadeInSec, fadeOutSec)
   )
   ipcMain.handle(
     'seq:setBgm',

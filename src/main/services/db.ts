@@ -137,7 +137,9 @@ CREATE TABLE IF NOT EXISTS sequence_bgm (
   sequence_id      INTEGER PRIMARY KEY,
   rel_path         TEXT NOT NULL,
   start_offset_sec REAL NOT NULL DEFAULT 0,
-  beats_per_bar    INTEGER
+  beats_per_bar    INTEGER,
+  fade_in_sec      REAL NOT NULL DEFAULT 1,
+  fade_out_sec     REAL NOT NULL DEFAULT 2
 );
 
 -- 音楽タイムラインの切り替えポイント（マーカー / Phase 2.6c）。曲の絶対時刻（秒）。
@@ -166,6 +168,7 @@ function getDb(): Database.Database {
   migrateSequenceBgmMeter(db)
   migrateSegmentStarred(db)
   migrateSequenceSortOrder(db)
+  migrateSequenceBgmFade(db)
   dbPath = target
   return db
 }
@@ -252,6 +255,20 @@ function migrateSequenceBgmMeter(d: Database.Database): void {
   )
   if (!cols.includes('beats_per_bar')) {
     d.exec('ALTER TABLE sequence_bgm ADD COLUMN beats_per_bar INTEGER')
+  }
+}
+
+// BGM のフェードイン / アウト秒数の永続化列（2026-08-25）。既存 DB に足す。
+// 既定値は従来の画面上の初期値（イン 1 秒 / アウト 2 秒）に合わせる。
+function migrateSequenceBgmFade(d: Database.Database): void {
+  const cols = (d.prepare('PRAGMA table_info(sequence_bgm)').all() as { name: string }[]).map(
+    (r) => r.name
+  )
+  if (!cols.includes('fade_in_sec')) {
+    d.exec('ALTER TABLE sequence_bgm ADD COLUMN fade_in_sec REAL NOT NULL DEFAULT 1')
+  }
+  if (!cols.includes('fade_out_sec')) {
+    d.exec('ALTER TABLE sequence_bgm ADD COLUMN fade_out_sec REAL NOT NULL DEFAULT 2')
   }
 }
 
@@ -906,6 +923,8 @@ interface SequenceBgmRow {
   rel_path: string
   start_offset_sec: number
   beats_per_bar: number | null
+  fade_in_sec: number
+  fade_out_sec: number
 }
 
 /** シーケンスに紐づく BGM。未設定なら null。 */
@@ -918,8 +937,22 @@ export function getSequenceBgm(sequenceId: number): SequenceBgm | null {
     sequenceId: r.sequence_id,
     relPath: r.rel_path,
     startOffsetSec: r.start_offset_sec,
-    beatsPerBar: r.beats_per_bar ?? null
+    beatsPerBar: r.beats_per_bar ?? null,
+    fadeInSec: r.fade_in_sec,
+    fadeOutSec: r.fade_out_sec
   }
+}
+
+/** BGM のフェードイン / アウト秒数を保存する（BGM 未設定なら何もしない） */
+export function setSequenceBgmFade(
+  sequenceId: number,
+  fadeInSec: number,
+  fadeOutSec: number
+): SequenceBgm | null {
+  getDb()
+    .prepare('UPDATE sequence_bgm SET fade_in_sec = ?, fade_out_sec = ? WHERE sequence_id = ?')
+    .run(Math.max(0, fadeInSec), Math.max(0, fadeOutSec), sequenceId)
+  return getSequenceBgm(sequenceId)
 }
 
 /** シーケンスの BGM を設定する（relPath に null を渡すと解除）。 */

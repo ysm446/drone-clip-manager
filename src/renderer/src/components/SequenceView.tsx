@@ -54,6 +54,9 @@ export interface SeqPlayItem {
 export interface SeqPlayBgm {
   relPath: string
   startOffsetSec: number
+  /** プレビューでもシーケンス終端に合わせてフェードさせる（書き出しと同じ挙動） */
+  fadeInSec: number
+  fadeOutSec: number
 }
 
 /**
